@@ -7,4 +7,6 @@ data/raw/
 data/processed/
 *.pkl
 *.faiss
-.ipynb_checkpoints/
+.ipynb_checkpoints/frontend/node_modules/
+frontend/.next/
+frontend/.env.local
