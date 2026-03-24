@@ -10,3 +10,5 @@ data/processed/
 .ipynb_checkpoints/frontend/node_modules/
 frontend/.next/
 frontend/.env.local
+frontend/.next/
+frontend/node_modules/
