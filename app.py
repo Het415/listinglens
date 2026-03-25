@@ -18,26 +18,31 @@ app_state = {}
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 
+import asyncio
+from contextlib import asynccontextmanager
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from src.ingest import SUPPORTED_ASINS
     app_state["supported_asins"] = SUPPORTED_ASINS
     app_state["cache"] = {}
-
-    # only preload if cache files exist
-    nlp_csv = "data/processed/nlp_B08XPWDSWW.csv"
-    if os.path.exists(nlp_csv):
-        print("Preloading B08XPWDSWW from cache...")
-        try:
-            run_full_pipeline("B08XPWDSWW")
-            print("Preload complete.")
-        except Exception as e:
-            print(f"Preload skipped: {e}")
-    else:
-        print("No cache files found — skipping preload")
-
-    print(f"Ready.")
+    
+    # start server immediately — load cache in background
+    asyncio.create_task(preload_cache())
+    
     yield
+    print("Shutting down...")
+
+async def preload_cache():
+    """Loads cache in background after server starts."""
+    await asyncio.sleep(2)  # let server bind port first
+    print("Background: loading pre-computed cache...")
+    try:
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: run_full_pipeline("B08XPWDSWW"))
+        print("Background: cache loaded successfully")
+    except Exception as e:
+        print(f"Background: cache load failed: {e}")
 
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
