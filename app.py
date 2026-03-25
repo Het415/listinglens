@@ -35,16 +35,33 @@ async def lifespan(app: FastAPI):
     print("Shutting down...")
 
 async def preload_cache():
-    """Loads cache in background after server starts."""
-    await asyncio.sleep(2)  # let server bind port first
-    print("Background: loading pre-computed cache...")
-    try:
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, lambda: run_full_pipeline("B08XPWDSWW"))
-        print("Background: cache loaded successfully")
-    except Exception as e:
-        print(f"Background: cache load failed: {e}")
-
+    """Loads all supported ASINs from cache in background after server starts."""
+    await asyncio.sleep(3)
+    
+    supported = [
+        "B08XPWDSWW",
+        "B07GZFM1ZM", 
+        "B075X8471B",
+        "B01K8B8YA8",
+        "B07H65KP63",
+        "B0791TX5P5",
+        "B010BWYDYA",
+    ]
+    
+    for asin in supported:
+        nlp_csv = f"data/processed/nlp_{asin}.csv"
+        feat_json = f"data/processed/features_{asin}.json"
+        
+        if os.path.exists(nlp_csv) and os.path.exists(feat_json):
+            print(f"Preloading {asin}...")
+            try:
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, lambda a=asin: run_full_pipeline(a))
+                print(f"✓ {asin} loaded")
+            except Exception as e:
+                print(f"✗ {asin} failed: {e}")
+        else:
+            print(f"No cache files for {asin} — skipping")
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
