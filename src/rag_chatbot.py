@@ -104,80 +104,82 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
 
 
 # ── RAG Chain Builder ──────────────────────────────────────────────────────────
+import re # Added for regex detection
+
+# ... (Keep build_vectorstore as is, it's perfect)
+
+# ── New Helper: Rating Detector ──────────────────────────────────────────────
+
+def detect_rating_intent(question: str) -> int | None:
+    """
+    Simple regex to see if user is asking about a specific star rating.
+    Example: "What do 1-star reviews say?" -> returns 1
+    """
+    match = re.search(r"(\d)[-\s]?star", question.lower())
+    if match:
+        rating = int(match.group(1))
+        if 1 <= rating <= 5:
+            return rating
+    return None
+
+# ── Updated RAG Chain Builder ──────────────────────────────────────────────
 
 def build_rag_chain(vectorstore):
-    """
-    Builds a LangChain RAG chain using Groq as the LLM.
-
-    Architecture:
-        Question → FAISS retrieval (top 5 chunks) → Groq LLaMA 3 → Answer
-
-    Why Groq: completely free, LLaMA 3 70B quality,
-    faster than OpenAI for this use case.
-    """
     from langchain_groq import ChatGroq
     from langchain_core.prompts import PromptTemplate
 
-    # initialize Groq LLM
     llm = ChatGroq(
         model=GROQ_MODEL,
         api_key=GROQ_API_KEY,
-        temperature=0.1,      # low temperature = factual, consistent answers
+        temperature=0.1,
         max_tokens=512,
     )
 
-    # custom prompt — tells LLM to stay grounded in retrieved reviews
-    prompt_template = """You are a product analytics assistant helping an Amazon seller understand their customer feedback.
+    prompt_template = """You are a product analytics assistant. 
+Use ONLY the following review excerpts. If you are filtering by a specific star rating, 
+mention that in your answer (e.g., "Based on the 1-star reviews...").
 
-Use ONLY the following customer review excerpts to answer the question.
-If the answer cannot be found in the reviews, say "I don't have enough review data to answer this confidently."
-Never make up information or use general knowledge about the product.
-
-Customer review excerpts:
+Context:
 {context}
 
-Seller's question: {question}
+Question: {question}
 
-Provide a clear, specific answer based on the reviews above.
-Include specific details and patterns you observe across multiple reviews.
-Keep your answer under 150 words."""
+Answer (under 150 words):"""
 
-    PROMPT = PromptTemplate(
-        template=prompt_template,
-        input_variables=["context", "question"],
-    )
+    PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
 
-    retriever = vectorstore.as_retriever(
-        search_type="similarity",
-        search_kwargs={"k": 5},   # retrieve top 5 most relevant chunks
-    )
-
-    # Return a lightweight callable object so we don't depend on
-    # rapidly-changing chain helper import paths across LangChain versions.
     class SimpleRAGChain:
-        def __init__(self, llm, retriever, prompt):
+        def __init__(self, llm, vectorstore, prompt):
             self.llm = llm
-            self.retriever = retriever
+            self.vectorstore = vectorstore # We use the store directly for filtering
             self.prompt = prompt
 
         def invoke(self, payload: dict) -> dict:
             question = payload.get("input", "").strip()
-            docs = self.retriever.invoke(question) if question else []
+            
+            # 1. Detect if the user wants a specific rating
+            rating_filter = detect_rating_intent(question)
+            
+            # 2. Configure FAISS search
+            # If a filter is found, we tell FAISS to ignore everything else
+            search_kwargs = {"k": 5}
+            if rating_filter:
+                print(f"Applying Metadata Filter: rating == {rating_filter}")
+                search_kwargs["filter"] = {"rating": rating_filter}
+
+            # 3. Retrieve
+            docs = self.vectorstore.similarity_search(question, **search_kwargs)
+            
             context = "\n\n".join(doc.page_content for doc in docs)
             prompt_text = self.prompt.format(context=context, question=question)
-            try:
-                answer = self.llm.invoke(prompt_text).content
-            except Exception as e:
-                msg = str(e).lower()
-                if "decommissioned" in msg or "model_decommissioned" in msg:
-                    raise RuntimeError(
-                        f"Groq model '{GROQ_MODEL}' is decommissioned. "
-                        "Set a supported model in .env via GROQ_MODEL."
-                    ) from e
-                raise
+            
+            answer = self.llm.invoke(prompt_text).content
             return {"answer": answer, "context": docs}
 
-    return SimpleRAGChain(llm, retriever, PROMPT)
+    # Pass vectorstore instead of retriever for more control
+    return SimpleRAGChain(llm, vectorstore, PROMPT)
+
+# ... (Keep ask_question and run_rag_pipeline as is)
 
 
 # ── Query Function ─────────────────────────────────────────────────────────────
