@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
-
+# Define it here (Top level)
+ENV_MODE = os.getenv("ENV_MODE", "production")
 # ── App State ──────────────────────────────────────────────────────────────────
 # We cache pipeline results in memory so we don't rerun NLP on every request
 # This is the same pattern used in production ML serving systems
@@ -57,12 +58,11 @@ app = FastAPI(
 # allow Next.js frontend to call this API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten this in production
+    allow_origins=["https://listinglens-five.vercel.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 
 # ── Request/Response Models ────────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):
@@ -80,47 +80,50 @@ class ChatRequest(BaseModel):
 def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
     """
     Runs complete pipeline for one ASIN.
-    Loads pre-computed NLP results from disk if available.
-    Only runs NLP if no cache exists.
+    In PRODUCTION: Strictly loads from disk.
+    In DEVELOPMENT: Can trigger heavy ingestion if files are missing.
     """
-    # return in-memory cache if available
+    # 1. Memory cache hit
     if asin in app_state.get("cache", {}):
-        print(f"Memory cache hit for {asin}")
         return app_state["cache"][asin]
 
     nlp_csv   = f"data/processed/nlp_{asin}.csv"
     feat_json = f"data/processed/features_{asin}.json"
 
-    # ── Step 1: Load or compute NLP results ──
+    # 2. Check for File Existence
     if os.path.exists(nlp_csv) and os.path.exists(feat_json):
-        # load pre-computed results — instant
         print(f"Loading pre-computed NLP for {asin}...")
         df_enriched = pd.read_csv(nlp_csv)
         with open(feat_json) as f:
             cached = json.load(f)
         features = cached["features"]
         summary  = cached["summary"]
-
+    
+    # 3. THE GUARDRAIL: If files are missing...
     else:
-        # no cache — run full NLP pipeline
-        # note: this takes 3-5 mins, only runs once per ASIN
-        print(f"No cache found — running NLP pipeline for {asin}...")
+        if ENV_MODE == "production":
+            # Throw a 404 so Railway never attempts the download
+            print(f"Bailing out: ASIN {asin} not found in pre-computed data.")
+            raise HTTPException(
+                status_code=404,
+                detail=f"Analysis for ASIN {asin} is not pre-computed. Please use a supported ASIN."
+            )
+        
+        # ONLY runs in 'development' mode (your local machine)
+        print(f"Dev Mode: Running heavy NLP pipeline for {asin}...")
         from src.ingest import get_reviews
         from src.nlp_pipeline import run_nlp_pipeline
 
         df = get_reviews(asin, max_reviews=max_reviews, mode="huggingface")
         if df.empty:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No reviews found for ASIN {asin}."
-            )
+            raise HTTPException(status_code=404, detail="No reviews found.")
 
         nlp_result  = run_nlp_pipeline(df)
         df_enriched = nlp_result["df_enriched"]
         features    = nlp_result["features"]
         summary     = nlp_result["summary"]
 
-        # save to disk for future requests
+        # Save for future use
         df_enriched.to_csv(nlp_csv, index=False)
         with open(feat_json, "w") as f:
             json.dump({"features": features, "summary": summary}, f)
