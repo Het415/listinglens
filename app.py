@@ -55,14 +55,32 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# allow Next.js frontend to call this API
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["https://listinglens-five.vercel.app"], 
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# CORS: browser blocks cross-origin API calls unless the API echoes the request Origin.
+# NEXT_PUBLIC_API_URL only tells the frontend *where* to call — CORS must allow your
+# actual Vercel hostname (production, previews, or a custom domain).
+_default_cors = (
+    "https://listinglens-five.vercel.app,"
+    "http://localhost:3000,http://127.0.0.1:3000"
 )
+_cors_origins = [
+    o.strip()
+    for o in os.getenv("CORS_ALLOWED_ORIGINS", _default_cors).split(",")
+    if o.strip()
+]
+# Any *.vercel.app (production + preview URLs) unless disabled via CORS_ORIGIN_REGEX=""
+_cors_regex_raw = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app")
+_cors_regex = _cors_regex_raw.strip() if _cors_regex_raw.strip().lower() not in ("", "none", "false") else None
+
+_cors_kw: dict = {
+    "allow_origins": _cors_origins,
+    "allow_credentials": True,
+    "allow_methods": ["*"],
+    "allow_headers": ["*"],
+}
+if _cors_regex:
+    _cors_kw["allow_origin_regex"] = _cors_regex
+
+app.add_middleware(CORSMiddleware, **_cors_kw)
 
 # ── Request/Response Models ────────────────────────────────────────────────────
 class AnalyzeRequest(BaseModel):

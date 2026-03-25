@@ -5,6 +5,11 @@ import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
 import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight } from 'lucide-react'
 
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
+  /\/$/,
+  '',
+)
+
 export default function LandingPage() {
   const router = useRouter()
   const [url, setUrl] = useState('')
@@ -40,7 +45,7 @@ export default function LandingPage() {
       // step 1 — show loading state
       setLoadingStep(0) // "Fetching reviews..."
       
-      const response = await fetch('https://listinglens-api-production.up.railway.app/analyze', {
+      const response = await fetch(`${API_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url_or_asin: url }),
@@ -49,8 +54,15 @@ export default function LandingPage() {
       setLoadingStep(1) // "Running NLP analysis..."
 
       if (!response.ok) {
-        const error = await response.json()
-        alert(`Error: ${error.detail}`)
+        const text = await response.text()
+        let detail = text.slice(0, 400)
+        try {
+          const parsed = JSON.parse(text) as { detail?: string; message?: string }
+          detail = parsed.detail ?? parsed.message ?? detail
+        } catch {
+          /* Railway/HTML error pages are not JSON */
+        }
+        alert(`Error (${response.status}): ${detail}`)
         setIsLoading(false)
         return
       }
@@ -67,7 +79,12 @@ export default function LandingPage() {
       router.push(`/dashboard?asin=${data.asin}`)
 
     } catch (err) {
-      alert('Failed to connect to API. Make sure the backend is running on port 8000.')
+      const hint =
+        err instanceof Error ? err.message : 'Unknown error'
+      alert(
+        `Could not reach the API (${API_URL}).\n\n${hint}\n\n` +
+          'Set NEXT_PUBLIC_API_URL in frontend/.env.local to your Railway URL, restart npm run dev, and check CORS + Railway logs.',
+      )
       setIsLoading(false)
     }
   }
