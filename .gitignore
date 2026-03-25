@@ -3,8 +3,8 @@ venv/
 __pycache__/
 *.pyc
 .DS_Store
-data/raw/
-data/processed/
+data/raw/raw/raw/
+data/raw/raw/processed/
 *.pkl
 *.faiss
 .ipynb_checkpoints/frontend/node_modules/

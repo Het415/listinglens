@@ -20,24 +20,24 @@ app_state = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Runs once on startup — preloads supported ASINs into memory."""
-    print("ListingLens API starting up...")
-
     from src.ingest import SUPPORTED_ASINS
     app_state["supported_asins"] = SUPPORTED_ASINS
     app_state["cache"] = {}
 
-    # preload TOZO earbuds since we have cached NLP files
-    print("Preloading B08XPWDSWW into memory...")
-    try:
-        run_full_pipeline("B08XPWDSWW")
-        print("Preload complete.")
-    except Exception as e:
-        print(f"Preload failed: {e}")
+    # only preload if cache files exist
+    nlp_csv = "data/processed/nlp_B08XPWDSWW.csv"
+    if os.path.exists(nlp_csv):
+        print("Preloading B08XPWDSWW from cache...")
+        try:
+            run_full_pipeline("B08XPWDSWW")
+            print("Preload complete.")
+        except Exception as e:
+            print(f"Preload skipped: {e}")
+    else:
+        print("No cache files found — skipping preload")
 
-    print(f"Ready. Supported ASINs: {list(SUPPORTED_ASINS.keys())}")
+    print(f"Ready.")
     yield
-    print("Shutting down...")
 
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 'use client'
-import { useState, useEffect, useRef } from 'react'
+import { Suspense, useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { Send } from 'lucide-react'
 import { Logo } from '@/components/logo'
@@ -20,7 +20,7 @@ interface Message {
   sources?: any[]
 }
 
-export default function ChatPage() {
+function ChatPageContent() {
   const searchParams = useSearchParams()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
   const [messages, setMessages] = useState<Message[]>([])
@@ -169,5 +169,13 @@ export default function ChatPage() {
         </div>
       </div>
     </div>
+  )
+}
+
+export default function ChatPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen text-muted-foreground">Loading...</div>}>
+      <ChatPageContent />
+    </Suspense>
   )
 }
