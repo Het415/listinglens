@@ -20,8 +20,14 @@ export default function LandingPage() {
   ]
 
   useEffect(() => {
+    // 1. Existing URL pattern
     const amazonUrlPattern = /^https?:\/\/(www\.)?amazon\.(com|co\.uk|de|fr|es|it|ca|com\.au|in|co\.jp)(\/.*)?$/i
-    setIsValidUrl(amazonUrlPattern.test(url) || url.includes('amazon.com/dp/'))
+    const isUrl = amazonUrlPattern.test(url) || url.includes('amazon.com/dp/')
+  
+    // 2. New ASIN pattern (10 alphanumeric characters)
+    const isAsin = /^[A-Z0-9]{10}$/i.test(url.trim())
+  
+    setIsValidUrl(isUrl || isAsin)
   }, [url])
 
   const handleAnalyze = async () => {
@@ -34,7 +40,7 @@ export default function LandingPage() {
       // step 1 — show loading state
       setLoadingStep(0) // "Fetching reviews..."
       
-      const response = await fetch('http://localhost:8000/analyze', {
+      const response = await fetch('https://listinglens-api-production.up.railway.app/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url_or_asin: url }),
@@ -104,7 +110,7 @@ export default function LandingPage() {
                     {isValidUrl ? (
                       <Check className="w-5 h-5 text-accent-green" />
                     ) : (
-                      <div className="text-xs text-text-muted">Invalid URL</div>
+                      <div className="text-xs text-text-muted">Enter URL or ASIN</div>
                     )}
                   </div>
                 )}
