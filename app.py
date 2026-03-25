@@ -146,7 +146,6 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
 
     # cache in memory
     app_state["cache"][asin]          = result
-    app_state[f"chain_{asin}"]        = rag["chain"]
 
     return result
 
@@ -203,7 +202,7 @@ def chat(request: ChatRequest):
         # ensure analyze ran
         run_full_pipeline(request.asin)
 
-        df_enriched = pd.read_csv(f"data/processed/nlp_{request.asin}.csv")
+        df_enriched = pd.read_csv(f"data/processed/nlp_{request.asin}.csv").head(100)
         rag = run_rag_pipeline(df_enriched, request.asin)
 
         app_state[chain_key] = rag["chain"]
