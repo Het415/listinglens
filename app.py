@@ -65,9 +65,9 @@ app.add_middleware(
 
 
 # ── Request/Response Models ────────────────────────────────────────────────────
-
 class AnalyzeRequest(BaseModel):
-    url_or_asin: str
+    url_or_asin: str | None = None
+    asin: str | None = None
     max_reviews: int = 250
 
 class ChatRequest(BaseModel):
@@ -186,7 +186,7 @@ def analyze_product(request: AnalyzeRequest):
     """
     from src.ingest import extract_asin
     try:
-        asin = extract_asin(request.url_or_asin)
+        asin = request.asin or extract_asin(request.url_or_asin)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
