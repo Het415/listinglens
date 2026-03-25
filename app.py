@@ -129,20 +129,19 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
     from src.fusion import run_fusion_pipeline
     risk = run_fusion_pipeline(features)
 
-    # ── Step 3: RAG setup ──
-    from src.rag_chatbot import run_rag_pipeline
-    rag = run_rag_pipeline(df_enriched, asin)
-
     # ── Assemble result ──
     result = {
         "asin":                asin,
         "product_name":        app_state["supported_asins"].get(asin, asin),
         "n_reviews":           len(df_enriched),
-        "n_chunks":            rag["n_chunks"],
+        "n_chunks":            None,
         "summary":             summary,
         "features":            features,
         "risk":                risk,
-        "suggested_questions": rag["suggested_questions"],
+        "suggested_questions": [
+    "Why are customers unhappy?",
+    "What do 1-star reviews say?",
+    "What features do customers like?"]
     }
 
     # cache in memory
@@ -196,16 +195,18 @@ def analyze_product(request: AnalyzeRequest):
 
 @app.post("/chat")
 def chat(request: ChatRequest):
-    """
-    RAG chatbot endpoint — answers seller questions about a product.
-
-    Requires /analyze to have been called first for this ASIN.
-    """
     chain_key = f"chain_{request.asin}"
 
-    # if chain not in memory, run pipeline first
     if chain_key not in app_state:
+        from src.rag_chatbot import run_rag_pipeline
+
+        # ensure analyze ran
         run_full_pipeline(request.asin)
+
+        df_enriched = pd.read_csv(f"data/processed/nlp_{request.asin}.csv")
+        rag = run_rag_pipeline(df_enriched, request.asin)
+
+        app_state[chain_key] = rag["chain"]
 
     chain = app_state[chain_key]
 
@@ -213,10 +214,10 @@ def chat(request: ChatRequest):
     result = ask_question(chain, request.question)
 
     return {
-        "asin":     request.asin,
+        "asin": request.asin,
         "question": request.question,
-        "answer":   result["answer"],
-        "sources":  result["sources"],
+        "answer": result["answer"],
+        "sources": result["sources"],
     }
 
 
