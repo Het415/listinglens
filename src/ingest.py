@@ -153,9 +153,11 @@ def fetch_reviews_from_huggingface(asin: str, max_reviews: int = 250) -> pd.Data
         "score": "rating",
         "title": "title",
     })
+    if "timestamp" not in df.columns and "unixReviewTime" in df.columns:
+        df = df.rename(columns={"unixReviewTime": "timestamp"})
 
-    # keep only what we need
-    keep = [c for c in ["title", "body", "rating"] if c in df.columns]
+    # keep only what we need (timestamp = review time in ms, for sentiment timeline)
+    keep = [c for c in ["title", "body", "rating", "timestamp"] if c in df.columns]
     return df[keep].copy()
 
 

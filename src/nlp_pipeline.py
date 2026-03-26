@@ -358,6 +358,30 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
     print("\nStep 3/3: Feature engineering...")
     df_enriched, features = engineer_features(df_enriched, topics, topic_info)
 
+    # build monthly sentiment timeline from enriched df
+    if "timestamp" in df_enriched.columns:
+        ts_raw = pd.to_numeric(df_enriched["timestamp"], errors="coerce")
+        # HF / APIs may use seconds (~1e9) or milliseconds (~1e12)
+        if ts_raw.notna().any() and ts_raw.max() < 1e11:
+            df_enriched["timestamp_parsed"] = pd.to_datetime(ts_raw, unit="s", errors="coerce")
+        else:
+            df_enriched["timestamp_parsed"] = pd.to_datetime(ts_raw, unit="ms", errors="coerce")
+    else:
+        df_enriched["timestamp_parsed"] = pd.Series(
+            [pd.NaT] * len(df_enriched), index=df_enriched.index, dtype="datetime64[ns]"
+        )
+
+    timeline_valid = df_enriched.dropna(subset=["timestamp_parsed"])
+    if len(timeline_valid) == 0:
+        sentiment_timeline: dict = {}
+    else:
+        monthly = timeline_valid.groupby(
+            timeline_valid["timestamp_parsed"].dt.to_period("M")
+        )["compound_score"].mean()
+        sentiment_timeline = {}
+        for period, score in monthly.tail(18).items():
+            sentiment_timeline[str(period)] = round(float(score), 3)
+
     # ── Summary stats for dashboard ──
     summary = {
         "total_reviews":    len(df),
@@ -383,6 +407,7 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
                                           .mean()
                                           .round(3)
                                           .to_dict(),
+        "sentiment_timeline": sentiment_timeline,
     }
 
     print(f"\nNLP pipeline complete.")
