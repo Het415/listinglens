@@ -157,7 +157,7 @@ def fetch_reviews_from_huggingface(asin: str, max_reviews: int = 250) -> pd.Data
 # ── Main Entry Point ───────────────────────────────────────────────────────────
 
 def get_reviews(url_or_asin: str, max_reviews: int = 250,
-                mode: str = "auto") -> pd.DataFrame:
+                mode: str = "auto") -> tuple[pd.DataFrame, dict]:
     """
     Main function the rest of the project calls.
 
@@ -168,7 +168,11 @@ def get_reviews(url_or_asin: str, max_reviews: int = 250,
               auto = always uses huggingface (rapidapi free tier unreliable)
 
     Returns:
-        Clean DataFrame with columns: title, body, rating, review_id
+        (df, raw_distribution)
+
+        - df: Clean DataFrame with columns: title, body, rating, review_id
+        - raw_distribution: dict[str, int] of star rating -> count captured
+          from the raw dataset BEFORE balancing in clean_reviews().
     """
     asin = extract_asin(url_or_asin)
     print(f"Extracted ASIN: {asin}")
@@ -181,9 +185,20 @@ def get_reviews(url_or_asin: str, max_reviews: int = 250,
         # huggingface is default — clean, reliable, free
         df = fetch_reviews_from_huggingface(asin, max_reviews)
 
+    # Capture raw star distribution BEFORE balancing.
+    raw_distribution: dict[str, int] = {"1": 0, "2": 0, "3": 0, "4": 0, "5": 0}
+    if not df.empty and "rating" in df.columns:
+        ratings = pd.to_numeric(df["rating"], errors="coerce").dropna().astype(int)
+        ratings = ratings[ratings.between(1, 5)]
+        counts = ratings.value_counts().to_dict()
+        raw_distribution = {str(k): int(v) for k, v in counts.items()}
+        # ensure all 1-5 keys exist
+        for k in ["1", "2", "3", "4", "5"]:
+            raw_distribution.setdefault(k, 0)
+
     df = clean_reviews(df, max_reviews)
     print(f"Done — {len(df)} clean reviews ready")
-    return df
+    return df, raw_distribution
 
 
 # ── Cleaner ────────────────────────────────────────────────────────────────────
@@ -215,7 +230,9 @@ def clean_reviews(df: pd.DataFrame, max_reviews: int = 250) -> pd.DataFrame:
     # 5. keep only valid ratings (1-5)
     df = df[df["rating"].between(1, 5)]
 
-    # 6. balance across star ratings — 50 reviews per star
+    # 6. balance across star ratings — 50 reviews per star (max_reviews // 5)
+    # This keeps the NLP pipeline robust across ratings, while we still surface
+    # the real distribution separately via `raw_star_distribution`.
     reviews_per_star = max_reviews // 5
     balanced = []
     for star in [1, 2, 3, 4, 5]:

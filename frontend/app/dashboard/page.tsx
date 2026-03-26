@@ -156,7 +156,9 @@ function DashboardPageContent() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <PhraseClouds type="positive" topics={topics} />
         <PhraseClouds type="negative" topics={topics} />
-        <ReviewDistribution sentimentByRating={summary.sentiment_by_rating} />
+        <ReviewDistribution
+          starDistribution={summary.raw_star_distribution}
+        />
       </div>
     </div>
   )

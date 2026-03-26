@@ -256,7 +256,7 @@ def engineer_features(df: pd.DataFrame,
 
 # ── Main Pipeline Function ─────────────────────────────────────────────────────
 
-def run_nlp_pipeline(df: pd.DataFrame) -> dict:
+def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> dict:
     """
     Master function — runs full NLP pipeline on a reviews DataFrame.
 
@@ -312,6 +312,7 @@ def run_nlp_pipeline(df: pd.DataFrame) -> dict:
                 reverse=True
             )[:6]  # top 6 topics for dashboard
         ],
+        "raw_star_distribution": raw_distribution,
         "sentiment_by_rating": df_enriched.groupby("rating")["compound_score"]
                                           .mean()
                                           .round(3)

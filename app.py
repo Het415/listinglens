@@ -149,11 +149,15 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
         from src.ingest import get_reviews
         from src.nlp_pipeline import run_nlp_pipeline
 
-        df = get_reviews(asin, max_reviews=max_reviews, mode="huggingface")
+        df, raw_distribution = get_reviews(
+            asin,
+            max_reviews=max_reviews,
+            mode="huggingface",
+        )
         if df.empty:
             raise HTTPException(status_code=404, detail="No reviews found.")
 
-        nlp_result  = run_nlp_pipeline(df)
+        nlp_result  = run_nlp_pipeline(df, raw_distribution=raw_distribution)
         df_enriched = nlp_result["df_enriched"]
         features    = nlp_result["features"]
         summary     = nlp_result["summary"]
