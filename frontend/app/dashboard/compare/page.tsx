@@ -1,7 +1,6 @@
 'use client'
 
 import { Suspense, useMemo, useState, useEffect, useRef } from 'react'
-import { useSearchParams } from 'next/navigation'
 import { Star } from 'lucide-react'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
@@ -145,24 +144,13 @@ function ProductSlot({
   )
 }
 
-function ComparePageInner() {
-  const searchParams = useSearchParams()
-  const initialAsin = searchParams.get('asin') || ''
-  return <ComparePageContent initialAsin={initialAsin} />
-}
-
 function ComparePageContent() {
-
-  const [slot1, setSlot1] = useState(initialAsin)
+  const [slot1, setSlot1] = useState('')
   const [slot2, setSlot2] = useState('')
   const [slot3, setSlot3] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cards, setCards] = useState<CompareCard[]>([])
-
-  useEffect(() => {
-    if (initialAsin) setSlot1(initialAsin)
-  }, [initialAsin])
 
   const selectedAsins = useMemo(() => {
     const raw = [slot1, slot2, slot3]
