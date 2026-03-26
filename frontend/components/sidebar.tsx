@@ -43,6 +43,9 @@ export function Sidebar() {
   const visualHref = currentAsin
     ? `/dashboard/visual?asin=${encodeURIComponent(currentAsin)}`
     : '/dashboard/visual'
+  const askAiHref = currentAsin
+    ? `/chat?asin=${encodeURIComponent(currentAsin)}`
+    : '/chat'
 
   return (
     <aside className="hidden md:flex w-[220px] flex-col bg-background border-r border-border-subtle h-screen sticky top-0">
@@ -62,6 +65,8 @@ export function Sidebar() {
                   ? reviewsHref
                   : item.href === '/dashboard/visual'
                     ? visualHref
+                    : item.href === '/chat'
+                      ? askAiHref
                     : item.href
             const isActive = pathname === item.href || 
               (item.href === '/dashboard' && pathname.startsWith('/dashboard') && pathname !== '/dashboard/reviews' && pathname !== '/dashboard/visual' && pathname !== '/dashboard/compare' && pathname !== '/dashboard/settings')
@@ -122,6 +127,9 @@ export function MobileNav() {
   const visualHref = currentAsin
     ? `/dashboard/visual?asin=${encodeURIComponent(currentAsin)}`
     : '/dashboard/visual'
+  const askAiHref = currentAsin
+    ? `/chat?asin=${encodeURIComponent(currentAsin)}`
+    : '/chat'
 
   const mobileItems = navItems.slice(0, 5)
 
@@ -136,6 +144,8 @@ export function MobileNav() {
                 ? reviewsHref
                 : item.href === '/dashboard/visual'
                   ? visualHref
+                  : item.href === '/chat'
+                    ? askAiHref
                   : item.href
           const isActive = pathname === item.href || 
             (item.href === '/dashboard' && pathname.startsWith('/dashboard'))

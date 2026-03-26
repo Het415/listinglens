@@ -11,7 +11,13 @@ interface TopBarProps {
 import { useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 
-export function TopBar() {
+export function TopBar({
+  onExport,
+  isExporting,
+}: {
+  onExport?: (() => Promise<void>) | null
+  isExporting?: boolean
+}) {
   const searchParams = useSearchParams()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
   const [productName, setProductName] = useState(asin)
@@ -41,13 +47,21 @@ export function TopBar() {
       </nav>
       
       <div className="flex items-center gap-3">
-        <button className="hidden md:flex items-center gap-2 px-4 py-2 text-sm border border-border rounded-lg text-text-secondary hover:border-border-hover hover:text-text-primary transition-colors">
+        <button
+          type="button"
+          onClick={async () => {
+            if (!onExport) return
+            await onExport()
+          }}
+          disabled={!onExport || isExporting}
+          className="hidden md:flex items-center gap-2 px-4 py-2 text-sm border border-border rounded-lg text-text-secondary hover:border-border-hover hover:text-text-primary transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+        >
           <Download className="w-4 h-4" />
-          <span>Export Report</span>
+          <span>{isExporting ? 'Exporting...' : 'Export Report'}</span>
         </button>
 
         <Link
-          href="/chat"
+          href={`/chat?asin=${encodeURIComponent(asin)}`}
           className="flex items-center gap-2 px-4 py-2 text-sm bg-accent-teal text-background font-medium rounded-lg hover:bg-accent-teal/90 transition-colors"
         >
           Ask AI

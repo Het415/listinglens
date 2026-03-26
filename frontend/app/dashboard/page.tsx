@@ -7,6 +7,8 @@ import { QualityBreakdown } from '@/components/dashboard/quality-breakdown'
 import { SentimentTimeline } from '@/components/dashboard/sentiment-timeline'
 import { PhraseClouds } from '@/components/dashboard/phrase-clouds'
 import { ReviewDistribution } from '@/components/dashboard/review-distribution'
+import { exportToPDF } from '@/lib/exportReport'
+import { useDashboardExport } from './dashboard-export-context'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -18,10 +20,30 @@ function DashboardPageContent() {
   const searchParams = useSearchParams()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
 
+  const { setAnalysis, setOnExport, setIsExporting } = useDashboardExport()
+
   useEffect(() => {
     setMounted(true)
     loadAnalysis()
   }, [asin])
+
+  useEffect(() => {
+    if (!data) {
+      setAnalysis(null)
+      setOnExport(null)
+      return
+    }
+
+    setAnalysis(data)
+    setOnExport(async () => {
+      setIsExporting(true)
+      try {
+        await exportToPDF(data)
+      } finally {
+        setIsExporting(false)
+      }
+    })
+  }, [data, setAnalysis, setOnExport, setIsExporting])
 
   const loadAnalysis = async () => {
     setLoading(true)

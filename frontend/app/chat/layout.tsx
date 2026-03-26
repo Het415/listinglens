@@ -1,13 +1,9 @@
 import { Suspense } from 'react'
 import { Sidebar, MobileNav } from '@/components/sidebar'
-import { DashboardExportProvider } from './dashboard-export-context'
-import { TopBarWithExport } from './top-bar-with-export'
+import { DashboardExportProvider } from '../dashboard/dashboard-export-context'
+import { TopBarWithExport } from '../dashboard/top-bar-with-export'
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function ChatLayout({ children }: { children: React.ReactNode }) {
   return (
     <DashboardExportProvider>
       <div className="flex min-h-screen bg-background">
@@ -16,12 +12,11 @@ export default function DashboardLayout({
           <Suspense fallback={<div className="h-[60px] bg-background-secondary border-b border-border" />}>
             <TopBarWithExport />
           </Suspense>
-          <main className="flex-1 overflow-auto">
-            {children}
-          </main>
+          <main className="flex-1 overflow-auto">{children}</main>
         </div>
         <MobileNav />
       </div>
     </DashboardExportProvider>
   )
 }
+
