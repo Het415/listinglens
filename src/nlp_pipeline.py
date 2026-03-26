@@ -145,76 +145,126 @@ def parse_sentiment_results(raw_results: list) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-# ── Topic Modeling ─────────────────────────────────────────────────────────────
+# ── Keyword category analysis ───────────────────────────────────────────────────
 
-def run_topic_modeling(texts: list[str],
-                       n_topics: int = 8) -> tuple[list[int], dict]:
+# Fixed review themes: first matching category wins per review (order matters for overlaps).
+CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
+    ("Battery Life", ["battery", "charge", "charging", "dies", "drain", "last", "hours"]),
+    ("Sound Quality", ["sound", "audio", "bass", "volume", "loud", "noise", "music"]),
+    ("Build Quality", ["broke", "broken", "cheap", "flimsy", "durable", "quality", "material"]),
+    ("Setup & Installation", ["setup", "install", "connect", "pairing", "pair", "wifi", "configure"]),
+    ("Performance & Speed", ["slow", "fast", "lag", "freeze", "crash", "buffer", "loading"]),
+    ("Customer Service", ["return", "refund", "support", "replaced", "warranty", "defective"]),
+    ("Value for Money", ["worth", "expensive", "cheap", "price", "value", "money", "cost"]),
+    ("Comfort & Fit", ["comfortable", "uncomfortable", "fit", "ear", "wear", "tight", "loose"]),
+    ("Connectivity", ["bluetooth", "wifi", "connection", "disconnect", "drops", "signal", "remote"]),
+    ("Features & Usability", ["feature", "button", "app", "easy", "difficult", "interface", "works"]),
+]
+
+_CATEGORY_INDEX_BY_NAME = {name: i for i, (name, _) in enumerate(CATEGORY_KEYWORDS)}
+
+
+def _review_matches_keywords(text_lower: str, keywords: list[str]) -> bool:
+    return any(kw in text_lower for kw in keywords)
+
+
+def _complaint_level(pct_negative: float) -> str:
+    if pct_negative > 50:
+        return "HIGH"
+    if pct_negative > 30:
+        return "MEDIUM"
+    return "LOW"
+
+
+def _build_category_outputs(
+    texts: pd.Series,
+    ratings: pd.Series,
+) -> tuple[list[int], dict, list[dict]]:
     """
-    Runs topic modeling using KeyBERT-style approach.
-    Uses single-process execution to avoid Mac/Python 3.13 segfault.
+    Internal: per-review topic ids, full topic_info for features, and the public
+    category list (count >= 5, sorted by count desc) for dashboards.
     """
-    from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
-    from sklearn.decomposition import LatentDirichletAllocation
-    import numpy as np
+    print("Running category analysis...")
 
-    print("Running topic modeling...")
+    texts = texts.reset_index(drop=True)
+    ratings = ratings.reset_index(drop=True)
+    n = len(texts)
+    if n == 0:
+        return [], {}, []
 
-    custom_review_stopwords = [
-        "amazon", "product", "just", "like", "get", "got", "use", "used", "using",
-        "one", "would", "really", "also", "time", "new", "item", "buy", "bought",
-        "purchase", "purchased", "price", "good", "great", "nice", "well", "works",
-        "work", "make", "made", "need", "even", "still", "back", "day", "days",
-        "month", "months", "year", "first", "second", "came", "come", "know",
-        "think", "way", "thing", "things", "little", "lot", "much", "many",
-        "better", "best", "worst", "bad", "old", "app", "device", "customer",
-        "service", "review", "star", "stars", "highly", "recommend",
-    ]
-    all_stopwords = sorted(set(ENGLISH_STOP_WORDS).union(custom_review_stopwords))
+    texts_lower = [t.lower() if isinstance(t, str) else "" for t in texts]
 
-    # use LDA instead of BERTopic — more stable on Mac/Python 3.13
-    # still gives meaningful topics for our use case
-    vectorizer = CountVectorizer(
-        max_features=1000,
-        stop_words=all_stopwords,
-        min_df=3,
-        ngram_range=(1, 2),  # captures "battery life", "sound quality"
-    )
+    mention_sets: list[list[bool]] = []
+    for _name, kws in CATEGORY_KEYWORDS:
+        mention_sets.append([_review_matches_keywords(t, kws) for t in texts_lower])
 
-    try:
-        X = vectorizer.fit_transform(texts)
-    except ValueError:
-        # not enough text — return empty topics
-        print("Not enough text for topic modeling")
-        return [-1] * len(texts), {}
+    topics: list[int] = []
+    for i in range(n):
+        tid = -1
+        for cat_idx, mentions in enumerate(mention_sets):
+            if mentions[i]:
+                tid = cat_idx
+                break
+        topics.append(tid)
 
-    # fit LDA
-    lda = LatentDirichletAllocation(
-        n_components=min(n_topics, len(texts) // 2),
-        random_state=42,
-        max_iter=10,
-    )
-    lda.fit(X)
+    topic_info: dict = {}
+    category_rows: list[dict] = []
 
-    # assign each review to its dominant topic
-    doc_topics = lda.transform(X)
-    topics = doc_topics.argmax(axis=1).tolist()
+    for cat_idx, ((label, trigger_keywords), mentions) in enumerate(
+        zip(CATEGORY_KEYWORDS, mention_sets)
+    ):
+        count = int(sum(mentions))
+        neg = 0
+        pos = 0
+        for i, hit in enumerate(mentions):
+            if not hit:
+                continue
+            r = float(ratings.iloc[i]) if not pd.isna(ratings.iloc[i]) else 3.0
+            if 1 <= r <= 2:
+                neg += 1
+            elif 4 <= r <= 5:
+                pos += 1
 
-    # extract top keywords per topic
-    feature_names = vectorizer.get_feature_names_out()
-    topic_info = {}
+        raw_neg_pct = (neg / count) * 100 if count else 0.0
+        raw_pos_pct = (pos / count) * 100 if count else 0.0
+        pct_negative = float(round(raw_neg_pct, 1))
+        pct_positive = float(round(raw_pos_pct, 1))
 
-    for topic_id in range(lda.n_components):
-        top_indices = lda.components_[topic_id].argsort()[-5:][::-1]
-        keywords = [feature_names[i] for i in top_indices]
-        label = " · ".join(keywords[:3])
-        topic_info[topic_id] = {
+        topic_info[cat_idx] = {
             "label": label,
-            "keywords": keywords,
-            "count": topics.count(topic_id),
+            "keywords": trigger_keywords,
+            "count": count,
         }
 
-    print(f"Found {len(topic_info)} topics")
-    return topics, topic_info
+        if count >= 5:
+            category_rows.append({
+                "label": label,
+                "keywords": trigger_keywords[:3],
+                "count": count,
+                "pct_negative": pct_negative,
+                "pct_positive": pct_positive,
+                "complaint_level": _complaint_level(raw_neg_pct),
+            })
+
+    category_rows.sort(key=lambda row: row["count"], reverse=True)
+    print(f"Category mentions (>=5 in output): {len(category_rows)}")
+    return topics, topic_info, category_rows
+
+
+def run_category_analysis(texts: pd.Series, ratings: pd.Series) -> list[dict]:
+    """
+    Keyword-based category detection (case-insensitive substring match).
+
+    For each category, counts reviews with at least one trigger keyword and
+    computes the share of those mentions from 1–2★ vs 4–5★ reviews (3★ excluded).
+
+    Returns:
+        Sorted list (count descending) of dicts with label, keywords (3 strings),
+        count, pct_negative, pct_positive, complaint_level — only categories with
+        count >= 5.
+    """
+    _, _, rows = _build_category_outputs(texts, ratings)
+    return rows
 
 
 # ── Feature Engineering ────────────────────────────────────────────────────────
@@ -281,8 +331,8 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
     Returns dict with:
         df_enriched:  original df + sentiment columns + topic_id
         features:     product-level feature dict for XGBoost
-        topic_info:   topic labels and keywords for dashboard display
-        summary:      human-readable summary stats
+        topic_info:   category labels and keywords for dashboard / features
+        summary:      human-readable summary stats (categories + top_topics for UI)
     """
     print(f"\nRunning NLP pipeline on {len(df)} reviews...")
 
@@ -297,9 +347,12 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
         axis=1
     )
 
-    # ── Step 2: Topic modeling ──
-    print("\nStep 2/3: Topic modeling...")
-    topics, topic_info = run_topic_modeling(df["body"].tolist())
+    # ── Step 2: Category analysis ──
+    print("\nStep 2/3: Category analysis...")
+    topics, topic_info, categories = _build_category_outputs(
+        df["body"],
+        df["rating"],
+    )
 
     # ── Step 3: Feature engineering ──
     print("\nStep 3/3: Feature engineering...")
@@ -311,18 +364,19 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
         "avg_rating":       round(df["rating"].mean(), 2),
         "pct_negative":     round(features["pct_negative"] * 100, 1),
         "pct_positive":     round(features["pct_positive"] * 100, 1),
+        "categories":       categories,
+        # Frontend compatibility: same shape as old top_topics + extra fields
         "top_topics":       [
             {
-                "id":       tid,
-                "label":    info["label"],
-                "keywords": info["keywords"],
-                "count":    info["count"],
+                "id":              _CATEGORY_INDEX_BY_NAME[cat["label"]],
+                "label":           cat["label"],
+                "keywords":        cat["keywords"],
+                "count":           cat["count"],
+                "pct_negative":    cat["pct_negative"],
+                "pct_positive":    cat["pct_positive"],
+                "complaint_level": cat["complaint_level"],
             }
-            for tid, info in sorted(
-                topic_info.items(),
-                key=lambda x: x[1]["count"],
-                reverse=True
-            )[:6]  # top 6 topics for dashboard
+            for cat in categories[:6]
         ],
         "raw_star_distribution": raw_distribution,
         "sentiment_by_rating": df_enriched.groupby("rating")["compound_score"]
@@ -334,7 +388,7 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
     print(f"\nNLP pipeline complete.")
     print(f"  Sentiment: {summary['pct_positive']}% positive, "
           f"{summary['pct_negative']}% negative")
-    print(f"  Topics found: {len(topic_info)}")
+    print(f"  Categories (>=5 mentions): {len(categories)}")
 
     return {
         "df_enriched": df_enriched,
