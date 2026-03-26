@@ -1,7 +1,8 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
+import { useEffect, useState } from 'react'
 import { Logo } from './logo'
 import { 
   LayoutDashboard, 
@@ -24,8 +25,15 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const currentAsin = searchParams.get('asin')
+  const [currentAsin, setCurrentAsin] = useState<string | null>(null)
+
+  useEffect(() => {
+    // Avoid `useSearchParams()` (requires Suspense in Next.js app router).
+    // For sidebar prefill, we only need this on the client.
+    const sp = new URLSearchParams(window.location.search)
+    setCurrentAsin(sp.get('asin'))
+  }, [pathname])
+
   const compareHref = currentAsin
     ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
     : '/dashboard/compare'
@@ -85,8 +93,13 @@ export function Sidebar() {
 
 export function MobileNav() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const currentAsin = searchParams.get('asin')
+  const [currentAsin, setCurrentAsin] = useState<string | null>(null)
+
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search)
+    setCurrentAsin(sp.get('asin'))
+  }, [pathname])
+
   const compareHref = currentAsin
     ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
     : '/dashboard/compare'
