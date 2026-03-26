@@ -168,12 +168,20 @@ Answer (under 150 words):"""
                 search_kwargs["filter"] = {"rating": rating_filter}
 
             # 3. Retrieve
-            docs = self.vectorstore.similarity_search(question, **search_kwargs)
+            try:
+                docs = self.vectorstore.similarity_search(question, **search_kwargs)
+            except Exception as e:
+                print(f"[RAG] similarity_search failed: {e}")
+                raise
             
             context = "\n\n".join(doc.page_content for doc in docs)
             prompt_text = self.prompt.format(context=context, question=question)
             
-            answer = self.llm.invoke(prompt_text).content
+            try:
+                answer = self.llm.invoke(prompt_text).content
+            except Exception as e:
+                print(f"[RAG] Groq generation failed: {e}")
+                raise
             return {"answer": answer, "context": docs}
 
     # Pass vectorstore instead of retriever for more control
@@ -256,7 +264,8 @@ def run_rag_pipeline(df_enriched: pd.DataFrame, asin: str) -> dict:
     n_chunks = vectorstore.index.ntotal
 
     print(f"RAG pipeline ready — {n_chunks} chunks indexed")
-    print(f"Using model: LLaMA 3 70B via Groq (free)")
+    print(f"Using model: {GROQ_MODEL}")
+    print(f"Using API key set: {bool(GROQ_API_KEY)}")
 
     return {
         "chain":               chain,
