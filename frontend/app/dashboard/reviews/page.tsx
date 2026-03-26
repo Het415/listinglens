@@ -386,8 +386,8 @@ function ReviewsPageInner() {
           </section>
 
           {/* SECTION 2 — Sentiment by Star Rating */}
-          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-            <div className="flex items-center justify-between gap-4 mb-4">
+          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-4">
+            <div className="flex items-center justify-between gap-4 mb-2">
               <h2 className="text-sm font-medium text-text-primary">Sentiment by Star Rating</h2>
               <p className="text-xs text-text-muted">
                 Hover for what this represents.
@@ -397,7 +397,7 @@ function ReviewsPageInner() {
             <ChartContainer
               id="sentiment-by-star"
               config={SENTIMENT_BY_STAR_CHART_CONFIG}
-              className="aspect-[5/2] w-full"
+              className="h-[192px] w-full aspect-auto"
             >
               <BarChart
                 data={sentimentRows.rows.map((r) => ({
@@ -408,6 +408,8 @@ function ReviewsPageInner() {
                   raw: r.compound,
                 }))}
                 layout="vertical"
+                barCategoryGap={8}
+                barGap={0}
                 margin={{ top: 0, right: 24, bottom: 0, left: 16 }}
               >
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
@@ -434,7 +436,12 @@ function ReviewsPageInner() {
                   }}
                   cursor={{ fill: 'rgba(42,42,58,0.35)' }}
                 />
-                <Bar dataKey="compound" radius={[6, 6, 6, 6]} isAnimationActive={false}>
+                <Bar
+                  dataKey="compound"
+                  radius={[6, 6, 6, 6]}
+                  isAnimationActive={false}
+                  barSize={20}
+                >
                   {sentimentRows.rows.map((r, idx) => (
                     <Cell key={idx} fill={r.compound >= 0 ? '#2DD4BF' : '#EF4444'} />
                   ))}
