@@ -83,6 +83,15 @@ sklearn's LDA topic model with bigram support discovers what customers actually 
 ### RAG Chatbot
 Sellers can ask any natural language question about their product's reviews and receive a grounded answer sourced directly from real customer text. A metadata filter detects star-rating intent in questions — asking about "1-star complaints" physically restricts retrieval to 1-star review chunks only, preventing the LLM from mixing in positive content.
 
+### Competitor Compare
+Side-by-side comparison of 2-3 products across return risk, sentiment, topics, and listing scores. Automatically highlights the winner with lowest return risk.
+
+### Review Analysis
+Deep-dive sentiment analysis page showing sentiment by star rating, topic breakdown with keyword clusters, and 5 auto-generated product insights.
+
+### Export Report
+One-click PDF report generation with executive summary, risk analysis, topic breakdown, and recommended actions. Downloads as a branded ListingLens PDF.
+
 ---
 
 ## The ML Design: Return Risk Proxy Labels
