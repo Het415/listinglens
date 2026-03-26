@@ -1,16 +1,20 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { AlertTriangle, Info } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
 
-/** Shape from API `summary.top_topics` */
+/** Shape from API `summary.top_topics` (keyword categories + rating mix) */
 export type TopicItem = {
   id?: number
   label: string
   keywords?: string[]
   count?: number
+  pct_negative?: number
+  pct_positive?: number
+  complaint_level?: 'HIGH' | 'MEDIUM' | 'LOW'
 }
 
 export type TopicAnalysisProps = {
@@ -31,15 +35,18 @@ type TopicRow = {
   negative: number
   count?: number
   keywords?: string[]
+  complaint_level?: 'HIGH' | 'MEDIUM' | 'LOW'
+  /** True when values come from per-category API (not legacy heuristic) */
+  usesRealRatings?: boolean
 }
 
 const FALLBACK_TOPICS: TopicRow[] = [
-  { name: 'Battery Life', positive: 18, negative: 67 },
-  { name: 'Sound Quality', positive: 89, negative: 8 },
-  { name: 'Noise Cancellation', positive: 76, negative: 14 },
-  { name: 'Comfort & Fit', positive: 52, negative: 38 },
-  { name: 'Build Quality', positive: 61, negative: 29 },
-  { name: 'Price vs Value', positive: 44, negative: 41 },
+  { name: 'Battery Life', positive: 18, negative: 67, complaint_level: 'HIGH', usesRealRatings: false },
+  { name: 'Sound Quality', positive: 89, negative: 8, complaint_level: 'LOW', usesRealRatings: false },
+  { name: 'Noise Cancellation', positive: 76, negative: 14, complaint_level: 'LOW', usesRealRatings: false },
+  { name: 'Comfort & Fit', positive: 52, negative: 38, complaint_level: 'MEDIUM', usesRealRatings: false },
+  { name: 'Build Quality', positive: 61, negative: 29, complaint_level: 'MEDIUM', usesRealRatings: false },
+  { name: 'Price vs Value', positive: 44, negative: 41, complaint_level: 'MEDIUM', usesRealRatings: false },
 ]
 
 const FALLBACK_INSIGHT =
@@ -50,12 +57,79 @@ function truncate(s: string, max: number) {
   return `${s.slice(0, max - 1)}…`
 }
 
-/** Map global sentiment + topic volume to bar percentages (API has no per-topic sentiment). */
+function hasRealTopicRatings(t: TopicItem): boolean {
+  return (
+    typeof t.pct_negative === 'number' &&
+    !Number.isNaN(t.pct_negative) &&
+    typeof t.pct_positive === 'number' &&
+    !Number.isNaN(t.pct_positive)
+  )
+}
+
+function clampPct(n: number): number {
+  return Math.min(100, Math.max(0, n))
+}
+
+function formatTopicPct(n: number): string {
+  const x = Math.round(n * 10) / 10
+  return Number.isInteger(x) ? `${x}%` : `${x.toFixed(1)}%`
+}
+
+/** Which side of the mention mix is larger — one number per row for scanability. */
+function dominantSignal(negative: number, positive: number): 'negative' | 'positive' {
+  if (negative > positive) return 'negative'
+  if (positive > negative) return 'positive'
+  return 'negative'
+}
+
+function complaintDotClass(level: 'HIGH' | 'MEDIUM' | 'LOW'): string {
+  switch (level) {
+    case 'HIGH':
+      return 'bg-accent-red shadow-[0_0_0_2px_rgba(239,68,68,0.25)]'
+    case 'MEDIUM':
+      return 'bg-accent-amber shadow-[0_0_0_2px_rgba(245,158,11,0.25)]'
+    case 'LOW':
+      return 'bg-accent-green shadow-[0_0_0_2px_rgba(34,197,94,0.22)]'
+    default:
+      return 'bg-border'
+  }
+}
+
+/**
+ * Prefer real per-category % (4–5★ vs 1–2★ among reviews that mention the category).
+ * Rows are sorted by pct_negative descending (worst first). Falls back to a heuristic for older payloads.
+ */
 function buildTopicRows(
   topics: TopicItem[],
   summary: TopicAnalysisProps['summary'],
   features: TopicAnalysisProps['features'],
 ): TopicRow[] {
+  const useReal = topics.length > 0 && topics.every(hasRealTopicRatings)
+
+  if (useReal) {
+    const ordered = [...topics]
+      .sort((a, b) => (b.pct_negative ?? 0) - (a.pct_negative ?? 0))
+      .slice(0, 6)
+
+    return ordered.map((t) => {
+      const rawName =
+        (t.label && t.label.trim()) ||
+        (t.keywords?.length ? t.keywords.slice(0, 3).join(' · ') : 'Topic')
+      return {
+        name: rawName,
+        positive: clampPct(t.pct_positive!),
+        negative: clampPct(t.pct_negative!),
+        count: t.count,
+        keywords: t.keywords,
+        complaint_level: t.complaint_level,
+        usesRealRatings: true,
+      }
+    })
+  }
+
+  const sortedByCount = [...topics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
+  const slice = sortedByCount.slice(0, 6)
+
   const pctPos =
     summary?.pct_positive ??
     (features?.pct_positive != null ? features.pct_positive * 100 : null)
@@ -65,26 +139,24 @@ function buildTopicRows(
 
   const basePos = pctPos ?? 50
   const baseNeg = pctNeg ?? 50
+  const maxC = Math.max(...sortedByCount.map((x) => x.count ?? 0), 1)
 
-  const sorted = [...topics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
-  const maxC = Math.max(...sorted.map((t) => t.count ?? 0), 1)
-
-  return sorted.slice(0, 6).map((t) => {
+  const rows = slice.map((t) => {
     const rel = (t.count ?? 0) / maxC
-    const name =
+    const rawName =
       (t.label && t.label.trim()) ||
       (t.keywords?.length ? t.keywords.slice(0, 3).join(' · ') : 'Topic')
     return {
-      name: truncate(name, 42),
+      name: rawName,
       positive: Math.min(100, Math.round(basePos * (0.82 + 0.18 * rel))),
-      negative: Math.min(
-        100,
-        Math.round(baseNeg * (0.82 + 0.18 * (1 - rel * 0.65))),
-      ),
+      negative: Math.min(100, Math.round(baseNeg * (0.82 + 0.18 * (1 - rel * 0.65)))),
       count: t.count,
       keywords: t.keywords,
+      usesRealRatings: false,
     }
   })
+
+  return rows.sort((a, b) => b.negative - a.negative)
 }
 
 function meanSentimentGap(summary: TopicAnalysisProps['summary']): number | null {
@@ -110,7 +182,8 @@ function buildInsight(props: TopicAnalysisProps): string {
     (features?.pct_positive != null ? features.pct_positive * 100 : null)
 
   if (topics?.length) {
-    const top = [...topics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0]
+    const sorted = [...topics].sort((a, b) => (b.pct_negative ?? 0) - (a.pct_negative ?? 0))
+    const top = sorted[0]
     const label =
       top?.label?.trim() ||
       top?.keywords?.slice(0, 2).join(' · ') ||
@@ -120,11 +193,25 @@ function buildInsight(props: TopicAnalysisProps): string {
       gap != null && Math.abs(gap) < 0.15
         ? ' Sentiment is relatively flat across star ratings.'
         : ''
+
+    if (top && hasRealTopicRatings(top)) {
+      const negShare = formatTopicPct(top.pct_negative!)
+      const posShare = formatTopicPct(top.pct_positive!)
+      const level = top.complaint_level
+      const risk =
+        level === 'HIGH'
+          ? ' Complaint-heavy ratings on this theme are elevated — worth prioritizing in listings and support.'
+          : level === 'MEDIUM'
+            ? ' Watch this theme in returns and Q&A.'
+            : ''
+      return `“${label}” has the highest share of low-star mentions among categories shown (${negShare} from 1–2★ reviews vs ${posShare} from 4–5★).${risk}${gapNote}`
+    }
+
     if (pctNeg != null || pctPos != null) {
       const neg = pctNeg != null ? `${pctNeg}%` : 'a notable share'
-      return `“${truncate(label, 48)}” shows the highest review volume. Overall, ${neg} of reviews skew negative.${gapNote}`
+      return `“${truncate(label, 52)}” shows the highest review volume. Overall, ${neg} of reviews skew negative.${gapNote}`
     }
-    return `Highest-volume theme: “${truncate(label, 48)}”.`
+    return `Highest-volume theme: “${truncate(label, 52)}”.`
   }
 
   return FALLBACK_INSIGHT
@@ -136,17 +223,10 @@ export function TopicAnalysis({
   summary,
   riskInsight,
 }: TopicAnalysisProps) {
-  const [animate, setAnimate] = useState(false)
-
-  useEffect(() => {
-    const timer = setTimeout(() => setAnimate(true), 300)
-    return () => clearTimeout(timer)
-  }, [])
-
   const { rows, insight } = useMemo(() => {
     const hasTopics = Array.isArray(topics) && topics.length > 0
     const rows = !hasTopics
-      ? FALLBACK_TOPICS
+      ? [...FALLBACK_TOPICS].sort((a, b) => b.negative - a.negative)
       : buildTopicRows(topics!, summary, features)
     const insight = buildInsight({ topics, features, summary, riskInsight })
     return { rows, insight }
@@ -162,17 +242,20 @@ export function TopicAnalysis({
               <Info className="w-4 h-4" />
             </div>
           </TooltipTrigger>
-          <TooltipContent>
-            Each topic row shows estimated share of positive vs complaint-heavy mentions for that topic. Width is derived from
-            topic volume (count) + global sentiment.
+          <TooltipContent className="max-w-xs">
+            Categories come from keywords in your reviews. Each row shows the stronger signal: either the share of mentions
+            from 1–2★ reviews (Negative) or from 4–5★ reviews (Positive). 3★ reviews are not counted. Rows are sorted with the
+            highest complaint share first.
           </TooltipContent>
         </Tooltip>
       </div>
-      <p className="text-sm text-text-secondary mb-6">What customers are actually talking about</p>
+      <p className="text-sm text-text-secondary mb-5">
+        Where low-star reviews concentrate — sorted by complaint share (highest first)
+      </p>
 
-      <div className="space-y-4">
+      <div className="divide-y divide-border">
         {rows.map((topic, index) => (
-          <TopicBar key={`${topic.name}-${index}`} topic={topic} animate={animate} delay={index * 100} />
+          <TopicRowBlock key={`${topic.name}-${index}`} topic={topic} />
         ))}
       </div>
 
@@ -184,78 +267,95 @@ export function TopicAnalysis({
   )
 }
 
-function TopicBar({
-  topic,
-  animate,
-  delay,
-}: {
-  topic: TopicRow
-  animate: boolean
-  delay: number
-}) {
-  const [widths, setWidths] = useState({ positive: 0, negative: 0 })
-
-  useEffect(() => {
-    if (animate) {
-      const timer = setTimeout(() => {
-        setWidths({ positive: topic.positive, negative: topic.negative })
-      }, delay)
-      return () => clearTimeout(timer)
-    }
-  }, [animate, topic, delay])
+function TopicRowBlock({ topic }: { topic: TopicRow }) {
+  const negLabel = formatTopicPct(topic.negative)
+  const posLabel = formatTopicPct(topic.positive)
+  const dominant = dominantSignal(topic.negative, topic.positive)
+  const showNegative = dominant === 'negative'
 
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <div className="flex items-center gap-4 cursor-help">
-          <div className="w-32 text-sm text-text-secondary truncate">{topic.name}</div>
-
-          <div className="flex-1 flex items-center gap-2">
-            <span className="text-xs font-mono text-accent-teal w-8 text-right">
-              {topic.positive}%
+        <div className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-base font-medium leading-snug text-text-primary [overflow-wrap:anywhere]">
+              {topic.name}
             </span>
-            <div className="flex-1 flex gap-1">
-              <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-accent-teal rounded-full transition-all duration-700 ease-out"
-                  style={{ width: `${widths.positive}%` }}
+            {topic.complaint_level ? (
+              <>
+                <span
+                  className={cn('inline-block size-2 shrink-0 rounded-full', complaintDotClass(topic.complaint_level))}
+                  aria-hidden
                 />
-              </div>
-              <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-accent-red rounded-full transition-all duration-700 ease-out"
-                  style={{ width: `${widths.negative}%` }}
-                />
-              </div>
-            </div>
-            <span className="text-xs font-mono text-accent-red w-8">{topic.negative}%</span>
+                <span
+                  className={cn(
+                    'text-xs font-semibold uppercase tracking-wide',
+                    topic.complaint_level === 'HIGH' && 'text-accent-red',
+                    topic.complaint_level === 'MEDIUM' && 'text-accent-amber',
+                    topic.complaint_level === 'LOW' && 'text-accent-green',
+                  )}
+                >
+                  {topic.complaint_level}
+                </span>
+              </>
+            ) : null}
+          </div>
+
+          <div className="flex shrink-0 items-baseline sm:justify-end">
+            {showNegative ? (
+              <span className="tabular-nums text-sm">
+                <span className="font-semibold text-accent-red">{negLabel}</span>{' '}
+                <span className="font-medium text-accent-red/90">Negative</span>
+              </span>
+            ) : (
+              <span className="tabular-nums text-sm">
+                <span className="font-semibold text-accent-teal">{posLabel}</span>{' '}
+                <span className="font-medium text-accent-teal/90">Positive</span>
+              </span>
+            )}
           </div>
         </div>
       </TooltipTrigger>
-      <TooltipContent>
+      <TooltipContent className="max-w-xs">
         <div className="grid gap-1.5">
           <div className="font-medium text-text-primary">{topic.name}</div>
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-text-secondary">Positive</span>
-            <span className="text-xs font-mono text-text-primary tabular-nums">{topic.positive}%</span>
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-xs text-text-secondary">Complaint-heavy</span>
-            <span className="text-xs font-mono text-accent-red tabular-nums">{topic.negative}%</span>
+          {topic.complaint_level ? (
+            <div className="text-xs text-text-secondary">
+              Complaint level: <span className="font-semibold text-text-primary">{topic.complaint_level}</span> (from 1–2★
+              share among mentions)
+            </div>
+          ) : null}
+          <div className="text-xs text-text-secondary">
+            Row highlights the <span className="font-medium text-text-primary">stronger</span> signal:{' '}
+            {showNegative ? (
+              <>
+                <span className="text-accent-red">{negLabel}</span> from 1–2★ (vs{' '}
+                <span className="text-accent-teal">{posLabel}</span> from 4–5★).
+              </>
+            ) : (
+              <>
+                <span className="text-accent-teal">{posLabel}</span> from 4–5★ (vs{' '}
+                <span className="text-accent-red">{negLabel}</span> from 1–2★).
+              </>
+            )}
           </div>
           {typeof topic.count === 'number' && !Number.isNaN(topic.count) && (
             <div className="text-xs text-text-secondary">
-              Estimated topic volume: <span className="font-mono text-text-primary">{topic.count}</span>
+              Reviews mentioning this category:{' '}
+              <span className="font-mono text-text-primary">{topic.count}</span>
             </div>
           )}
           {topic.keywords?.length ? (
             <div className="text-xs text-text-secondary">
-              Keywords: <span className="font-medium text-text-primary">{topic.keywords.slice(0, 4).join(' · ')}</span>
+              Sample keywords:{' '}
+              <span className="font-medium text-text-primary">{topic.keywords.slice(0, 4).join(' · ')}</span>
             </div>
           ) : null}
-          <div className="text-xs text-text-secondary">
-            Width comes from topic volume + global sentiment totals.
-          </div>
+          {topic.usesRealRatings ? null : (
+            <div className="text-xs text-text-muted border-t border-border pt-1.5">
+              Estimated shares — run a fresh analysis for per-category star mix.
+            </div>
+          )}
         </div>
       </TooltipContent>
     </Tooltip>

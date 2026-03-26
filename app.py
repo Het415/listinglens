@@ -16,6 +16,12 @@ ENV_MODE = os.getenv("ENV_MODE", "production")
 
 app_state = {}
 
+def has_precomputed_cache(asin: str) -> bool:
+    """True only if both NLP CSV + features JSON exist on disk."""
+    nlp_csv = f"data/processed/nlp_{asin}.csv"
+    feat_json = f"data/processed/features_{asin}.json"
+    return os.path.exists(nlp_csv) and os.path.exists(feat_json)
+
 
 # ── Lifespan ───────────────────────────────────────────────────────────────────
 
@@ -25,7 +31,13 @@ from contextlib import asynccontextmanager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from src.ingest import SUPPORTED_ASINS
-    app_state["supported_asins"] = SUPPORTED_ASINS
+    # In production, only advertise ASINs that are truly precomputed on disk.
+    if ENV_MODE == "production":
+        app_state["supported_asins"] = {
+            asin: name for asin, name in SUPPORTED_ASINS.items() if has_precomputed_cache(asin)
+        }
+    else:
+        app_state["supported_asins"] = SUPPORTED_ASINS
     app_state["cache"] = {}
     
     # start server immediately — load cache in background
@@ -37,27 +49,18 @@ async def lifespan(app: FastAPI):
 async def preload_cache():
     """Loads all supported ASINs from cache in background after server starts."""
     await asyncio.sleep(3)
-    
-    supported = [
-    "B08XPWDSWW", "B07GZFM1ZM", "B075X8471B", "B01K8B8YA8",
-    "B07H65KP63", "B0791TX5P5", "B010BWYDYA", "B07S764D9V",
-    "B0BW4PFM58", "B07PXGQC1Q", "B00N2ZDXW2", "B08RLW7918",
-]
-    
-    for asin in supported:
-        nlp_csv = f"data/processed/nlp_{asin}.csv"
-        feat_json = f"data/processed/features_{asin}.json"
-        
-        if os.path.exists(nlp_csv) and os.path.exists(feat_json):
-            print(f"Preloading {asin}...")
-            try:
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda a=asin: run_full_pipeline(a))
-                print(f"✓ {asin} loaded")
-            except Exception as e:
-                print(f"✗ {asin} failed: {e}")
-        else:
-            print(f"No cache files for {asin} — skipping")
+    supported_asins = list(app_state.get("supported_asins", {}).keys())
+    for asin in supported_asins:
+        # In production, supported_asins is already filtered to disk cache availability.
+        # In development, this might still include missing items, but run_full_pipeline
+        # will handle it (it can compute missing caches in dev mode).
+        print(f"Preloading {asin}...")
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda a=asin: run_full_pipeline(a))
+            print(f"✓ {asin} loaded")
+        except Exception as e:
+            print(f"✗ {asin} failed: {e}")
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
@@ -202,11 +205,10 @@ def root():
 @app.get("/supported-asins")
 def get_supported_asins():
     """Returns list of ASINs available for analysis."""
-    from src.ingest import SUPPORTED_ASINS
     return {
         "asins": [
             {"asin": k, "name": v}
-            for k, v in SUPPORTED_ASINS.items()
+            for k, v in app_state.get("supported_asins", {}).items()
         ]
     }
 
