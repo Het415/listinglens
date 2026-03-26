@@ -13,6 +13,11 @@ const SUPPORTED_PRODUCTS = [
   { name: 'Echo Dot 3rd Gen', asin: 'B07H65KP63' },
   { name: 'Fire TV Stick HD', asin: 'B0791TX5P5' },
   { name: 'Fire Tablet 7 inch', asin: 'B010BWYDYA' },
+  { name: 'Panasonic ErgoFit Wired Earbuds', asin: 'B07S764D9V' },
+  { name: 'OontZ Angle 3 Bluetooth Speaker', asin: 'B0BW4PFM58' },
+  { name: 'Apple AirPods 2nd Generation', asin: 'B07PXGQC1Q' },
+  { name: 'Ring Video Doorbell', asin: 'B00N2ZDXW2' },
+  { name: 'WYZE Cam v2 Security Camera', asin: 'B08RLW7918' },
 ] as const
 
 type AnalyzeResponse = {

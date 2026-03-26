@@ -14,13 +14,18 @@ RAPIDAPI_HOST = "real-time-amazon-data.p.rapidapi.com"
 # ASINs we have pre-loaded from HuggingFace dataset
 # We'll populate this properly in the next step
 SUPPORTED_ASINS = {
+    "B08XPWDSWW": "TOZO T10 Bluetooth Earbuds",
     "B07GZFM1ZM": "Fire Stick 4K",
-    "B075X8471B": "Fire TV Stick with Alexa (Previous Gen)",
+    "B075X8471B": "Fire TV Stick with Alexa",
     "B01K8B8YA8": "Echo Dot 2nd Generation",
     "B07H65KP63": "Echo Dot 3rd Generation",
-    "B0791TX5P5": "Fire TV Stick HD Latest Release",
-    "B08XPWDSWW": "TOZO T10 Bluetooth Earbuds",
-    "B010BWYDYA": "Fire Tablet 7 inch 16GB",
+    "B0791TX5P5": "Fire TV Stick HD",
+    "B010BWYDYA": "Fire Tablet 7 inch",
+    "B07S764D9V": "Panasonic ErgoFit Wired Earbuds",
+    "B0BW4PFM58": "OontZ Angle 3 Bluetooth Speaker",
+    "B07PXGQC1Q": "Apple AirPods 2nd Generation",
+    "B00N2ZDXW2": "Ring Video Doorbell",
+    "B08RLW7918": "WYZE Cam v2 Security Camera",
 }
 
 # ── URL Parser ─────────────────────────────────────────────────────────────────

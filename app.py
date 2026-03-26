@@ -39,14 +39,10 @@ async def preload_cache():
     await asyncio.sleep(3)
     
     supported = [
-        "B08XPWDSWW",
-        "B07GZFM1ZM", 
-        "B075X8471B",
-        "B01K8B8YA8",
-        "B07H65KP63",
-        "B0791TX5P5",
-        "B010BWYDYA",
-    ]
+    "B08XPWDSWW", "B07GZFM1ZM", "B075X8471B", "B01K8B8YA8",
+    "B07H65KP63", "B0791TX5P5", "B010BWYDYA", "B07S764D9V",
+    "B0BW4PFM58", "B07PXGQC1Q", "B00N2ZDXW2", "B08RLW7918",
+]
     
     for asin in supported:
         nlp_csv = f"data/processed/nlp_{asin}.csv"
