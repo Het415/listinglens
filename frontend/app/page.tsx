@@ -28,6 +28,7 @@ export default function LandingPage() {
   const [loadingStep, setLoadingStep] = useState(0)
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const inputWrapRef = useRef<HTMLDivElement | null>(null)
+  const isSelectingProductRef = useRef(false)
 
   const loadingSteps = [
     'Fetching reviews...',
@@ -143,7 +144,9 @@ export default function LandingPage() {
                   type="url"
                   value={url}
                   onFocus={() => {
-                    if (!isLoading && url.trim() === '') setShowProductDropdown(true)
+                    if (!isLoading && url.trim() === '' && !isSelectingProductRef.current) {
+                      setShowProductDropdown(true)
+                    }
                   }}
                   onChange={(e) => {
                     const next = e.target.value
@@ -177,8 +180,13 @@ export default function LandingPage() {
                         type="button"
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => {
+                          // Prevent the input focus handler from reopening the dropdown immediately.
+                          isSelectingProductRef.current = true
                           setUrl(p.asin)
                           setShowProductDropdown(false)
+                          setTimeout(() => {
+                            isSelectingProductRef.current = false
+                          }, 0)
                         }}
                         className="w-full text-left px-4 py-3 border-b border-[#2A2A3A] last:border-b-0 hover:border-blue-500 hover:bg-[#1A1A26] transition-colors"
                       >
