@@ -3,64 +3,129 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Core semantic tokens (mapped in @theme as --color-*). Both :root (light) and .dark override these. */
+/* --background, --foreground, --card, --card-foreground, --muted, --muted-foreground, --border */
+
+/* Light theme (default when class="light" on html) */
 :root {
-  /* ListingLens Dark Theme - Primary */
-  --background: #0A0A0F;
+  color-scheme: light;
+  --background: #f6f7fa;
+  --background-secondary: #eef0f5;
+  --background-card: #ffffff;
+  --foreground: #0f1117;
+
+  --border: #d8dce8;
+  --border-subtle: #e8ebf2;
+  --border-tertiary: #cdd3e2;
+  --border-hover: #b8bfd2;
+
+  --accent-blue: #3b7ae8;
+  --accent-teal: #0d9f8e;
+  --accent-amber: #d97706;
+  --accent-red: #dc2626;
+  --accent-green: #16a34a;
+
+  --text-primary: #12141c;
+  --text-secondary: #5c6378;
+  --text-muted: #8b92a8;
+
+  --card: #ffffff;
+  --card-foreground: #0f1117;
+  /* Overlays (tooltip, popover, dropdown) — match secondary surface + primary text */
+  --popover: var(--background-secondary);
+  --popover-foreground: var(--text-primary);
+  --primary: #3b7ae8;
+  --primary-foreground: #ffffff;
+  --secondary: #eef0f5;
+  --secondary-foreground: #12141c;
+  --muted: #eef0f5;
+  --muted-foreground: #5c6378;
+  --accent: #0d9f8e;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --input: #d8dce8;
+  --ring: #3b7ae8;
+  --radius: 0.75rem;
+
+  --sidebar: #f6f7fa;
+  --sidebar-foreground: #12141c;
+  --sidebar-primary: #3b7ae8;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ffffff;
+  --sidebar-accent-foreground: #12141c;
+  --sidebar-border: #e8ebf2;
+  --sidebar-ring: #3b7ae8;
+
+  --chart-1: #3b7ae8;
+  --chart-2: #0d9f8e;
+  --chart-3: #d97706;
+  --chart-4: #dc2626;
+  --chart-5: #16a34a;
+
+  --scrollbar-track: #eef0f5;
+  --scrollbar-thumb: #c5cad8;
+  --scrollbar-thumb-hover: #a8afc0;
+}
+
+/* Dark theme */
+.dark {
+  color-scheme: dark;
+  --background: #0a0a0f;
   --background-secondary: #111118;
-  --background-card: #16161F;
-  --foreground: #F1F0F7;
-  
-  /* Borders */
-  --border: #2A2A3A;
-  --border-subtle: #1E1E2A;
-  --border-hover: #3A3A5A;
-  
-  /* Accent Colors */
-  --accent-blue: #4F8EF7;
-  --accent-teal: #2DD4BF;
-  --accent-amber: #F59E0B;
-  --accent-red: #EF4444;
-  --accent-green: #22C55E;
-  
-  /* Text Colors */
-  --text-primary: #F1F0F7;
-  --text-secondary: #8B8BA7;
-  --text-muted: #4A4A6A;
-  
-  /* Shadcn mappings */
-  --card: #16161F;
-  --card-foreground: #F1F0F7;
-  --popover: #16161F;
-  --popover-foreground: #F1F0F7;
-  --primary: #4F8EF7;
+  --background-card: #16161f;
+  --foreground: #f1f0f7;
+
+  --border: #2a2a3a;
+  --border-subtle: #1e1e2a;
+  --border-tertiary: #3a3a4a;
+  --border-hover: #3a3a5a;
+
+  --accent-blue: #4f8ef7;
+  --accent-teal: #2dd4bf;
+  --accent-amber: #f59e0b;
+  --accent-red: #ef4444;
+  --accent-green: #22c55e;
+
+  --text-primary: #f1f0f7;
+  --text-secondary: #8b8ba7;
+  --text-muted: #4a4a6a;
+
+  --card: #16161f;
+  --card-foreground: #f1f0f7;
+  --popover: var(--background-secondary);
+  --popover-foreground: var(--text-primary);
+  --primary: #4f8ef7;
   --primary-foreground: #ffffff;
   --secondary: #111118;
-  --secondary-foreground: #F1F0F7;
+  --secondary-foreground: #f1f0f7;
   --muted: #111118;
-  --muted-foreground: #8B8BA7;
-  --accent: #2DD4BF;
-  --accent-foreground: #0A0A0F;
-  --destructive: #EF4444;
+  --muted-foreground: #8b8ba7;
+  --accent: #2dd4bf;
+  --accent-foreground: #0a0a0f;
+  --destructive: #ef4444;
   --destructive-foreground: #ffffff;
-  --input: #2A2A3A;
-  --ring: #4F8EF7;
-  --radius: 0.75rem;
-  
-  --sidebar: #0A0A0F;
-  --sidebar-foreground: #F1F0F7;
-  --sidebar-primary: #4F8EF7;
+  --input: #2a2a3a;
+  --ring: #4f8ef7;
+
+  --sidebar: #0a0a0f;
+  --sidebar-foreground: #f1f0f7;
+  --sidebar-primary: #4f8ef7;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #16161F;
-  --sidebar-accent-foreground: #F1F0F7;
-  --sidebar-border: #1E1E2A;
-  --sidebar-ring: #4F8EF7;
-  
-  /* Chart colors */
-  --chart-1: #4F8EF7;
-  --chart-2: #2DD4BF;
-  --chart-3: #F59E0B;
-  --chart-4: #EF4444;
-  --chart-5: #22C55E;
+  --sidebar-accent: #16161f;
+  --sidebar-accent-foreground: #f1f0f7;
+  --sidebar-border: #1e1e2a;
+  --sidebar-ring: #4f8ef7;
+
+  --chart-1: #4f8ef7;
+  --chart-2: #2dd4bf;
+  --chart-3: #f59e0b;
+  --chart-4: #ef4444;
+  --chart-5: #22c55e;
+
+  --scrollbar-track: #0a0a0f;
+  --scrollbar-thumb: #2a2a3a;
+  --scrollbar-thumb-hover: #3a3a5a;
 }
 
 @theme inline {
@@ -88,6 +153,7 @@
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
   --color-border-subtle: var(--border-subtle);
+  --color-border-tertiary: var(--border-tertiary);
   --color-border-hover: var(--border-hover);
   --color-input: var(--input);
   --color-ring: var(--ring);
@@ -129,6 +195,20 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+/* Smooth color transitions when theme changes (tweakcn-style) */
+html {
+  transition: background-color 0.35s ease, color 0.35s ease;
+}
+
+/* View Transition API — circular reveal from theme toggle (Chrome 111+) */
+@supports (view-transition-name: root) {
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
   }
 }
 
@@ -255,14 +335,14 @@
 }
 
 ::-webkit-scrollbar-track {
-  background: #0A0A0F;
+  background: var(--scrollbar-track);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #2A2A3A;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #3A3A5A;
+  background: var(--scrollbar-thumb-hover);
 }

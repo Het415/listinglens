@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import { DM_Sans, DM_Mono, Instrument_Serif } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
+import { ThemeProvider } from '@/components/theme-provider'
 import './globals.css'
 
 const dmSans = DM_Sans({ 
@@ -45,9 +46,11 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${dmSans.variable} ${dmMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-[#0A0A0F] text-[#F1F0F7]`}>
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body
+        className={`${dmSans.variable} ${dmMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-background text-foreground transition-colors duration-300`}
+      >
+        <ThemeProvider>{children}</ThemeProvider>
         <Analytics />
       </body>
     </html>

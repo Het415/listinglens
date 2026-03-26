@@ -76,7 +76,7 @@ function riskColor(label: string): string {
   if (label === 'HIGH') return 'text-accent-red'
   if (label === 'MEDIUM') return 'text-accent-amber'
   if (label === 'LOW') return 'text-accent-green'
-  return 'text-text-secondary'
+  return 'text-muted-foreground'
 }
 
 function ProductSlot({
@@ -106,7 +106,7 @@ function ProductSlot({
 
   return (
     <div className="relative" ref={wrapRef}>
-      <label className="block text-xs text-text-secondary mb-2">{label}</label>
+      <label className="block text-xs text-muted-foreground mb-2">{label}</label>
       <input
         value={value}
         onFocus={() => setOpen(value.trim() === '')}
@@ -116,10 +116,10 @@ function ProductSlot({
           setOpen(next.trim() === '')
         }}
         placeholder="ASIN or Amazon URL"
-        className="w-full h-11 bg-[#16161F] border border-[#2A2A3A] rounded-lg px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue"
+        className="w-full h-11 bg-background border border-border rounded-lg px-3 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-ring focus:ring-1 focus:ring-ring/30"
       />
       {open && (
-        <div className="absolute left-0 right-0 mt-2 rounded-lg border border-[#2A2A3A] bg-[#16161F] z-50 max-h-56 overflow-auto">
+        <div className="absolute left-0 right-0 mt-2 rounded-lg border border-border bg-card z-50 max-h-56 overflow-auto shadow-md">
           {supportedProducts
             .filter((p) => !excludedAsins.includes(p.asin))
             .map((p) => (
@@ -130,10 +130,10 @@ function ProductSlot({
                 onChange(p.asin)
                 setOpen(false)
               }}
-              className="w-full text-left px-3 py-2 hover:bg-[#1A1A26] border-b border-[#2A2A3A] last:border-b-0"
+              className="w-full text-left px-3 py-2 hover:bg-muted border-b border-border last:border-b-0"
             >
-              <div className="text-sm text-text-primary">{p.name}</div>
-              <div className="text-xs font-mono text-text-muted">{p.asin}</div>
+              <div className="text-sm text-foreground">{p.name}</div>
+              <div className="text-xs font-mono text-muted-foreground">{p.asin}</div>
             </button>
             ))}
         </div>
@@ -147,7 +147,6 @@ function ComparePageContent() {
   const [slot2, setSlot2] = useState('')
   const [slot3, setSlot3] = useState('')
   const [supportedProducts, setSupportedProducts] = useState<SupportedAsin[]>([])
-  const [supportedLoading, setSupportedLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cards, setCards] = useState<CompareCard[]>([])
@@ -162,7 +161,6 @@ function ComparePageContent() {
   useEffect(() => {
     let cancelled = false
     async function loadSupported() {
-      setSupportedLoading(true)
       try {
         const res = await fetch(`${API_URL}/supported-asins`)
         if (!res.ok) return
@@ -171,8 +169,6 @@ function ComparePageContent() {
         setSupportedProducts(Array.isArray(json.asins) ? json.asins : [])
       } catch {
         // ignore
-      } finally {
-        if (!cancelled) setSupportedLoading(false)
       }
     }
     loadSupported()
@@ -259,13 +255,13 @@ function ComparePageContent() {
   }
 
   return (
-    <div className="p-4 md:p-6 space-y-6 bg-[#0A0A0F] min-h-screen">
+    <div className="p-4 md:p-6 space-y-6 bg-background min-h-screen">
       <div>
-        <h1 className="text-2xl font-medium text-text-primary">Competitor Compare</h1>
-        <p className="text-sm text-text-secondary mt-1">Compare 2-3 products side by side using cached analysis.</p>
+        <h1 className="text-2xl font-medium text-foreground">Competitor Compare</h1>
+        <p className="text-sm text-muted-foreground mt-1">Compare 2-3 products side by side using cached analysis.</p>
       </div>
 
-      <div className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-4 md:p-5">
+      <div className="bg-card border border-border rounded-xl p-4 md:p-5 text-card-foreground">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <ProductSlot
             label="Add Product 1"
@@ -290,14 +286,14 @@ function ComparePageContent() {
           />
         </div>
         <div className="mt-4 flex items-center justify-between">
-          <div className="text-xs text-text-muted">Minimum 2 products required. Duplicate ASINs are ignored.</div>
+          <div className="text-xs text-muted-foreground">Minimum 2 products required. Duplicate ASINs are ignored.</div>
           <button
             onClick={handleCompare}
             disabled={!canCompare || loading}
             className={`h-10 px-5 rounded-lg text-sm font-medium transition-colors ${
               canCompare && !loading
-                ? 'bg-accent-blue text-white hover:bg-accent-blue/90'
-                : 'bg-[#2A2A3A] text-text-muted cursor-not-allowed'
+                ? 'bg-primary text-primary-foreground hover:bg-primary/90'
+                : 'bg-muted text-muted-foreground cursor-not-allowed'
             }`}
           >
             {loading ? 'Comparing...' : 'Compare'}
@@ -306,7 +302,7 @@ function ComparePageContent() {
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-300 text-sm">
+        <div className="bg-destructive/10 border border-destructive/30 rounded-lg p-3 text-destructive text-sm">
           {error}
         </div>
       )}
@@ -314,13 +310,13 @@ function ComparePageContent() {
       {loading && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5 space-y-3 animate-pulse">
-              <div className="h-5 w-2/3 bg-[#2A2A3A] rounded" />
-              <div className="h-4 w-1/3 bg-[#2A2A3A] rounded" />
-              <div className="h-3 w-full bg-[#2A2A3A] rounded" />
-              <div className="h-3 w-5/6 bg-[#2A2A3A] rounded" />
-              <div className="h-3 w-4/5 bg-[#2A2A3A] rounded" />
-              <div className="h-3 w-2/3 bg-[#2A2A3A] rounded" />
+            <div key={i} className="bg-card border border-border rounded-xl p-5 space-y-3 animate-pulse">
+              <div className="h-5 w-2/3 bg-muted rounded" />
+              <div className="h-4 w-1/3 bg-muted rounded" />
+              <div className="h-3 w-full bg-muted rounded" />
+              <div className="h-3 w-5/6 bg-muted rounded" />
+              <div className="h-3 w-4/5 bg-muted rounded" />
+              <div className="h-3 w-2/3 bg-muted rounded" />
             </div>
           ))}
         </div>
@@ -334,17 +330,17 @@ function ComparePageContent() {
               return (
                 <div
                   key={c.asin}
-                  className={`bg-[#16161F] rounded-xl p-5 border ${
-                    isWinner ? 'border-accent-blue shadow-[0_0_0_1px_rgba(79,142,247,0.35),0_0_24px_rgba(79,142,247,0.2)]' : 'border-[#2A2A3A]'
+                  className={`bg-card rounded-xl p-5 border text-card-foreground ${
+                    isWinner ? 'border-primary ring-2 ring-primary/25 shadow-lg shadow-primary/10' : 'border-border'
                   }`}
                 >
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <h3 className="text-lg font-medium text-text-primary leading-snug">{c.name}</h3>
-                      <p className="text-xs font-mono text-text-muted mt-1">{c.asin}</p>
+                      <h3 className="text-lg font-medium text-foreground leading-snug">{c.name}</h3>
+                      <p className="text-xs font-mono text-muted-foreground mt-1">{c.asin}</p>
                     </div>
                     {isWinner && (
-                      <span className="text-xs px-2 py-1 rounded bg-accent-blue/20 text-accent-blue border border-accent-blue/40">
+                      <span className="text-xs px-2 py-1 rounded bg-primary/15 text-primary border border-primary/40">
                         Winner
                       </span>
                     )}
@@ -383,9 +379,9 @@ function ComparePageContent() {
             })}
           </div>
 
-          <div className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-            <h4 className="text-sm font-medium text-text-primary mb-2">AI Insight</h4>
-            <p className="text-sm text-text-secondary leading-relaxed">{insight}</p>
+          <div className="bg-card border border-border rounded-xl p-5 text-card-foreground">
+            <h4 className="text-sm font-medium text-foreground mb-2">AI Insight</h4>
+            <p className="text-sm text-muted-foreground leading-relaxed">{insight}</p>
           </div>
         </>
       )}
@@ -404,8 +400,8 @@ function MetricRow({
 }) {
   return (
     <div className="flex items-start justify-between gap-3">
-      <span className="text-text-secondary">{label}</span>
-      <div className="flex items-center gap-2 text-text-primary font-medium text-right">
+      <span className="text-muted-foreground">{label}</span>
+      <div className="flex items-center gap-2 text-foreground font-medium text-right">
         <span>{value}</span>
         {suffix}
       </div>

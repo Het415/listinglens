@@ -53,8 +53,8 @@ function normalizeInputToStars(n: number | undefined): 1 | 2 | 3 | 4 | 5 | null 
   return null
 }
 
-function compoundColor(compound: number): string {
-  return compound >= 0 ? '#2DD4BF' : '#EF4444'
+function compoundClassName(compound: number): string {
+  return compound >= 0 ? 'text-chart-2' : 'text-chart-4'
 }
 
 function formatCompound(compound: number): string {
@@ -76,7 +76,7 @@ function classifyOverallSentiment(avgCompound: number | undefined): string {
 }
 
 const SENTIMENT_BY_STAR_CHART_CONFIG = {
-  compound: { label: 'Avg compound score', color: '#4F8EF7' },
+  compound: { label: 'Avg compound score', color: 'var(--chart-1)' },
 } as const
 
 function SentimentByStarTooltip({
@@ -90,14 +90,14 @@ function SentimentByStarTooltip({
   const v = typeof payload[0]?.value === 'number' ? payload[0].value : 0
   const starLabel = payload[0]?.payload?.starLabel || 'Star rating'
   return (
-    <div className="border-border/50 bg-background grid min-w-[14rem] gap-2 rounded-lg border px-3 py-2.5 shadow-xl">
-      <div className="font-medium text-text-primary">{starLabel}</div>
-      <div className="text-[11px] leading-snug text-text-muted">
+    <div className="border-border bg-card grid min-w-[14rem] gap-2 rounded-lg border px-3 py-2.5 text-card-foreground shadow-xl">
+      <div className="font-medium text-foreground">{starLabel}</div>
+      <div className="text-[11px] leading-snug text-muted-foreground">
         This bar shows the average sentiment compound score for reviews with this star rating. Teal = positive, red = negative.
       </div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-xs text-text-secondary">Avg compound</span>
-        <span className="text-xs font-mono text-text-primary tabular-nums">{formatCompound(v)}</span>
+        <span className="text-xs text-muted-foreground">Avg compound</span>
+        <span className="text-xs font-mono text-foreground tabular-nums">{formatCompound(v)}</span>
       </div>
     </div>
   )
@@ -333,27 +333,27 @@ function ReviewsPageInner() {
   if (!mounted) return null
 
   return (
-    <div className="p-4 md:p-6 space-y-6 bg-[#0A0A0F] min-h-screen">
+    <div className="min-h-screen space-y-6 bg-background p-4 text-foreground md:p-6">
       <div className="flex items-center gap-4">
-        <Link href="/dashboard" className="text-text-secondary hover:text-text-primary">
-          <ArrowLeft className="w-5 h-5" />
+        <Link href="/dashboard" className="text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
-          <h1 className="text-2xl font-medium text-text-primary">Review Analysis</h1>
-          <p className="text-sm text-text-secondary mt-1">
+          <h1 className="text-2xl font-medium text-foreground">Review Analysis</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
             {asin ? `ASIN ${asin}` : 'Select an ASIN to analyze reviews'}
           </p>
         </div>
       </div>
 
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-300 text-sm">
+        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
           {error}
         </div>
       )}
 
       {reviewsWarning && !error && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-amber-200 text-sm">
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-200">
           {reviewsWarning}
         </div>
       )}
@@ -362,21 +362,21 @@ function ReviewsPageInner() {
         <div className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5 animate-pulse">
-                <div className="h-4 w-1/2 bg-[#2A2A3A] rounded" />
-                <div className="h-8 w-2/3 bg-[#2A2A3A] rounded mt-4" />
+              <div key={i} className="animate-pulse rounded-xl border border-border bg-card p-5">
+                <div className="h-4 w-1/2 rounded bg-muted" />
+                <div className="mt-4 h-8 w-2/3 rounded bg-muted" />
               </div>
             ))}
           </div>
-          <div className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5 animate-pulse h-28" />
+          <div className="h-28 animate-pulse rounded-xl border border-border bg-card p-5" />
         </div>
       )}
 
       {!loading && analysis && (
         <>
           {/* SECTION 1 — Sentiment Overview */}
-          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-            <h2 className="text-sm font-medium text-text-primary mb-4">Sentiment Overview</h2>
+          <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+            <h2 className="mb-4 text-sm font-medium text-foreground">Sentiment Overview</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <StatCard label="Total Reviews" value={`${totalReviews}`} />
               <StatCard label="Positive %" value={`${pctPositive}%`} color="text-accent-teal" />
@@ -386,10 +386,10 @@ function ReviewsPageInner() {
           </section>
 
           {/* SECTION 2 — Sentiment by Star Rating */}
-          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-4">
-            <div className="flex items-center justify-between gap-4 mb-2">
-              <h2 className="text-sm font-medium text-text-primary">Sentiment by Star Rating</h2>
-              <p className="text-xs text-text-muted">
+          <section className="rounded-xl border border-border bg-card p-4 text-card-foreground">
+            <div className="mb-2 flex items-center justify-between gap-4">
+              <h2 className="text-sm font-medium text-foreground">Sentiment by Star Rating</h2>
+              <p className="text-xs text-muted-foreground">
                 Hover for what this represents.
               </p>
             </div>
@@ -412,7 +412,7 @@ function ReviewsPageInner() {
                 barGap={0}
                 margin={{ top: 0, right: 24, bottom: 0, left: 16 }}
               >
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--border)" />
                 <YAxis
                   dataKey="starLabel"
                   type="category"
@@ -434,7 +434,6 @@ function ReviewsPageInner() {
                     const raw = (item as any)?.payload?.raw
                     return [formatCompound(typeof raw === 'number' ? raw : Number(value)), 'Avg compound']
                   }}
-                  cursor={{ fill: 'rgba(42,42,58,0.35)' }}
                 />
                 <Bar
                   dataKey="compound"
@@ -443,7 +442,7 @@ function ReviewsPageInner() {
                   barSize={20}
                 >
                   {sentimentRows.rows.map((r, idx) => (
-                    <Cell key={idx} fill={r.compound >= 0 ? '#2DD4BF' : '#EF4444'} />
+                    <Cell key={idx} fill={r.compound >= 0 ? 'var(--chart-2)' : 'var(--chart-4)'} />
                   ))}
                 </Bar>
               </BarChart>
@@ -451,8 +450,8 @@ function ReviewsPageInner() {
           </section>
 
           {/* SECTION 3 — Topic Deep Dive */}
-          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-            <h2 className="text-sm font-medium text-text-primary mb-4">Topic Deep Dive</h2>
+          <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+            <h2 className="mb-4 text-sm font-medium text-foreground">Topic Deep Dive</h2>
             <div className="space-y-3">
               {topics.map((t) => {
                 const topicId = t.id ?? -1
@@ -464,7 +463,7 @@ function ReviewsPageInner() {
                   pctNegative,
                 })
                 return (
-                  <div key={`${topicId}-${t.label}`} className="border border-[#2A2A3A] rounded-xl p-4">
+                  <div key={`${topicId}-${t.label}`} className="rounded-xl border border-border p-4">
                     <button
                       type="button"
                       onClick={() => setExpandedTopicId(isOpen ? null : topicId)}
@@ -472,25 +471,25 @@ function ReviewsPageInner() {
                     >
                       <div>
                         <div className="flex items-center gap-2">
-                          <h3 className="text-sm font-medium text-text-primary">{t.label}</h3>
-                          <span className="text-xs px-2 py-0.5 rounded bg-background-card border border-border text-text-secondary">
+                          <h3 className="text-sm font-medium text-foreground">{t.label}</h3>
+                          <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                             {t.count ?? 0} reviews
                           </span>
                         </div>
                         <div className="mt-3 flex items-center gap-3">
-                          <div className="flex-1 h-2 bg-[#2A2A3A] rounded-full overflow-hidden flex">
+                          <div className="flex h-2 flex-1 overflow-hidden rounded-full bg-muted">
                             <div
-                              style={{ width: `${sentiment.positive}%`, backgroundColor: '#2DD4BF' }}
-                              className="h-full"
+                              className="h-full bg-accent-teal"
+                              style={{ width: `${sentiment.positive}%` }}
                             />
                             <div
-                              style={{ width: `${sentiment.negative}%`, backgroundColor: '#EF4444' }}
-                              className="h-full"
+                              className="h-full bg-accent-red"
+                              style={{ width: `${sentiment.negative}%` }}
                             />
                           </div>
                         </div>
                       </div>
-                      <div className="text-text-muted mt-1">
+                      <div className="mt-1 text-muted-foreground">
                         {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                       </div>
                     </button>
@@ -501,13 +500,13 @@ function ReviewsPageInner() {
                           {(t.keywords || []).map((k, idx) => (
                             <span
                               key={`${k}-${idx}`}
-                              className="text-xs px-2 py-1 rounded border border-[#2A2A3A] text-text-secondary bg-[#0A0A0F]"
+                              className="rounded border border-border bg-background px-2 py-1 text-xs text-muted-foreground"
                             >
                               {k}
                             </span>
                           ))}
                         </div>
-                        <div className="text-xs text-text-muted">
+                        <div className="text-xs text-muted-foreground">
                           Sentiment bar estimates positive vs complaint-heavy mention share using overall sentiment totals.
                         </div>
                       </div>
@@ -519,9 +518,9 @@ function ReviewsPageInner() {
           </section>
 
           {/* SECTION 4 — Key Insights */}
-          <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-            <h2 className="text-sm font-medium text-text-primary mb-4">Key Insights</h2>
-            <ul className="list-disc pl-5 space-y-2 text-sm text-text-secondary">
+          <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+            <h2 className="mb-4 text-sm font-medium text-foreground">Key Insights</h2>
+            <ul className="list-disc space-y-2 pl-5 text-sm text-muted-foreground">
               {keyInsights.map((ins, idx) => (
                 <li key={idx}>{ins}</li>
               ))}
@@ -530,35 +529,35 @@ function ReviewsPageInner() {
 
           {/* SECTION 5 — All Reviews (filter/sort) */}
           {reviews.length > 0 ? (
-            <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-              <div className="flex items-start justify-between gap-4 mb-4">
+            <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+              <div className="mb-4 flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-medium text-text-primary">All Reviews</h2>
-                  <p className="text-xs text-text-muted mt-1">
+                  <h2 className="text-sm font-medium text-foreground">All Reviews</h2>
+                  <p className="mt-1 text-xs text-muted-foreground">
                     {filteredSorted.length} results. Showing page {page} of {totalPages}.
                   </p>
                 </div>
-                <div className="text-xs text-text-muted">
+                <div className="text-xs text-muted-foreground">
                   Sorted client-side. Showing up to 250 reviews from cached data.
                 </div>
               </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-6 gap-3 mb-4">
+            <div className="mb-4 grid grid-cols-1 gap-3 lg:grid-cols-6">
               <div className="lg:col-span-2">
-                <label className="text-xs text-text-secondary block mb-1">Search</label>
+                <label className="mb-1 block text-xs text-muted-foreground">Search</label>
                 <input
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   placeholder="Search body text or topic id..."
-                  className="w-full h-10 bg-[#0A0A0F] border border-[#2A2A3A] rounded-lg px-3 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue"
+                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground focus:border-ring focus:outline-none"
                 />
               </div>
               <div>
-                <label className="text-xs text-text-secondary block mb-1">Star</label>
+                <label className="mb-1 block text-xs text-muted-foreground">Star</label>
                 <select
                   value={starFilter}
                   onChange={(e) => setStarFilter(e.target.value as any)}
-                  className="w-full h-10 bg-[#0A0A0F] border border-[#2A2A3A] rounded-lg px-3 text-sm text-text-primary focus:outline-none focus:border-accent-blue"
+                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:border-ring focus:outline-none"
                 >
                   <option value="all">All</option>
                   <option value="5">5</option>
@@ -569,11 +568,11 @@ function ReviewsPageInner() {
                 </select>
               </div>
               <div>
-                <label className="text-xs text-text-secondary block mb-1">Sentiment</label>
+                <label className="mb-1 block text-xs text-muted-foreground">Sentiment</label>
                 <select
                   value={sentimentFilter}
                   onChange={(e) => setSentimentFilter(e.target.value as any)}
-                  className="w-full h-10 bg-[#0A0A0F] border border-[#2A2A3A] rounded-lg px-3 text-sm text-text-primary focus:outline-none focus:border-accent-blue"
+                  className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:border-ring focus:outline-none"
                 >
                   <option value="all">All</option>
                   <option value="positive">positive</option>
@@ -582,12 +581,12 @@ function ReviewsPageInner() {
                 </select>
               </div>
               <div className="lg:col-span-2">
-                <label className="text-xs text-text-secondary block mb-1">Sort</label>
+                <label className="mb-1 block text-xs text-muted-foreground">Sort</label>
                 <div className="flex gap-2">
                   <select
                     value={sortKey}
                     onChange={(e) => setSortKey(e.target.value as any)}
-                    className="flex-1 h-10 bg-[#0A0A0F] border border-[#2A2A3A] rounded-lg px-3 text-sm text-text-primary focus:outline-none focus:border-accent-blue"
+                    className="h-10 flex-1 rounded-lg border border-border bg-background px-3 text-sm text-foreground focus:border-ring focus:outline-none"
                   >
                     <option value="review_id">Review ID</option>
                     <option value="rating">Rating</option>
@@ -596,7 +595,7 @@ function ReviewsPageInner() {
                   <button
                     type="button"
                     onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
-                    className="w-20 h-10 border border-[#2A2A3A] rounded-lg text-sm text-text-secondary hover:text-text-primary transition-colors"
+                    className="h-10 w-20 rounded-lg border border-border text-sm text-muted-foreground transition-colors hover:text-foreground"
                   >
                     {sortDir.toUpperCase()}
                   </button>
@@ -604,37 +603,37 @@ function ReviewsPageInner() {
               </div>
             </div>
 
-            <div className="overflow-auto rounded-xl border border-[#2A2A3A] bg-[#0A0A0F]">
+            <div className="overflow-auto rounded-xl border border-border bg-background">
               <table className="w-full border-collapse text-sm">
                 <thead>
-                  <tr className="bg-[#16161F] text-text-muted">
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Review</th>
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Rating</th>
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Sentiment</th>
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Compound</th>
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Topic</th>
-                    <th className="text-left px-3 py-2 border-b border-[#2A2A3A]">Body</th>
+                  <tr className="bg-muted/50 text-muted-foreground">
+                    <th className="border-b border-border px-3 py-2 text-left">Review</th>
+                    <th className="border-b border-border px-3 py-2 text-left">Rating</th>
+                    <th className="border-b border-border px-3 py-2 text-left">Sentiment</th>
+                    <th className="border-b border-border px-3 py-2 text-left">Compound</th>
+                    <th className="border-b border-border px-3 py-2 text-left">Topic</th>
+                    <th className="border-b border-border px-3 py-2 text-left">Body</th>
                   </tr>
                 </thead>
                 <tbody>
                   {pageRows.map((r) => (
-                    <tr key={r.review_id} className="hover:bg-[#16161F] transition-colors">
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] font-mono text-text-muted">
+                    <tr key={r.review_id} className="transition-colors hover:bg-muted/40">
+                      <td className="border-b border-border px-3 py-2 font-mono text-muted-foreground">
                         {r.review_id}
                       </td>
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] font-mono text-text-primary">
+                      <td className="border-b border-border px-3 py-2 font-mono text-foreground">
                         {r.rating}★
                       </td>
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] text-text-secondary">
+                      <td className="border-b border-border px-3 py-2 text-muted-foreground">
                         {(r.sentiment_label || 'neutral').toLowerCase()}
                       </td>
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] font-mono text-text-primary">
-                        <span style={{ color: compoundColor(r.compound_score) }}>{formatCompound(r.compound_score)}</span>
+                      <td className="border-b border-border px-3 py-2 font-mono">
+                        <span className={compoundClassName(r.compound_score)}>{formatCompound(r.compound_score)}</span>
                       </td>
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] font-mono text-text-muted">
+                      <td className="border-b border-border px-3 py-2 font-mono text-muted-foreground">
                         {r.topic_id}
                       </td>
-                      <td className="px-3 py-2 border-b border-[#2A2A3A] text-text-secondary">
+                      <td className="border-b border-border px-3 py-2 text-muted-foreground">
                         {truncate(r.body, 140)}
                       </td>
                     </tr>
@@ -643,34 +642,34 @@ function ReviewsPageInner() {
               </table>
             </div>
 
-            <div className="flex items-center justify-between gap-3 mt-4">
+            <div className="mt-4 flex items-center justify-between gap-3">
               <button
                 type="button"
                 onClick={() => setPage((p) => Math.max(1, p - 1))}
                 disabled={page <= 1}
-                className="h-9 px-3 rounded-lg border border-[#2A2A3A] text-text-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-9 rounded-lg border border-border px-3 text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Prev
               </button>
-              <div className="text-xs text-text-muted">
+              <div className="text-xs text-muted-foreground">
                 Page {page} / {totalPages}
               </div>
               <button
                 type="button"
                 onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                 disabled={page >= totalPages}
-                className="h-9 px-3 rounded-lg border border-[#2A2A3A] text-text-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-9 rounded-lg border border-border px-3 text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
               >
                 Next
               </button>
             </div>
             </section>
           ) : (
-            <section className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-5">
-              <h2 className="text-sm font-medium text-text-primary">All Reviews</h2>
-              <p className="text-sm text-text-secondary mt-2">
+            <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
+              <h2 className="text-sm font-medium text-foreground">All Reviews</h2>
+              <p className="mt-2 text-sm text-muted-foreground">
                 Individual review rows aren’t available from the current API deployment. Once the backend endpoint
-                <span className="font-mono text-xs text-text-primary">/analyze/&lt;asin&gt;/reviews</span> is deployed,
+                <span className="font-mono text-xs text-foreground">/analyze/&lt;asin&gt;/reviews</span> is deployed,
                 this table will populate automatically.
               </p>
             </section>
@@ -691,9 +690,9 @@ function StatCard({
   color?: string
 }) {
   return (
-    <div className="bg-[#0A0A0F] border border-[#2A2A3A] rounded-xl p-4">
-      <div className="text-xs text-text-muted">{label}</div>
-      <div className={`text-2xl font-medium mt-2 ${color || 'text-text-primary'}`}>{value}</div>
+    <div className="rounded-xl border border-border bg-muted/40 p-4">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={`mt-2 text-2xl font-medium ${color || 'text-foreground'}`}>{value}</div>
     </div>
   )
 }
