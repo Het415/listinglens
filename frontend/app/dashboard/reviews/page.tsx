@@ -4,6 +4,9 @@ import Link from 'next/link'
 import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react'
+import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts'
+
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
   /\/$/,
@@ -70,6 +73,34 @@ function classifyOverallSentiment(avgCompound: number | undefined): string {
   if (v >= 0.15) return 'Positive'
   if (v <= -0.15) return 'Negative'
   return 'Neutral / Mixed'
+}
+
+const SENTIMENT_BY_STAR_CHART_CONFIG = {
+  compound: { label: 'Avg compound score', color: '#4F8EF7' },
+} as const
+
+function SentimentByStarTooltip({
+  active,
+  payload,
+}: {
+  active?: boolean
+  payload?: Array<{ value?: number; payload?: { starLabel: string } }>
+}) {
+  if (!active || !payload?.length) return null
+  const v = typeof payload[0]?.value === 'number' ? payload[0].value : 0
+  const starLabel = payload[0]?.payload?.starLabel || 'Star rating'
+  return (
+    <div className="border-border/50 bg-background grid min-w-[14rem] gap-2 rounded-lg border px-3 py-2.5 shadow-xl">
+      <div className="font-medium text-text-primary">{starLabel}</div>
+      <div className="text-[11px] leading-snug text-text-muted">
+        This bar shows the average sentiment compound score for reviews with this star rating. Teal = positive, red = negative.
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-xs text-text-secondary">Avg compound</span>
+        <span className="text-xs font-mono text-text-primary tabular-nums">{formatCompound(v)}</span>
+      </div>
+    </div>
+  )
 }
 
 function sentimentIndicatorEstimate(params: {
@@ -359,30 +390,57 @@ function ReviewsPageInner() {
             <div className="flex items-center justify-between gap-4 mb-4">
               <h2 className="text-sm font-medium text-text-primary">Sentiment by Star Rating</h2>
               <p className="text-xs text-text-muted">
-                Compound score (positive teal, negative red). Bar length = magnitude.
+                Hover for what this represents.
               </p>
             </div>
 
-            <div className="space-y-3">
-              {sentimentRows.rows.map((r) => {
-                const w = (Math.abs(r.compound) / sentimentRows.maxAbs) * 100
-                const bg = r.compound >= 0 ? '#2DD4BF' : '#EF4444'
-                return (
-                  <div key={r.star} className="flex items-center gap-3">
-                    <div className="w-14 text-xs font-mono text-text-muted text-right">{r.star}★</div>
-                    <div className="flex-1 h-5 bg-[#2A2A3A] rounded-full overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{ width: `${Math.min(100, w)}%`, backgroundColor: bg }}
-                      />
-                    </div>
-                    <div className="w-24 text-xs font-mono text-text-primary text-right">
-                      {formatCompound(r.compound)}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <ChartContainer
+              id="sentiment-by-star"
+              config={SENTIMENT_BY_STAR_CHART_CONFIG}
+              className="aspect-[5/2] w-full"
+            >
+              <BarChart
+                data={sentimentRows.rows.map((r) => ({
+                  star: String(r.star),
+                  starLabel: `${r.star}★`,
+                  compound: Math.abs(r.compound),
+                  sign: r.compound >= 0 ? 'pos' : 'neg',
+                  raw: r.compound,
+                }))}
+                layout="vertical"
+                margin={{ top: 0, right: 24, bottom: 0, left: 16 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <YAxis
+                  dataKey="starLabel"
+                  type="category"
+                  tickLine={false}
+                  axisLine={false}
+                  width={44}
+                />
+                <XAxis
+                  type="number"
+                  domain={[0, sentimentRows.maxAbs]}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => formatCompound(v)}
+                />
+                <ChartTooltip
+                  content={<SentimentByStarTooltip />}
+                  formatter={(value, name, item) => {
+                    // show the signed value in tooltip
+                    const raw = (item as any)?.payload?.raw
+                    return [formatCompound(typeof raw === 'number' ? raw : Number(value)), 'Avg compound']
+                  }}
+                  cursor={{ fill: 'rgba(42,42,58,0.35)' }}
+                />
+                <Bar dataKey="compound" radius={[6, 6, 6, 6]} isAnimationActive={false}>
+                  {sentimentRows.rows.map((r, idx) => (
+                    <Cell key={idx} fill={r.compound >= 0 ? '#2DD4BF' : '#EF4444'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ChartContainer>
           </section>
 
           {/* SECTION 3 — Topic Deep Dive */}
