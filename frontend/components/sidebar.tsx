@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Logo } from './logo'
 import { 
   LayoutDashboard, 
@@ -24,6 +24,11 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const currentAsin = searchParams.get('asin')
+  const compareHref = currentAsin
+    ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
+    : '/dashboard/compare'
 
   return (
     <aside className="hidden md:flex w-[220px] flex-col bg-background border-r border-border-subtle h-screen sticky top-0">
@@ -36,6 +41,7 @@ export function Sidebar() {
       <nav className="flex-1 py-4">
         <ul className="space-y-1">
           {navItems.map((item) => {
+            const href = item.href === '/dashboard/compare' ? compareHref : item.href
             const isActive = pathname === item.href || 
               (item.href === '/dashboard' && pathname.startsWith('/dashboard') && pathname !== '/dashboard/reviews' && pathname !== '/dashboard/visual' && pathname !== '/dashboard/compare' && pathname !== '/dashboard/settings')
             const Icon = item.icon
@@ -43,7 +49,7 @@ export function Sidebar() {
             return (
               <li key={item.href}>
                 <Link
-                  href={item.href}
+                  href={href}
                   className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors relative ${
                     isActive 
                       ? 'text-text-primary bg-background-card' 
@@ -79,6 +85,11 @@ export function Sidebar() {
 
 export function MobileNav() {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
+  const currentAsin = searchParams.get('asin')
+  const compareHref = currentAsin
+    ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
+    : '/dashboard/compare'
 
   const mobileItems = navItems.slice(0, 5)
 
@@ -86,6 +97,7 @@ export function MobileNav() {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background-secondary border-t border-border-subtle z-50">
       <ul className="flex justify-around py-2">
         {mobileItems.map((item) => {
+          const href = item.href === '/dashboard/compare' ? compareHref : item.href
           const isActive = pathname === item.href || 
             (item.href === '/dashboard' && pathname.startsWith('/dashboard'))
           const Icon = item.icon
@@ -93,7 +105,7 @@ export function MobileNav() {
           return (
             <li key={item.href}>
               <Link
-                href={item.href}
+                href={href}
                 className={`flex flex-col items-center gap-1 px-3 py-2 text-xs transition-colors ${
                   isActive 
                     ? 'text-accent-blue' 
