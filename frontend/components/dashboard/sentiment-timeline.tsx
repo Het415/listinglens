@@ -23,7 +23,13 @@ const timelineData = [
   { month: 'Jan 26', overall: 2.8, battery: 1.5, reviews: 27 },
 ]
 
-export function SentimentTimeline() {
+export function SentimentTimeline({
+  // Kept for compatibility with `frontend/app/dashboard/page.tsx`.
+  // This timeline currently uses a hardcoded preview dataset.
+  sentimentByRating,
+}: {
+  sentimentByRating?: Record<string, number> | null
+}) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [animate, setAnimate] = useState(false)
   const chartRef = useRef<HTMLDivElement>(null)

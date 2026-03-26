@@ -1,7 +1,9 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Info } from 'lucide-react'
+
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** Shape from API `summary.top_topics` */
 export type TopicItem = {
@@ -23,7 +25,13 @@ export type TopicAnalysisProps = {
   riskInsight?: string | null
 }
 
-type TopicRow = { name: string; positive: number; negative: number }
+type TopicRow = {
+  name: string
+  positive: number
+  negative: number
+  count?: number
+  keywords?: string[]
+}
 
 const FALLBACK_TOPICS: TopicRow[] = [
   { name: 'Battery Life', positive: 18, negative: 67 },
@@ -73,6 +81,8 @@ function buildTopicRows(
         100,
         Math.round(baseNeg * (0.82 + 0.18 * (1 - rel * 0.65))),
       ),
+      count: t.count,
+      keywords: t.keywords,
     }
   })
 }
@@ -144,17 +154,25 @@ export function TopicAnalysis({
 
   return (
     <div className="bg-background-card border border-border rounded-xl p-5 animate-fade-up opacity-0 stagger-5">
-      <h3 className="font-medium text-text-primary mb-1">Review Topic Analysis</h3>
+      <div className="flex items-center justify-between gap-3 mb-1">
+        <h3 className="font-medium text-text-primary">Review Topic Analysis</h3>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="cursor-help text-text-muted">
+              <Info className="w-4 h-4" />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            Each topic row shows estimated share of positive vs complaint-heavy mentions for that topic. Width is derived from
+            topic volume (count) + global sentiment.
+          </TooltipContent>
+        </Tooltip>
+      </div>
       <p className="text-sm text-text-secondary mb-6">What customers are actually talking about</p>
 
       <div className="space-y-4">
         {rows.map((topic, index) => (
-          <TopicBar
-            key={`${topic.name}-${index}`}
-            topic={topic}
-            animate={animate}
-            delay={index * 100}
-          />
+          <TopicBar key={`${topic.name}-${index}`} topic={topic} animate={animate} delay={index * 100} />
         ))}
       </div>
 
@@ -187,27 +205,59 @@ function TopicBar({
   }, [animate, topic, delay])
 
   return (
-    <div className="flex items-center gap-4">
-      <div className="w-32 text-sm text-text-secondary truncate">{topic.name}</div>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <div className="flex items-center gap-4 cursor-help">
+          <div className="w-32 text-sm text-text-secondary truncate">{topic.name}</div>
 
-      <div className="flex-1 flex items-center gap-2">
-        <span className="text-xs font-mono text-accent-teal w-8 text-right">{topic.positive}%</span>
-        <div className="flex-1 flex gap-1">
-          <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-accent-teal rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${widths.positive}%` }}
-            />
-          </div>
-          <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
-            <div
-              className="h-full bg-accent-red rounded-full transition-all duration-700 ease-out"
-              style={{ width: `${widths.negative}%` }}
-            />
+          <div className="flex-1 flex items-center gap-2">
+            <span className="text-xs font-mono text-accent-teal w-8 text-right">
+              {topic.positive}%
+            </span>
+            <div className="flex-1 flex gap-1">
+              <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent-teal rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${widths.positive}%` }}
+                />
+              </div>
+              <div className="flex-1 h-3 bg-border/50 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-accent-red rounded-full transition-all duration-700 ease-out"
+                  style={{ width: `${widths.negative}%` }}
+                />
+              </div>
+            </div>
+            <span className="text-xs font-mono text-accent-red w-8">{topic.negative}%</span>
           </div>
         </div>
-        <span className="text-xs font-mono text-accent-red w-8">{topic.negative}%</span>
-      </div>
-    </div>
+      </TooltipTrigger>
+      <TooltipContent>
+        <div className="grid gap-1.5">
+          <div className="font-medium text-text-primary">{topic.name}</div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-text-secondary">Positive</span>
+            <span className="text-xs font-mono text-text-primary tabular-nums">{topic.positive}%</span>
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-xs text-text-secondary">Complaint-heavy</span>
+            <span className="text-xs font-mono text-accent-red tabular-nums">{topic.negative}%</span>
+          </div>
+          {typeof topic.count === 'number' && !Number.isNaN(topic.count) && (
+            <div className="text-xs text-text-secondary">
+              Estimated topic volume: <span className="font-mono text-text-primary">{topic.count}</span>
+            </div>
+          )}
+          {topic.keywords?.length ? (
+            <div className="text-xs text-text-secondary">
+              Keywords: <span className="font-medium text-text-primary">{topic.keywords.slice(0, 4).join(' · ')}</span>
+            </div>
+          ) : null}
+          <div className="text-xs text-text-secondary">
+            Width comes from topic volume + global sentiment totals.
+          </div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
   )
 }

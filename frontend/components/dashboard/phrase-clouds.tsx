@@ -1,5 +1,9 @@
 'use client'
 
+import { Info } from 'lucide-react'
+
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+
 export type PhraseTopicItem = {
   label: string
   keywords?: string[]
@@ -100,16 +104,37 @@ export function PhraseClouds({ type, topics }: PhraseCloudProps) {
 
   return (
     <div className="bg-background-card border border-border rounded-xl p-5 animate-fade-up opacity-0 stagger-8">
-      <h3 className="font-medium text-text-primary mb-4">{title}</h3>
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <h3 className="font-medium text-text-primary">{title}</h3>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <div className="cursor-help text-text-muted">
+              <Info className="w-4 h-4" />
+            </div>
+          </TooltipTrigger>
+          <TooltipContent>
+            Chips are extracted phrases from the highest-volume topics in the reviews. Hover a chip to see the exact phrase.
+          </TooltipContent>
+        </Tooltip>
+      </div>
 
       <div className="flex flex-wrap gap-2">
         {phrases.map((phrase, index) => (
-          <span
-            key={`${phrase.text}-${index}`}
-            className={`rounded-lg border ${colorClass} ${sizeClasses[phrase.size]} hover:scale-105 transition-transform cursor-default`}
-          >
-            {phrase.text}
-          </span>
+          <Tooltip key={`${phrase.text}-${index}`}>
+            <TooltipTrigger asChild>
+              <span
+                className={`rounded-lg border ${colorClass} ${sizeClasses[phrase.size]} hover:scale-105 transition-transform cursor-help`}
+              >
+                {phrase.text}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="font-medium text-text-primary">{phrase.text}</div>
+              <div className="text-xs text-text-secondary">
+                {type === 'positive' ? 'Positive sentiment phrase' : 'Complaint-heavy phrase'}
+              </div>
+            </TooltipContent>
+          </Tooltip>
         ))}
       </div>
     </div>
