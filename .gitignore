@@ -5,8 +5,6 @@ __pycache__/
 .DS_Store
 data/raw/raw/raw/
 data/raw/raw/processed/
-*.pkl
-*.faiss
 .ipynb_checkpoints/frontend/node_modules/
 frontend/.next/
 frontend/.env.local
