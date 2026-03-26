@@ -189,7 +189,7 @@ export default function LandingPage() {
                 {/* Supported product dropdown */}
                 {showProductDropdown && url.trim() === '' && (
                   <div
-                    className="absolute left-0 right-0 mt-2 z-50 rounded-xl border border-[#2A2A3A] bg-[#16161F] overflow-hidden shadow-lg"
+                    className="absolute left-0 right-0 z-50 mt-2 overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-xl ring-1 ring-border/60"
                     role="listbox"
                   >
                     {supportedProducts.map((p) => (
@@ -206,16 +206,16 @@ export default function LandingPage() {
                             isSelectingProductRef.current = false
                           }, 0)
                         }}
-                        className="w-full text-left px-4 py-3 border-b border-[#2A2A3A] last:border-b-0 hover:border-blue-500 hover:bg-[#1A1A26] transition-colors"
+                        className="group w-full border-b border-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-accent focus-visible:outline-none focus-visible:bg-accent"
                       >
-                        <div className="text-sm text-text-primary">{p.name}</div>
-                        <div className="text-xs font-mono text-text-muted mt-0.5">
+                        <div className="text-sm text-foreground group-hover:text-accent-foreground">{p.name}</div>
+                        <div className="mt-0.5 font-mono text-xs text-muted-foreground group-hover:text-accent-foreground/90">
                           {p.asin}
                         </div>
                       </button>
                     ))}
                     {supportedLoading && (
-                      <div className="px-4 py-3 text-xs text-text-muted">Loading supported products...</div>
+                      <div className="px-4 py-3 text-xs text-muted-foreground">Loading supported products...</div>
                     )}
                   </div>
                 )}
