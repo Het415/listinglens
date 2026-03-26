@@ -91,10 +91,12 @@ function ProductSlot({
   label,
   value,
   onChange,
+  excludedAsins,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
+  excludedAsins: string[]
 }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -124,7 +126,7 @@ function ProductSlot({
       />
       {open && (
         <div className="absolute left-0 right-0 mt-2 rounded-lg border border-[#2A2A3A] bg-[#16161F] z-50 max-h-56 overflow-auto">
-          {SUPPORTED_PRODUCTS.map((p) => (
+          {SUPPORTED_PRODUCTS.filter((p) => !excludedAsins.includes(p.asin)).map((p) => (
             <button
               key={p.asin}
               type="button"
@@ -158,6 +160,39 @@ function ComparePageContent() {
       .filter((v): v is string => Boolean(v))
     return Array.from(new Set(raw))
   }, [slot1, slot2, slot3])
+
+  const slot1Asin = useMemo(() => normalizeInputToAsin(slot1), [slot1])
+  const slot2Asin = useMemo(() => normalizeInputToAsin(slot2), [slot2])
+  const slot3Asin = useMemo(() => normalizeInputToAsin(slot3), [slot3])
+
+  const excludedForSlot1 = useMemo(() => [slot2Asin, slot3Asin].filter((v): v is string => Boolean(v)), [slot2Asin, slot3Asin])
+  const excludedForSlot2 = useMemo(() => [slot1Asin, slot3Asin].filter((v): v is string => Boolean(v)), [slot1Asin, slot3Asin])
+  const excludedForSlot3 = useMemo(() => [slot1Asin, slot2Asin].filter((v): v is string => Boolean(v)), [slot1Asin, slot2Asin])
+
+  const handleSlot1Change = (raw: string) => {
+    const norm = normalizeInputToAsin(raw)
+    if (norm && [slot2Asin, slot3Asin].includes(norm)) {
+      setSlot1('')
+      return
+    }
+    setSlot1(raw)
+  }
+  const handleSlot2Change = (raw: string) => {
+    const norm = normalizeInputToAsin(raw)
+    if (norm && [slot1Asin, slot3Asin].includes(norm)) {
+      setSlot2('')
+      return
+    }
+    setSlot2(raw)
+  }
+  const handleSlot3Change = (raw: string) => {
+    const norm = normalizeInputToAsin(raw)
+    if (norm && [slot1Asin, slot2Asin].includes(norm)) {
+      setSlot3('')
+      return
+    }
+    setSlot3(raw)
+  }
 
   const canCompare = selectedAsins.length >= 2
 
@@ -212,9 +247,24 @@ function ComparePageContent() {
 
       <div className="bg-[#16161F] border border-[#2A2A3A] rounded-xl p-4 md:p-5">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <ProductSlot label="Add Product 1" value={slot1} onChange={setSlot1} />
-          <ProductSlot label="Add Product 2" value={slot2} onChange={setSlot2} />
-          <ProductSlot label="Add Product 3 (optional)" value={slot3} onChange={setSlot3} />
+          <ProductSlot
+            label="Add Product 1"
+            value={slot1}
+            onChange={handleSlot1Change}
+            excludedAsins={excludedForSlot1}
+          />
+          <ProductSlot
+            label="Add Product 2"
+            value={slot2}
+            onChange={handleSlot2Change}
+            excludedAsins={excludedForSlot2}
+          />
+          <ProductSlot
+            label="Add Product 3 (optional)"
+            value={slot3}
+            onChange={handleSlot3Change}
+            excludedAsins={excludedForSlot3}
+          />
         </div>
         <div className="mt-4 flex items-center justify-between">
           <div className="text-xs text-text-muted">Minimum 2 products required. Duplicate ASINs are ignored.</div>
