@@ -37,10 +37,13 @@ function buildPhrasesFromTopics(
       ? [...topics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))
       : [...topics].sort((a, b) => (a.count ?? 0) - (b.count ?? 0))
 
+  // Positive: top 3 topics by count. Negative: bottom 3 by count.
+  const picked = sorted.slice(0, 3)
+
   const seen = new Set<string>()
   const words: string[] = []
 
-  for (const t of sorted) {
+  for (const t of picked) {
     const ks =
       t.keywords && t.keywords.length > 0
         ? t.keywords
@@ -57,10 +60,9 @@ function buildPhrasesFromTopics(
     }
   }
 
-  const capped = words.slice(0, 6)
-  if (!capped.length) return []
+  if (!words.length) return []
 
-  return capped.map((text, i) => ({
+  return words.map((text, i) => ({
     text,
     size: i < 2 ? 'large' : i < 4 ? 'medium' : 'small',
   }))
@@ -73,7 +75,7 @@ interface PhraseCloudProps {
 
 export function PhraseClouds({ type, topics }: PhraseCloudProps) {
   const fromTopics =
-    Array.isArray(topics) && topics.length > 0
+    topics != null && Array.isArray(topics) && topics.length > 0
       ? buildPhrasesFromTopics(topics, type)
       : []
 

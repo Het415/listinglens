@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react'
 /** Compound score per star rating (e.g. from API `summary.sentiment_by_rating`). Keys may be `"1"`–`"5"` or numbers. */
 export type SentimentByRating = Record<string, number> | Record<number, number>
 
+/** Balanced ingest: same review count per star bucket; bar height = count / maxCount → equal full height. */
 const REVIEWS_PER_STAR = 50
 
 const FALLBACK_DISTRIBUTION = [
@@ -39,11 +40,11 @@ function mixHex(a: string, b: string, t: number): string {
     .join('')}`
 }
 
-/** Map compound [-1, 1] to a color from red → amber → teal. */
+/** Map compound [-1, 1]: negative → red, positive → teal (linear blend). */
 function sentimentToColor(sentiment: number): string {
   const t = Math.max(-1, Math.min(1, sentiment))
-  if (t <= 0) return mixHex('#EF4444', '#F59E0B', t + 1)
-  return mixHex('#F59E0B', '#2DD4BF', t)
+  const u = (t + 1) / 2
+  return mixHex('#EF4444', '#2DD4BF', u)
 }
 
 function getSentiment(
@@ -95,7 +96,8 @@ export function ReviewDistribution({ sentimentByRating }: ReviewDistributionProp
 
       <div className="flex items-end justify-between gap-2 h-36">
         {distribution.map((item, index) => {
-          const height = (item.count / maxCount) * 100
+          /* With real data every bar uses REVIEWS_PER_STAR → equal proportional height. */
+          const height = maxCount > 0 ? (item.count / maxCount) * 100 : 0
 
           return (
             <div key={item.stars} className="flex flex-col items-center gap-2 flex-1">
