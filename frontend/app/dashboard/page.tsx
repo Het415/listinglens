@@ -171,11 +171,8 @@ function DashboardPageContent() {
         </div>
       </div>
 
-      {/* Section 3 - Sentiment Timeline */}
-      <SentimentTimeline
-        sentimentTimeline={summary.sentiment_timeline}
-        sentimentByRating={summary.sentiment_by_rating}
-      />
+      {/* Section 3 - Compound sentiment by star rating */}
+      <SentimentTimeline sentimentByRating={summary.sentiment_by_rating} />
 
       {/* Section 4 - Three Columns */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
