@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
 import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight } from 'lucide-react'
@@ -10,12 +10,24 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').rep
   '',
 )
 
+const SUPPORTED_PRODUCTS = [
+  { name: 'TOZO T10 Bluetooth Earbuds', asin: 'B08XPWDSWW' },
+  { name: 'Fire Stick 4K', asin: 'B07GZFM1ZM' },
+  { name: 'Fire TV Stick with Alexa (Previous Gen)', asin: 'B075X8471B' },
+  { name: 'Echo Dot 2nd Generation', asin: 'B01K8B8YA8' },
+  { name: 'Echo Dot 3rd Generation', asin: 'B07H65KP63' },
+  { name: 'Fire TV Stick HD Latest Release', asin: 'B0791TX5P5' },
+  { name: 'Fire Tablet 7 inch 16GB', asin: 'B010BWYDYA' },
+] as const
+
 export default function LandingPage() {
   const router = useRouter()
   const [url, setUrl] = useState('')
   const [isValidUrl, setIsValidUrl] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
   const [loadingStep, setLoadingStep] = useState(0)
+  const [showProductDropdown, setShowProductDropdown] = useState(false)
+  const inputWrapRef = useRef<HTMLDivElement | null>(null)
 
   const loadingSteps = [
     'Fetching reviews...',
@@ -89,6 +101,19 @@ export default function LandingPage() {
     }
   }
 
+  useEffect(() => {
+    if (!showProductDropdown) return
+
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (!inputWrapRef.current) return
+      if (!inputWrapRef.current.contains(target)) setShowProductDropdown(false)
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [showProductDropdown])
+
   return (
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
@@ -113,11 +138,19 @@ export default function LandingPage() {
 
             {/* Input Component */}
             <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
+              <div className="relative flex-1" ref={inputWrapRef}>
                 <input
                   type="url"
                   value={url}
-                  onChange={(e) => setUrl(e.target.value)}
+                  onFocus={() => {
+                    if (!isLoading && url.trim() === '') setShowProductDropdown(true)
+                  }}
+                  onChange={(e) => {
+                    const next = e.target.value
+                    setUrl(next)
+                    // Hide when user starts typing; show again only when cleared.
+                    setShowProductDropdown(next.trim() === '')
+                  }}
                   placeholder="https://www.amazon.com/dp/B09X7CRKRX"
                   className="w-full h-14 bg-background-card border border-border rounded-xl px-4 text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent-blue focus:ring-2 focus:ring-accent-blue/20 transition-all"
                   disabled={isLoading}
@@ -129,6 +162,32 @@ export default function LandingPage() {
                     ) : (
                       <div className="text-xs text-text-muted">Enter URL or ASIN</div>
                     )}
+                  </div>
+                )}
+
+                {/* Supported product dropdown */}
+                {showProductDropdown && url.trim() === '' && (
+                  <div
+                    className="absolute left-0 right-0 mt-2 z-50 rounded-xl border border-[#2A2A3A] bg-[#16161F] overflow-hidden shadow-lg"
+                    role="listbox"
+                  >
+                    {SUPPORTED_PRODUCTS.map((p) => (
+                      <button
+                        key={p.asin}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setUrl(p.asin)
+                          setShowProductDropdown(false)
+                        }}
+                        className="w-full text-left px-4 py-3 border-b border-[#2A2A3A] last:border-b-0 hover:border-blue-500 hover:bg-[#1A1A26] transition-colors"
+                      >
+                        <div className="text-sm text-text-primary">{p.name}</div>
+                        <div className="text-xs font-mono text-text-muted mt-0.5">
+                          {p.asin}
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
