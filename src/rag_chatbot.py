@@ -36,9 +36,19 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
     cache_path = f"data/processed/vectorstore_{asin}"
+    index_file = os.path.join(cache_path, "index.faiss")
+    pkl_file = os.path.join(cache_path, "index.pkl")
 
-    # load from cache if it exists — saves ~30 seconds per run
-    if os.path.exists(cache_path):
+    abs_cache = os.path.abspath(cache_path)
+    exists_faiss = os.path.exists(index_file)
+    exists_pkl = os.path.exists(pkl_file)
+    print(
+        f"[build_vectorstore] cache_path={abs_cache} "
+        f"index.faiss={exists_faiss} index.pkl={exists_pkl}"
+    )
+
+    # FAISS.save_local writes both files; dir alone or one file is not valid cache
+    if exists_faiss and exists_pkl:
         print(f"Loading cached vectorstore for {asin}...")
         embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
