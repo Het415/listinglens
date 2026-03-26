@@ -12,20 +12,7 @@ const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').rep
   '',
 )
 
-const SUPPORTED_PRODUCTS = [
-  { name: 'TOZO T10 Bluetooth Earbuds', asin: 'B08XPWDSWW' },
-  { name: 'Fire Stick 4K', asin: 'B07GZFM1ZM' },
-  { name: 'Fire TV Stick with Alexa (Previous Gen)', asin: 'B075X8471B' },
-  { name: 'Echo Dot 2nd Generation', asin: 'B01K8B8YA8' },
-  { name: 'Echo Dot 3rd Generation', asin: 'B07H65KP63' },
-  { name: 'Fire TV Stick HD Latest Release', asin: 'B0791TX5P5' },
-  { name: 'Fire Tablet 7 inch 16GB', asin: 'B010BWYDYA' },
-  { name: 'Panasonic ErgoFit Wired Earbuds', asin: 'B07S764D9V' },
-  { name: 'OontZ Angle 3 Bluetooth Speaker', asin: 'B0BW4PFM58' },
-  { name: 'Apple AirPods 2nd Generation', asin: 'B07PXGQC1Q' },
-  { name: 'Ring Video Doorbell', asin: 'B00N2ZDXW2' },
-  { name: 'WYZE Cam v2 Security Camera', asin: 'B08RLW7918' },
-] as const
+type SupportedAsin = { asin: string; name: string }
 
 export default function LandingPage() {
   const router = useRouter()
@@ -36,6 +23,8 @@ export default function LandingPage() {
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const inputWrapRef = useRef<HTMLDivElement | null>(null)
   const isSelectingProductRef = useRef(false)
+  const [supportedProducts, setSupportedProducts] = useState<SupportedAsin[]>([])
+  const [supportedLoading, setSupportedLoading] = useState(false)
 
   const loadingSteps = [
     'Fetching reviews...',
@@ -54,6 +43,28 @@ export default function LandingPage() {
   
     setIsValidUrl(isUrl || isAsin)
   }, [url])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSupported() {
+      setSupportedLoading(true)
+      try {
+        const res = await fetch(`${API_URL}/supported-asins`)
+        if (!res.ok) return
+        const json = await res.json() as { asins?: SupportedAsin[] }
+        if (cancelled) return
+        setSupportedProducts(Array.isArray(json.asins) ? json.asins : [])
+      } catch {
+        // Ignore; dropdown will just be empty.
+      } finally {
+        if (!cancelled) setSupportedLoading(false)
+      }
+    }
+    loadSupported()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const handleAnalyze = async () => {
     if (!isValidUrl) return
@@ -181,7 +192,7 @@ export default function LandingPage() {
                     className="absolute left-0 right-0 mt-2 z-50 rounded-xl border border-[#2A2A3A] bg-[#16161F] overflow-hidden shadow-lg"
                     role="listbox"
                   >
-                    {SUPPORTED_PRODUCTS.map((p) => (
+                    {supportedProducts.map((p) => (
                       <button
                         key={p.asin}
                         type="button"
@@ -203,6 +214,9 @@ export default function LandingPage() {
                         </div>
                       </button>
                     ))}
+                    {supportedLoading && (
+                      <div className="px-4 py-3 text-xs text-text-muted">Loading supported products...</div>
+                    )}
                   </div>
                 )}
               </div>

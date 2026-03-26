@@ -5,20 +5,7 @@ import { Star } from 'lucide-react'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
-const SUPPORTED_PRODUCTS = [
-  { name: 'TOZO T10 Earbuds', asin: 'B08XPWDSWW' },
-  { name: 'Fire Stick 4K', asin: 'B07GZFM1ZM' },
-  { name: 'Fire TV Stick', asin: 'B075X8471B' },
-  { name: 'Echo Dot 2nd Gen', asin: 'B01K8B8YA8' },
-  { name: 'Echo Dot 3rd Gen', asin: 'B07H65KP63' },
-  { name: 'Fire TV Stick HD', asin: 'B0791TX5P5' },
-  { name: 'Fire Tablet 7 inch', asin: 'B010BWYDYA' },
-  { name: 'Panasonic ErgoFit Wired Earbuds', asin: 'B07S764D9V' },
-  { name: 'OontZ Angle 3 Bluetooth Speaker', asin: 'B0BW4PFM58' },
-  { name: 'Apple AirPods 2nd Generation', asin: 'B07PXGQC1Q' },
-  { name: 'Ring Video Doorbell', asin: 'B00N2ZDXW2' },
-  { name: 'WYZE Cam v2 Security Camera', asin: 'B08RLW7918' },
-] as const
+type SupportedAsin = { asin: string; name: string }
 
 type AnalyzeResponse = {
   asin: string
@@ -97,11 +84,13 @@ function ProductSlot({
   value,
   onChange,
   excludedAsins,
+  supportedProducts,
 }: {
   label: string
   value: string
   onChange: (v: string) => void
   excludedAsins: string[]
+  supportedProducts: SupportedAsin[]
 }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement | null>(null)
@@ -131,7 +120,9 @@ function ProductSlot({
       />
       {open && (
         <div className="absolute left-0 right-0 mt-2 rounded-lg border border-[#2A2A3A] bg-[#16161F] z-50 max-h-56 overflow-auto">
-          {SUPPORTED_PRODUCTS.filter((p) => !excludedAsins.includes(p.asin)).map((p) => (
+          {supportedProducts
+            .filter((p) => !excludedAsins.includes(p.asin))
+            .map((p) => (
             <button
               key={p.asin}
               type="button"
@@ -144,7 +135,7 @@ function ProductSlot({
               <div className="text-sm text-text-primary">{p.name}</div>
               <div className="text-xs font-mono text-text-muted">{p.asin}</div>
             </button>
-          ))}
+            ))}
         </div>
       )}
     </div>
@@ -155,6 +146,8 @@ function ComparePageContent() {
   const [slot1, setSlot1] = useState('')
   const [slot2, setSlot2] = useState('')
   const [slot3, setSlot3] = useState('')
+  const [supportedProducts, setSupportedProducts] = useState<SupportedAsin[]>([])
+  const [supportedLoading, setSupportedLoading] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cards, setCards] = useState<CompareCard[]>([])
@@ -165,6 +158,28 @@ function ComparePageContent() {
       .filter((v): v is string => Boolean(v))
     return Array.from(new Set(raw))
   }, [slot1, slot2, slot3])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadSupported() {
+      setSupportedLoading(true)
+      try {
+        const res = await fetch(`${API_URL}/supported-asins`)
+        if (!res.ok) return
+        const json = await res.json() as { asins?: SupportedAsin[] }
+        if (cancelled) return
+        setSupportedProducts(Array.isArray(json.asins) ? json.asins : [])
+      } catch {
+        // ignore
+      } finally {
+        if (!cancelled) setSupportedLoading(false)
+      }
+    }
+    loadSupported()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const slot1Asin = useMemo(() => normalizeInputToAsin(slot1), [slot1])
   const slot2Asin = useMemo(() => normalizeInputToAsin(slot2), [slot2])
@@ -257,18 +272,21 @@ function ComparePageContent() {
             value={slot1}
             onChange={handleSlot1Change}
             excludedAsins={excludedForSlot1}
+            supportedProducts={supportedProducts}
           />
           <ProductSlot
             label="Add Product 2"
             value={slot2}
             onChange={handleSlot2Change}
             excludedAsins={excludedForSlot2}
+            supportedProducts={supportedProducts}
           />
           <ProductSlot
             label="Add Product 3 (optional)"
             value={slot3}
             onChange={handleSlot3Change}
             excludedAsins={excludedForSlot3}
+            supportedProducts={supportedProducts}
           />
         </div>
         <div className="mt-4 flex items-center justify-between">
