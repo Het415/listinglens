@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
 import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight } from 'lucide-react'
+import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
+import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
   /\/$/,
@@ -329,13 +331,13 @@ function PreviewCard() {
         </div>
       </div>
 
-      {/* Mini Bar Chart */}
+      {/* Area Chart Preview */}
       <div className="space-y-3 mb-6">
-        <div className="text-xs text-text-secondary mb-2">Sentiment Topics</div>
-        <MiniBar label="Battery Life" value={42} color="red" />
-        <MiniBar label="Sound Quality" value={78} color="teal" />
-        <MiniBar label="Comfort" value={65} color="teal" />
-        <MiniBar label="Durability" value={31} color="red" />
+        <div className="flex items-baseline justify-between gap-3">
+          <div className="text-xs text-text-secondary">Sentiment Topics</div>
+          <div className="text-[11px] text-text-muted font-mono">Hover for details</div>
+        </div>
+        <SentimentTopicsAreaChart />
       </div>
 
       {/* Frosted Overlay */}
@@ -353,19 +355,111 @@ function PreviewCard() {
   )
 }
 
-function MiniBar({ label, value, color }: { label: string; value: number; color: 'teal' | 'red' }) {
-  const barColor = color === 'teal' ? 'bg-accent-teal' : 'bg-accent-red'
-  
+type SentimentTopicRow = {
+  topic: string
+  positive: number | null
+  negative: number | null
+}
+
+const SENTIMENT_TOPIC_DATA: SentimentTopicRow[] = [
+  { topic: 'Battery Life', negative: 42, positive: null },
+  { topic: 'Sound Quality', positive: 78, negative: null },
+  { topic: 'Comfort', positive: 65, negative: null },
+  { topic: 'Durability', negative: 31, positive: null },
+]
+
+const SENTIMENT_TOPICS_CHART_CONFIG = {
+  positive: { label: 'Positive mentions', color: '#2DD4BF' },
+  negative: { label: 'Complaint-heavy mentions', color: '#F59E0B' },
+} as const
+
+function SentimentTopicsAreaChart() {
   return (
-    <div className="flex items-center gap-3">
-      <span className="text-xs text-text-secondary w-24 truncate">{label}</span>
-      <div className="flex-1 h-2 bg-border rounded-full overflow-hidden">
-        <div 
-          className={`h-full ${barColor} rounded-full`}
-          style={{ width: `${value}%` }}
+    <ChartContainer
+      id="sentiment-topics"
+      config={SENTIMENT_TOPICS_CHART_CONFIG}
+      className="aspect-[5/2] w-full"
+    >
+      <AreaChart
+        data={SENTIMENT_TOPIC_DATA}
+        margin={{ top: 10, right: 10, left: 0, bottom: 0 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" vertical={false} />
+        <XAxis
+          dataKey="topic"
+          tickLine={false}
+          axisLine={false}
+          interval={0}
+          tickMargin={8}
         />
+        <YAxis hide domain={[0, 100]} />
+
+        <ChartTooltip content={<SentimentTopicsTooltip />} cursor={{ stroke: '#2A2A3A', strokeWidth: 1, fill: 'transparent' }} />
+
+        <Area
+          dataKey="positive"
+          type="monotone"
+          stroke="var(--color-positive)"
+          fill="var(--color-positive)"
+          fillOpacity={0.18}
+          dot={false}
+          activeDot={{ r: 4 }}
+          isAnimationActive={false}
+        />
+        <Area
+          dataKey="negative"
+          type="monotone"
+          stroke="var(--color-negative)"
+          fill="var(--color-negative)"
+          fillOpacity={0.18}
+          dot={false}
+          activeDot={{ r: 4 }}
+          isAnimationActive={false}
+        />
+      </AreaChart>
+    </ChartContainer>
+  )
+}
+
+function SentimentTopicsTooltip({
+  active,
+  payload,
+  label,
+}: {
+  active?: boolean
+  payload?: Array<{ dataKey?: string; value?: number | null; payload?: SentimentTopicRow }>
+  label?: string
+}) {
+  if (!active || !payload?.length || !label) return null
+
+  const point = payload[0]?.payload
+  if (!point) return null
+
+  const positive = typeof point.positive === 'number' ? point.positive : null
+  const negative = typeof point.negative === 'number' ? point.negative : null
+
+  return (
+    <div className="border-border/50 bg-background grid min-w-[14rem] gap-2 rounded-lg border px-3 py-2.5 shadow-xl">
+      <div className="font-medium text-text-primary">{label}</div>
+      <div className="text-[11px] leading-snug text-text-muted">
+        Percent indicates how concentrated customer mentions are around this topic (preview). Red = complaint-heavy, teal = praise-heavy.
       </div>
-      <span className="text-xs font-mono text-text-muted w-8">{value}%</span>
+      {positive != null && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-text-secondary">Positive mentions</span>
+          <span className="text-xs font-mono text-text-primary tabular-nums">
+            {positive}%
+          </span>
+        </div>
+      )}
+      {negative != null && (
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-xs text-text-secondary">Complaint-heavy mentions</span>
+          <span className="text-xs font-mono text-text-primary tabular-nums">
+            {negative}%
+          </span>
+        </div>
+      )}
     </div>
   )
 }
