@@ -145,9 +145,13 @@ function ProductSlot({
   )
 }
 
-function ComparePageContent() {
+function ComparePageInner() {
   const searchParams = useSearchParams()
   const initialAsin = searchParams.get('asin') || ''
+  return <ComparePageContent initialAsin={initialAsin} />
+}
+
+function ComparePageContent() {
 
   const [slot1, setSlot1] = useState(initialAsin)
   const [slot2, setSlot2] = useState('')
