@@ -153,18 +153,30 @@ def run_topic_modeling(texts: list[str],
     Runs topic modeling using KeyBERT-style approach.
     Uses single-process execution to avoid Mac/Python 3.13 segfault.
     """
-    from sklearn.feature_extraction.text import CountVectorizer
+    from sklearn.feature_extraction.text import CountVectorizer, ENGLISH_STOP_WORDS
     from sklearn.decomposition import LatentDirichletAllocation
     import numpy as np
 
     print("Running topic modeling...")
 
+    custom_review_stopwords = [
+        "amazon", "product", "just", "like", "get", "got", "use", "used", "using",
+        "one", "would", "really", "also", "time", "new", "item", "buy", "bought",
+        "purchase", "purchased", "price", "good", "great", "nice", "well", "works",
+        "work", "make", "made", "need", "even", "still", "back", "day", "days",
+        "month", "months", "year", "first", "second", "came", "come", "know",
+        "think", "way", "thing", "things", "little", "lot", "much", "many",
+        "better", "best", "worst", "bad", "old", "app", "device", "customer",
+        "service", "review", "star", "stars", "highly", "recommend",
+    ]
+    all_stopwords = sorted(set(ENGLISH_STOP_WORDS).union(custom_review_stopwords))
+
     # use LDA instead of BERTopic — more stable on Mac/Python 3.13
     # still gives meaningful topics for our use case
     vectorizer = CountVectorizer(
         max_features=1000,
-        stop_words="english",
-        min_df=2,
+        stop_words=all_stopwords,
+        min_df=3,
         ngram_range=(1, 2),  # captures "battery life", "sound quality"
     )
 
