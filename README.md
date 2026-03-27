@@ -92,6 +92,9 @@ Deep-dive sentiment analysis page showing sentiment by star rating, topic breakd
 ### Export Report
 One-click PDF report generation with executive summary, risk analysis, topic breakdown, and recommended actions. Downloads as a branded ListingLens PDF.
 
+### Light/Dark Theme
+Full theme switcher with animated reveal transition. Light mode default.
+
 ---
 
 ## The ML Design: Return Risk Proxy Labels
@@ -158,6 +161,11 @@ In production, this proxy would be replaced with actual return rate data from th
 | B07H65KP63 | Echo Dot 3rd Generation |
 | B0791TX5P5 | Fire TV Stick HD |
 | B010BWYDYA | Fire Tablet 7 inch |
+| B07S764D9V | Panasonic ErgoFit Wired Earbuds |
+| B0BW4PFM58 | OontZ Angle 3 Bluetooth Speaker |
+| B07PXGQC1Q | Apple AirPods 2nd Generation |
+| B00N2ZDXW2 | Ring Video Doorbell |
+| B08RLW7918 | WYZE Cam v2 Security Camera |
 
 ---
 
