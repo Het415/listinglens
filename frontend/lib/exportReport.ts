@@ -38,33 +38,10 @@ function safeNumber(n: unknown, fallback = 0): number {
   return typeof n === 'number' && Number.isFinite(n) ? n : fallback
 }
 
-/** risk_score 0–1; if payload sends 0–100, normalize before (1 - r) * 100 */
-function riskScore01ForOverall(risk: AnalyzeResponse['risk'] | undefined): number {
-  const raw = risk?.risk_score
-  if (typeof raw === 'number' && Number.isFinite(raw)) {
-    if (raw > 1) return Math.min(1, raw / 100)
-    return Math.max(0, Math.min(1, raw))
-  }
-  const pct = risk?.risk_pct
-  if (typeof pct === 'number' && Number.isFinite(pct)) {
-    return Math.max(0, Math.min(1, pct / 100))
-  }
-  return 0
-}
-
 function wrapText(doc: any, text: string, maxWidth: number): string[] {
   const t = text || ''
   if (!t.trim()) return ['']
   return doc.splitTextToSize(t, maxWidth)
-}
-
-function roundedRectFallback(doc: any, x: number, y: number, w: number, h: number, rx: number, ry: number) {
-  const anyDoc = doc as any
-  if (typeof anyDoc.roundedRect === 'function') {
-    anyDoc.roundedRect(x, y, w, h, rx, ry)
-    return
-  }
-  doc.rect(x, y, w, h)
 }
 
 function formatPercent(n: number): string {
@@ -95,6 +72,9 @@ function complaintDotRgb(level: string | undefined): { r: number; g: number; b: 
   return hexRgb('#94A3B8')
 }
 
+/**
+ * Single-page A4 PDF (210×297 mm). All Y positions are fixed in millimeters — no addPage(), no dynamic page breaks.
+ */
 export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
   const jsPDF = await getJsPDF()
 
@@ -108,334 +88,216 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
   const summary = data.summary || {}
   const features = data.features || {}
 
-  const rs01 = riskScore01ForOverall(risk)
-  const overallListingScore = Math.round((1 - rs01) * 100)
+  const overallScore = Math.round((1 - (risk?.risk_score ?? 0.5)) * 100)
 
-  const riskPct = safeNumber(risk.risk_pct, Math.round(rs01 * 100))
+  const riskPct = safeNumber(risk.risk_pct, 0)
   const riskLabel = (risk.risk_label || 'UNKNOWN').toUpperCase()
 
   const ratingAvg = safeNumber(summary.avg_rating, 0)
   const pctPositive = safeNumber(summary.pct_positive, 0)
   const pctNegative = safeNumber(summary.pct_negative, 0)
-  const avgCompoundScore = safeNumber(features.avg_compound_score, 0)
   const ratingSentimentGap = safeNumber(features.rating_sentiment_gap, 0)
 
   const topTopics = Array.isArray(summary.top_topics) ? summary.top_topics : []
 
-  const doc = new jsPDF({ unit: 'pt', format: 'a4' })
-  const pageW = doc.internal.pageSize.getWidth()
-  const pageH = doc.internal.pageSize.getHeight()
-
-  const MM_TO_PT = 2.8346456693
-  const sectionGap = 8 * MM_TO_PT
-
-  const marginX = 8 * MM_TO_PT
-  const maxContentW = pageW - marginX * 2
-  const recMaxW = 170 * MM_TO_PT
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const pageW = 210
 
   const navy = hexRgb('#0F172A')
   const teal = hexRgb('#2DD4BF')
+  const grayMuted = hexRgb('#64748B')
   const grayBorder = hexRgb('#E2E8F0')
-  const rowAlt = hexRgb('#F8FAFC')
-  const recBox = hexRgb('#EFF6FF')
+  const dark = hexRgb('#0F172A')
   const blueLabel = hexRgb('#2563EB')
   const amberLabel = hexRgb('#D97706')
   const redLabel = hexRgb('#DC2626')
 
-  const footerUrl = 'https://listinglens-kappa.vercel.app'
-
-  const lineHeight11 = 14
-  const lineHeight9 = 11
-
-  let currentY = 0
-
-  const pageBreakIfNeeded = () => {
-    if (currentY > 270) {
-      doc.addPage()
-      currentY = 15
-    }
-  }
-
-  /** Advance cursor after drawing wrapped text (baseline of first line = startY). */
-  const advanceAfterWrapped = (lines: string[], lineH: number, startY: number): number => {
-    return startY + lines.length * lineH
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // HEADER — fixed layout inside band (only block that uses absolute Y for art)
-  // ═══════════════════════════════════════════════════════════════════════
-  const headerHeight = 118
-  doc.setFillColor(navy.r, navy.g, navy.b)
-  doc.rect(0, 0, pageW, headerHeight, 'F')
-
-  const logoX = marginX
-  const logoY = 22
-  const sq = 5
-  const sqGap = 2
-  doc.setFillColor(255, 255, 255)
-  doc.rect(logoX, logoY, sq, sq, 'F')
-  doc.rect(logoX + sq + sqGap, logoY, sq, sq, 'F')
-  doc.rect(logoX, logoY + sq + sqGap, sq, sq, 'F')
-  doc.rect(logoX + sq + sqGap, logoY + sq + sqGap, sq, sq, 'F')
-
-  doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(18)
-  doc.text('ListingLens', logoX + sq * 2 + sqGap * 2 + 10, logoY + 9)
-
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(11)
-  const grayRgb = hexRgb('#94A3B8')
-  doc.setTextColor(grayRgb.r, grayRgb.g, grayRgb.b)
-  doc.text(`ASIN ${asin}`, logoX, logoY + 32)
-  doc.text(dateStr, pageW - marginX - doc.getTextWidth(dateStr), logoY + 32)
-
-  doc.setTextColor(255, 255, 255)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(20)
-  const titleLines = wrapText(doc, productName, maxContentW - 8)
-  let titleY = logoY + 52
-  for (const line of titleLines.slice(0, 2)) {
-    doc.text(line, marginX, titleY)
-    titleY += 22
-  }
-
-  doc.setDrawColor(teal.r, teal.g, teal.b)
-  doc.setLineWidth(1.2)
-  doc.line(0, headerHeight - 2, pageW, headerHeight - 2)
-
-  currentY = headerHeight + 10
-
   const riskExplanation = typeof risk.explanation === 'string' ? risk.explanation.trim() : ''
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // Executive Summary — 2×2, each cell 28mm tall; advance 2×28mm + 8mm gap
-  // ═══════════════════════════════════════════════════════════════════════
-  pageBreakIfNeeded()
+  // ── Header ───────────────────────────────────────────────────────────────
+  doc.setFillColor(navy.r, navy.g, navy.b)
+  doc.rect(0, 0, pageW, 32, 'F')
 
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(15, 23, 42)
-  doc.text('Executive Summary', marginX, currentY)
-  currentY += 22
-
-  const cellHmm = 28 * MM_TO_PT
-  const rowGapMm = 8 * MM_TO_PT
-  const gutter = 10
-  const cellW = (maxContentW - gutter) / 2
-  const gridTop = currentY
-
-  type CellSpec = {
-    label: string
-    labelRgb: { r: number; g: number; b: number }
-    value: string
-    valueRgb: { r: number; g: number; b: number }
-  }
-
-  const returnRiskRgb = riskLabelColors(riskLabel)
-
-  const execCells: CellSpec[] = [
-    { label: 'Overall Score', labelRgb: blueLabel, value: `${overallListingScore}/100`, valueRgb: blueLabel },
-    {
-      label: 'Return Risk',
-      labelRgb: returnRiskRgb,
-      value: `${formatPercent(riskPct)} — ${riskLabel}`,
-      valueRgb: returnRiskRgb,
-    },
-    {
-      label: 'Average Rating',
-      labelRgb: amberLabel,
-      value: `${ratingAvg.toFixed(1)}/5.0`,
-      valueRgb: hexRgb('#0F172A'),
-    },
-    {
-      label: 'Negative %',
-      labelRgb: redLabel,
-      value: formatPercent(pctNegative),
-      valueRgb: redLabel,
-    },
-  ]
-
-  execCells.forEach((cell, i) => {
-    const col = i % 2
-    const row = Math.floor(i / 2)
-    const x = marginX + col * (cellW + gutter)
-    const cy = gridTop + row * (cellHmm + rowGapMm)
-
-    doc.setDrawColor(grayBorder.r, grayBorder.g, grayBorder.b)
-    doc.setLineWidth(0.6)
-    const rd = doc as any
-    if (typeof rd.roundedRect === 'function') {
-      rd.roundedRect(x, cy, cellW, cellHmm, 4, 4, 'S')
-    } else {
-      doc.rect(x, cy, cellW, cellHmm, 'S')
-    }
-
-    doc.setFont('helvetica', 'normal')
-    doc.setFontSize(8)
-    doc.setTextColor(cell.labelRgb.r, cell.labelRgb.g, cell.labelRgb.b)
-    doc.text(cell.label.toUpperCase(), x + 10, cy + 14)
-
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(15)
-    doc.setTextColor(cell.valueRgb.r, cell.valueRgb.g, cell.valueRgb.b)
-    doc.text(cell.value, x + 10, cy + 38)
-  })
-
-  currentY = gridTop + 2 * cellHmm + rowGapMm + sectionGap
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Risk Assessment
-  // ═══════════════════════════════════════════════════════════════════════
-  pageBreakIfNeeded()
-
-  const riskTitleStr = 'Return Risk Analysis'
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(15, 23, 42)
-  const riskTitleW = doc.getTextWidth(riskTitleStr)
-  doc.text(riskTitleStr, marginX, currentY)
-
-  const badgePadX = 8
-  const badgeText = riskLabel
-  doc.setFontSize(9)
-  doc.setFont('helvetica', 'bold')
-  const badgeW = doc.getTextWidth(badgeText) + badgePadX * 2
-  const badgeH = 14
-  const badgeX = marginX + riskTitleW + 6
-  const br = riskLabelColors(riskLabel)
-  doc.setFillColor(br.r, br.g, br.b)
-  doc.rect(badgeX, currentY - badgeH + 4, badgeW, badgeH, 'F')
   doc.setTextColor(255, 255, 255)
-  doc.text(badgeText, badgeX + badgePadX, currentY - 1)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(16)
+  doc.text('ListingLens', 14, 12)
 
-  currentY += 26
-
-  const explainText = riskExplanation || 'No risk explanation was provided by the analysis.'
-  doc.setFont('helvetica', 'normal')
   doc.setFontSize(11)
-  doc.setTextColor(15, 23, 42)
-  const explainLines = wrapText(doc, explainText, maxContentW)
-  let exY = currentY
-  for (const line of explainLines) {
-    doc.text(line, marginX, exY)
-    exY += lineHeight11
+  const nameLines = wrapText(doc, productName, 180)
+  let nameY = 22
+  for (const line of nameLines.slice(0, 2)) {
+    doc.text(line, 14, nameY)
+    nameY += 4
   }
-  currentY = advanceAfterWrapped(explainLines, lineHeight11, currentY) + 10
-
-  pageBreakIfNeeded()
-
-  doc.setFontSize(9)
-  doc.setTextColor(100, 116, 139)
-  doc.text('Review sentiment mix', marginX, currentY)
-  currentY += lineHeight9 + 4
-
-  const barH = 16
-  const sumP = Math.max(1e-6, pctNegative + pctPositive)
-  const wNeg = maxContentW * (pctNegative / sumP)
-  const wPos = maxContentW * (pctPositive / sumP)
-  const barTop = currentY
-
-  doc.setFillColor(hexRgb('#EF4444').r, hexRgb('#EF4444').g, hexRgb('#EF4444').b)
-  doc.rect(marginX, barTop, wNeg, barH, 'F')
-  doc.setFillColor(hexRgb('#14B8A6').r, hexRgb('#14B8A6').g, hexRgb('#14B8A6').b)
-  doc.rect(marginX + wNeg, barTop, wPos, barH, 'F')
-
-  doc.setDrawColor(grayBorder.r, grayBorder.g, grayBorder.b)
-  doc.setLineWidth(0.4)
-  doc.rect(marginX, barTop, wNeg + wPos, barH, 'S')
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
-  doc.setTextColor(15, 23, 42)
-  doc.text(`Negative ${formatPercent(pctNegative)}`, marginX + 4, barTop + 11)
-  const posLabel = `Positive ${formatPercent(pctPositive)}`
-  doc.text(posLabel, marginX + wNeg + wPos - doc.getTextWidth(posLabel) - 4, barTop + 11)
+  doc.setTextColor(grayMuted.r, grayMuted.g, grayMuted.b)
+  const asinDate = `ASIN ${asin}  ·  ${dateStr}`
+  doc.text(asinDate, 196, 12, { align: 'right' })
 
-  currentY = barTop + barH + 12
+  doc.setFillColor(teal.r, teal.g, teal.b)
+  doc.rect(0, 32, pageW, 0.8, 'F')
 
-  doc.setFontSize(11)
-  doc.setTextColor(15, 23, 42)
-  doc.text(`Compound score (avg): ${avgCompoundScore.toFixed(3)}`, marginX, currentY)
-  currentY += lineHeight11 + sectionGap
-
-  // ═══════════════════════════════════════════════════════════════════════
-  // Topics — 8mm per row; advance topics.length * 8mm + 10mm
-  // ═══════════════════════════════════════════════════════════════════════
-  pageBreakIfNeeded()
-
+  // ── Executive Summary label + 4 boxes (one row) ────────────────────────
+  doc.setTextColor(dark.r, dark.g, dark.b)
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(15, 23, 42)
-  doc.text('What Customers Are Talking About', marginX, currentY)
-  currentY += 22
+  doc.setFontSize(10)
+  doc.text('Executive Summary', 14, 42)
 
-  const topicRowH = 8 * MM_TO_PT
+  const returnRiskRgb = riskLabelColors(riskLabel)
+  const boxY = 46
+  const boxH = 22
+  const boxW = 44
+  const boxXs = [14, 60, 106, 152]
 
-  if (topTopics.length === 0) {
-    const emptyLines = wrapText(doc, 'No topics were available in the analysis.', maxContentW)
-    let ty = currentY
-    for (const line of emptyLines) {
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(11)
-      doc.text(line, marginX, ty)
-      ty += lineHeight11
+  const cells = [
+    { label: 'OVERALL SCORE', value: `${overallScore}/100`, lr: blueLabel, vr: blueLabel },
+    {
+      label: 'RETURN RISK',
+      value: `${formatPercent(riskPct)} ${riskLabel}`,
+      lr: returnRiskRgb,
+      vr: returnRiskRgb,
+    },
+    {
+      label: 'AVERAGE RATING',
+      value: `${ratingAvg.toFixed(1)}/5.0`,
+      lr: amberLabel,
+      vr: dark,
+    },
+    {
+      label: 'NEGATIVE %',
+      value: formatPercent(pctNegative),
+      lr: redLabel,
+      vr: redLabel,
+    },
+  ]
+
+  cells.forEach((cell, i) => {
+    const x = boxXs[i]
+    doc.setDrawColor(grayBorder.r, grayBorder.g, grayBorder.b)
+    doc.setLineWidth(0.2)
+    doc.rect(x, boxY, boxW, boxH, 'S')
+
+    doc.setFont('helvetica', 'normal')
+    doc.setFontSize(6)
+    doc.setTextColor(cell.lr.r, cell.lr.g, cell.lr.b)
+    doc.text(cell.label, x + 2, boxY + 5)
+
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(9)
+    doc.setTextColor(cell.vr.r, cell.vr.g, cell.vr.b)
+    const vlines = wrapText(doc, cell.value, boxW - 4)
+    let vy = boxY + 12
+    for (const vl of vlines.slice(0, 2)) {
+      doc.text(vl, x + 2, vy)
+      vy += 4
     }
-    currentY = advanceAfterWrapped(emptyLines, lineHeight11, currentY) + 10 * MM_TO_PT
-  } else {
-    topTopics.forEach((t, idx) => {
-      pageBreakIfNeeded()
-      const rowBaseline = currentY
-      const rowTop = rowBaseline - 9
+  })
 
-      const label = t.label || 'Topic'
-      const count = typeof t.count === 'number' ? t.count : 0
-      const level = typeof t.complaint_level === 'string' ? t.complaint_level : undefined
-      const dot = complaintDotRgb(level)
-      const alt = idx % 2 === 1
+  // ── Return Risk Analysis ────────────────────────────────────────────────
+  const titleStr = 'Return Risk Analysis'
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(dark.r, dark.g, dark.b)
+  doc.text(titleStr, 14, 76)
 
-      if (alt) {
-        doc.setFillColor(rowAlt.r, rowAlt.g, rowAlt.b)
-        doc.rect(marginX, rowTop, maxContentW, topicRowH, 'F')
-      }
+  doc.setFontSize(7)
+  const titleW = doc.getTextWidth(titleStr)
+  const badgeText = riskLabel
+  doc.setFont('helvetica', 'bold')
+  const badgePadX = 1.5
+  const badgeW = doc.getTextWidth(badgeText) + badgePadX * 2
+  const badgeH = 6
+  const badgeX = 14 + titleW + 2
+  const br = riskLabelColors(riskLabel)
+  doc.setFillColor(br.r, br.g, br.b)
+  doc.rect(badgeX, 76 - 4.5, badgeW, badgeH, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.text(badgeText, badgeX + badgePadX, 76 - 0.5)
 
-      doc.setFillColor(dot.r, dot.g, dot.b)
-      const d = doc as any
-      if (typeof d.circle === 'function') {
-        d.circle(marginX + 6, rowBaseline - 4, 2.5, 'F')
-      } else {
-        doc.rect(marginX + 3.5, rowBaseline - 6.5, 5, 5, 'F')
-      }
-
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(11)
-      doc.setTextColor(15, 23, 42)
-      doc.text(label, marginX + 16, rowBaseline)
-
-      const countStr = `${count} reviews`
-      doc.setFont('helvetica', 'bold')
-      doc.text(countStr, pageW - marginX - doc.getTextWidth(countStr), rowBaseline)
-
-      currentY = rowBaseline + topicRowH
-    })
-    currentY += 10 * MM_TO_PT
+  // Explanation y=84, 8.5pt, 180mm
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  doc.setTextColor(dark.r, dark.g, dark.b)
+  const explainLines = wrapText(doc, riskExplanation || 'No risk explanation was provided.', 180)
+  let ey = 84
+  for (const line of explainLines) {
+    doc.text(line, 14, ey)
+    ey += 3.6
   }
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // Recommended Actions — wrap at 170mm, + 6mm padding per block
-  // ═══════════════════════════════════════════════════════════════════════
-  pageBreakIfNeeded()
+  // Sentiment mix y=96
+  const sumP = Math.max(1e-6, pctNegative + pctPositive)
+  const wNeg = 180 * (pctNegative / sumP)
+  const wPos = 180 * (pctPositive / sumP)
+  const barY = 98
+  const barH = 4
 
+  doc.setFontSize(8.5)
+  doc.setTextColor(grayMuted.r, grayMuted.g, grayMuted.b)
+  doc.text('Review sentiment mix', 14, 96)
+
+  doc.setFillColor(hexRgb('#EF4444').r, hexRgb('#EF4444').g, hexRgb('#EF4444').b)
+  doc.rect(14, barY, wNeg, barH, 'F')
+  doc.setFillColor(hexRgb('#14B8A6').r, hexRgb('#14B8A6').g, hexRgb('#14B8A6').b)
+  doc.rect(14 + wNeg, barY, wPos, barH, 'F')
+  doc.setDrawColor(grayBorder.r, grayBorder.g, grayBorder.b)
+  doc.setLineWidth(0.15)
+  doc.rect(14, barY, wNeg + wPos, barH, 'S')
+
+  doc.setFontSize(7)
+  doc.setTextColor(dark.r, dark.g, dark.b)
+  doc.text(`Neg ${formatPercent(pctNegative)}`, 15, barY + barH + 3)
+  doc.text(`Pos ${formatPercent(pctPositive)}`, 14 + wNeg + wPos - doc.getTextWidth(`Pos ${formatPercent(pctPositive)}`), barY + barH + 3)
+
+  // ── Topics ──────────────────────────────────────────────────────────────
   doc.setFont('helvetica', 'bold')
-  doc.setFontSize(13)
-  doc.setTextColor(15, 23, 42)
-  doc.text('Recommended Actions', marginX, currentY)
-  currentY += 22
+  doc.setFontSize(10)
+  doc.setTextColor(dark.r, dark.g, dark.b)
+  doc.text('What Customers Are Talking About', 14, 106)
 
+  const topicRowH = 7
+  const topicStartY = 112
+  for (let i = 0; i < 5; i++) {
+    const y = topicStartY + i * topicRowH
+    const left = topTopics[i]
+    const right = topTopics[i + 5]
+
+    if (left) {
+      const dot = complaintDotRgb(left.complaint_level)
+      doc.setFillColor(dot.r, dot.g, dot.b)
+      doc.circle(15, y - 0.8, 0.9, 'F')
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(dark.r, dark.g, dark.b)
+      const lt = wrapText(doc, left.label || 'Topic', 85)[0] || ''
+      doc.text(lt, 18, y)
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${left.count ?? 0}`, 100, y, { align: 'right' })
+    }
+
+    if (right) {
+      const dot = complaintDotRgb(right.complaint_level)
+      doc.setFillColor(dot.r, dot.g, dot.b)
+      doc.circle(111, y - 0.8, 0.9, 'F')
+      doc.setFont('helvetica', 'normal')
+      doc.setFontSize(8)
+      doc.setTextColor(dark.r, dark.g, dark.b)
+      const rt = wrapText(doc, right.label || 'Topic', 85)[0] || ''
+      doc.text(rt, 114, y)
+      doc.setFont('helvetica', 'bold')
+      doc.text(`${right.count ?? 0}`, 196, y, { align: 'right' })
+    }
+  }
+
+  // ── Recommended Actions ────────────────────────────────────────────────
+  const pctNeg = pctNegative
   const riskNegLine =
-    pctNegative > 30
-      ? `Address negative review patterns — ${pctNegative.toFixed(1)}% of reviews are negative. Focus on resolving the most common complaints.`
-      : `Keep improving — negative sentiment is ${formatPercent(pctNegative)}.`
+    pctNeg > 30
+      ? `Address negative review patterns — ${pctNeg.toFixed(1)}% of reviews are negative. Focus on resolving the most common complaints.`
+      : `Keep improving — negative sentiment is ${formatPercent(pctNeg)}.`
 
   const ratingLine =
     ratingAvg < 3.5
@@ -447,64 +309,39 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
       ? `Align listing description with customer expectations`
       : `Align messaging — customer expectations already match ratings closely`
 
-  const recommendations = [riskNegLine, ratingLine, gapLine]
-  const recPad = 10
-  const recPadAfter = 6 * MM_TO_PT
-  const innerW = Math.min(recMaxW, maxContentW - recPad * 2 - 18)
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(10)
+  doc.setTextColor(dark.r, dark.g, dark.b)
+  doc.text('Recommended Actions', 14, 152)
 
-  recommendations.forEach((rec, i) => {
-    pageBreakIfNeeded()
-    const lines = wrapText(doc, rec, innerW)
-    const textBlockH = lines.length * 13
-    const boxH = Math.max(28, textBlockH + recPad * 2)
-
-    doc.setFillColor(recBox.r, recBox.g, recBox.b)
-    roundedRectFallback(doc, marginX, currentY, maxContentW, boxH, 4, 4)
-    doc.rect(marginX, currentY, maxContentW, boxH, 'F')
-
-    doc.setFont('helvetica', 'bold')
-    doc.setFontSize(11)
-    doc.setTextColor(blueLabel.r, blueLabel.g, blueLabel.b)
-    doc.text(`${i + 1}.`, marginX + recPad, currentY + 18)
-
-    doc.setFont('helvetica', 'normal')
-    doc.setTextColor(15, 23, 42)
-    let ly = currentY + 18
-    for (const line of lines) {
-      doc.text(line, marginX + recPad + 16, ly)
-      ly += 13
-    }
-
-    currentY += boxH + recPadAfter
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8.5)
+  const recs = [riskNegLine, ratingLine, gapLine]
+  const recYs = [159, 166, 173]
+  recs.forEach((rec, idx) => {
+    const lines = wrapText(doc, `${idx + 1}. ${rec}`, 180)
+    lines.forEach((line, li) => {
+      doc.text(line, 14, recYs[idx] + li * 3.5)
+    })
   })
 
-  // ═══════════════════════════════════════════════════════════════════════
-  // Footer — relative to currentY, or new page if needed
-  // ═══════════════════════════════════════════════════════════════════════
-  pageBreakIfNeeded()
-  currentY += 12
-
+  // ── Footer ──────────────────────────────────────────────────────────────
   doc.setDrawColor(grayBorder.r, grayBorder.g, grayBorder.b)
-  doc.setLineWidth(0.5)
-  doc.line(marginX, currentY, pageW - marginX, currentY)
-  currentY += 16
+  doc.setLineWidth(0.3)
+  doc.line(14, 284, 196, 284)
 
-  doc.setFontSize(9)
+  doc.setFontSize(8)
   doc.setFont('helvetica', 'normal')
-  const leftFooter = 'Generated by ListingLens'
-  const pageCount = doc.getNumberOfPages ? doc.getNumberOfPages() : 1
-  const pageStr = `Page ${pageCount}`
+  doc.setTextColor(grayMuted.r, grayMuted.g, grayMuted.b)
+  doc.text('Generated by ListingLens', 14, 289)
+
   const tealRgb = hexRgb('#2DD4BF')
-
-  doc.setTextColor(100, 116, 139)
-  doc.text(leftFooter, marginX, currentY)
-
   doc.setTextColor(tealRgb.r, tealRgb.g, tealRgb.b)
-  doc.text(footerUrl, pageW - marginX - doc.getTextWidth(footerUrl), currentY)
+  const url = 'https://listinglens-kappa.vercel.app'
+  doc.text(url, 196, 289, { align: 'right' })
 
-  doc.setTextColor(100, 116, 139)
-  const pageWid = doc.getTextWidth(pageStr)
-  doc.text(pageStr, pageW / 2 - pageWid / 2, currentY)
+  doc.setTextColor(grayMuted.r, grayMuted.g, grayMuted.b)
+  doc.text('Page 1', 105, 289, { align: 'center' })
 
   const safeFileBase = `${productName}`.replace(/[^a-z0-9]+/gi, '_').slice(0, 40)
   const filename = `${safeFileBase}_${asin}_report_${dateStr}.pdf`
