@@ -22,8 +22,8 @@ xgboost>=2.0,<4
 
 # RAG — pin HF stack so pip does not downgrade transformers
 faiss-cpu>=1.8,<2
-sentence-transformers==5.3.0
-transformers==5.3.0
+sentence-transformers==2.7.0
+transformers==4.44.2
 langchain==1.2.13
 langchain-core==1.2.21
 langchain-community==0.4.1
