@@ -1,7 +1,7 @@
 # ── ListingLens backend (minimal direct deps) ───────────────────────────────
 # Smaller PyTorch CPU wheels on Linux/macOS (avoids huge CUDA metapackages).
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.6.0
+torch==2.1.0+cpu
 
 # API
 fastapi==0.115.6
