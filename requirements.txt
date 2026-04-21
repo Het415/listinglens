@@ -10,7 +10,7 @@ python-dotenv==1.0.1
 pydantic>=2.10,<3
 
 # Data & ingest
-numpy>=1.26,<3
+numpy>=1.26,<2.0
 pandas>=2.2,<3.1
 requests>=2.32
 datasets>=2.21,<3
