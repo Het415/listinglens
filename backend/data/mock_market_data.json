@@ -1,0 +1,151 @@
+{
+  "_note": "Mock market data seeded for the 12 supported ASINs. Used by competitor_search, price_history, and trend_signal tools. Numbers are plausible but synthetic — not scraped from real Amazon or Keepa.",
+
+  "asin_to_category": {
+    "B08XPWDSWW": "earbuds_tws",
+    "B07S764D9V": "earbuds_wired",
+    "B07PXGQC1Q": "earbuds_tws",
+    "B01K8B8YA8": "smart_speaker",
+    "B07H65KP63": "smart_speaker",
+    "B0BW4PFM58": "bluetooth_speaker",
+    "B07GZFM1ZM": "streaming_stick",
+    "B075X8471B": "streaming_stick",
+    "B0791TX5P5": "streaming_stick",
+    "B010BWYDYA": "tablet",
+    "B00N2ZDXW2": "smart_doorbell",
+    "B08RLW7918": "security_camera"
+  },
+
+  "category_trends": {
+    "earbuds_tws": {
+      "trend_12mo_demand_index": [62, 66, 68, 72, 78, 81, 79, 83, 86, 88, 91, 94],
+      "trend_direction": "rising",
+      "yoy_change_pct": 51.6,
+      "notes": "True wireless earbuds category remains the strongest-growing audio segment. ANC and Bluetooth LE Audio are price-tier differentiators in 2026."
+    },
+    "earbuds_wired": {
+      "trend_12mo_demand_index": [42, 40, 39, 37, 36, 35, 34, 32, 31, 30, 28, 27],
+      "trend_direction": "falling",
+      "yoy_change_pct": -35.7,
+      "notes": "Wired earbuds in long-term decline. Survives mostly as budget tier and audiophile niche."
+    },
+    "smart_speaker": {
+      "trend_12mo_demand_index": [70, 68, 67, 66, 65, 64, 63, 62, 61, 60, 59, 58],
+      "trend_direction": "falling",
+      "yoy_change_pct": -17.1,
+      "notes": "Smart speaker category saturated. Replacement-driven, not new-household-driven."
+    },
+    "bluetooth_speaker": {
+      "trend_12mo_demand_index": [55, 56, 55, 57, 58, 60, 62, 61, 59, 58, 56, 55],
+      "trend_direction": "flat",
+      "yoy_change_pct": 0.0,
+      "notes": "Stable. Strong seasonal lift in summer (outdoor/pool use). Outdoor/waterproof variants are the growth pocket."
+    },
+    "streaming_stick": {
+      "trend_12mo_demand_index": [68, 67, 65, 64, 62, 61, 60, 58, 57, 55, 54, 52],
+      "trend_direction": "falling",
+      "yoy_change_pct": -23.5,
+      "notes": "Smart-TV integration cannibalizing stick category. 4K-and-up tier holding up better than HD tier."
+    },
+    "tablet": {
+      "trend_12mo_demand_index": [48, 47, 47, 45, 44, 43, 42, 41, 40, 39, 38, 37],
+      "trend_direction": "falling",
+      "yoy_change_pct": -22.9,
+      "notes": "Tablet market shrinking. Education and kids segments are the only stable pockets."
+    },
+    "smart_doorbell": {
+      "trend_12mo_demand_index": [60, 63, 65, 68, 72, 74, 76, 78, 81, 84, 87, 90],
+      "trend_direction": "rising",
+      "yoy_change_pct": 50.0,
+      "notes": "Smart-home category strong. Battery-powered models outgrowing wired."
+    },
+    "security_camera": {
+      "trend_12mo_demand_index": [58, 60, 62, 65, 67, 69, 72, 74, 77, 80, 83, 86],
+      "trend_direction": "rising",
+      "yoy_change_pct": 48.3,
+      "notes": "Strong category growth. Cloud-storage subscription model + AI features (person detection) drive premium tier expansion."
+    }
+  },
+
+  "competitors": {
+    "B08XPWDSWW": [
+      {"asin": "B098P3JV63", "title": "Anker Soundcore Liberty 4 NC", "brand": "Anker", "price_usd": 99.99, "rating": 4.4, "review_count": 14200, "top_features": ["Active Noise Cancellation", "50hr total battery", "LDAC HD audio"], "top_complaints": ["app pairing issues", "fit not for small ears"]},
+      {"asin": "B0BS1PRC4M", "title": "JBL Tune Buds True Wireless", "brand": "JBL", "price_usd": 79.99, "rating": 4.2, "review_count": 9800, "top_features": ["ANC", "Bass boost", "Water resistant IP54"], "top_complaints": ["case is bulky", "touch controls oversensitive"]},
+      {"asin": "B0CN2GMSLT", "title": "Soundcore P40i", "brand": "Anker", "price_usd": 59.99, "rating": 4.3, "review_count": 22100, "top_features": ["60hr battery", "AI noise reduction calls", "wireless charging"], "top_complaints": ["bass-heavy tuning", "no aptX"]},
+      {"asin": "B0BDHB9Y8H", "title": "TOZO A1 Mini Wireless Earbuds", "brand": "TOZO", "price_usd": 19.99, "rating": 4.0, "review_count": 31500, "top_features": ["Tiny form factor", "Mono and stereo mode", "Bluetooth 5.3"], "top_complaints": ["mediocre call quality", "no ANC at this price"]}
+    ],
+    "B07S764D9V": [
+      {"asin": "B0BV8K2J8H", "title": "MEMI Wired Earbuds Lightning", "brand": "MEMI", "price_usd": 24.99, "rating": 4.1, "review_count": 4200, "top_features": ["MFi certified", "In-line mic", "Sweat resistant"], "top_complaints": ["cable noise on movement", "no carrying case"]},
+      {"asin": "B07HVDC97K", "title": "1MORE Triple Driver In-Ear Headphones", "brand": "1MORE", "price_usd": 79.99, "rating": 4.5, "review_count": 18900, "top_features": ["Triple-driver design", "THX certified", "Premium build"], "top_complaints": ["price for wired", "cable is heavy"]},
+      {"asin": "B07PFFPC9V", "title": "Apple EarPods USB-C", "brand": "Apple", "price_usd": 19.00, "rating": 4.4, "review_count": 56000, "top_features": ["USB-C connector", "Apple-tuned audio", "iPhone integration"], "top_complaints": ["fit not universal", "no ANC"]}
+    ],
+    "B07PXGQC1Q": [
+      {"asin": "B0D1XD1ZV3", "title": "Apple AirPods 4", "brand": "Apple", "price_usd": 129.00, "rating": 4.6, "review_count": 8400, "top_features": ["Improved fit", "Adaptive Audio (ANC variant)", "USB-C case"], "top_complaints": ["AirPods 2 looked the same", "case scratches easily"]},
+      {"asin": "B0DBL15X8B", "title": "Apple AirPods Pro 2 USB-C", "brand": "Apple", "price_usd": 199.00, "rating": 4.7, "review_count": 92000, "top_features": ["ANC", "Adaptive transparency", "Hearing aid features"], "top_complaints": ["expensive", "ear tip sizing"]},
+      {"asin": "B0BS1PRC4M", "title": "Beats Studio Buds +", "brand": "Beats", "price_usd": 169.99, "rating": 4.3, "review_count": 12300, "top_features": ["ANC", "Cross-platform iOS+Android", "Transparent design"], "top_complaints": ["fit looser than Pro", "battery shorter than competitors"]}
+    ],
+    "B01K8B8YA8": [
+      {"asin": "B07XKF5RM3", "title": "Echo Dot (5th Gen)", "brand": "Amazon", "price_usd": 49.99, "rating": 4.7, "review_count": 360000, "top_features": ["Spherical design", "Better speaker", "Temperature sensor"], "top_complaints": ["price creep vs older Gens", "limited Bluetooth speaker mode"]},
+      {"asin": "B084DWG2VQ", "title": "Echo Dot with Clock (5th Gen)", "brand": "Amazon", "price_usd": 59.99, "rating": 4.7, "review_count": 145000, "top_features": ["Built-in LED clock", "Same internals as standard 5th Gen"], "top_complaints": ["$10 premium for clock", "display too dim in sunlight"]},
+      {"asin": "B0BSHF7WHW", "title": "Google Nest Mini (2nd Gen)", "brand": "Google", "price_usd": 49.00, "rating": 4.5, "review_count": 87000, "top_features": ["Google Assistant", "Wall mountable", "Cleaner microphone array"], "top_complaints": ["fewer Amazon services", "no battery option"]}
+    ],
+    "B07H65KP63": [
+      {"asin": "B07XKF5RM3", "title": "Echo Dot (5th Gen)", "brand": "Amazon", "price_usd": 49.99, "rating": 4.7, "review_count": 360000, "top_features": ["Spherical design", "Better speaker", "Temperature sensor"], "top_complaints": ["price creep vs older Gens", "limited Bluetooth speaker mode"]},
+      {"asin": "B084DWG2VQ", "title": "Echo Dot with Clock (5th Gen)", "brand": "Amazon", "price_usd": 59.99, "rating": 4.7, "review_count": 145000, "top_features": ["Built-in LED clock"], "top_complaints": ["$10 premium for clock"]},
+      {"asin": "B084JBQZPX", "title": "Echo Show 5 (3rd Gen)", "brand": "Amazon", "price_usd": 89.99, "rating": 4.6, "review_count": 67000, "top_features": ["5.5-inch display", "2MP camera", "Photo frame mode"], "top_complaints": ["display sometimes laggy", "ads on home screen"]}
+    ],
+    "B0BW4PFM58": [
+      {"asin": "B07Q4M8C7G", "title": "JBL Clip 4 Portable Bluetooth Speaker", "brand": "JBL", "price_usd": 79.99, "rating": 4.7, "review_count": 78000, "top_features": ["IP67 waterproof", "Carabiner clip", "10hr battery"], "top_complaints": ["pricier than basic alternatives", "no AUX input"]},
+      {"asin": "B07YVYZ8T5", "title": "Anker Soundcore 3 Bluetooth Speaker", "brand": "Anker", "price_usd": 49.99, "rating": 4.6, "review_count": 91000, "top_features": ["BassUp tech", "24hr battery", "IPX7 water resistance"], "top_complaints": ["lacks app EQ", "no carrying strap"]},
+      {"asin": "B0BTGRDPVN", "title": "Bose SoundLink Flex", "brand": "Bose", "price_usd": 149.00, "rating": 4.6, "review_count": 23000, "top_features": ["Premium audio quality", "PositionIQ", "Rugged silicone shell"], "top_complaints": ["price", "battery is fixed (non-replaceable)"]},
+      {"asin": "B098KSQTYS", "title": "OontZ Angle Solo Super Portable", "brand": "OontZ", "price_usd": 19.99, "rating": 4.4, "review_count": 41000, "top_features": ["Compact size", "Long battery", "Affordable"], "top_complaints": ["bass-thin sound", "less waterproof than rivals"]}
+    ],
+    "B07GZFM1ZM": [
+      {"asin": "B08XVYZ1Y5", "title": "Roku Streaming Stick 4K", "brand": "Roku", "price_usd": 49.99, "rating": 4.7, "review_count": 184000, "top_features": ["Dolby Vision and Atmos", "Voice remote", "Cross-platform OS"], "top_complaints": ["fewer Amazon-specific features", "remote requires line of sight sometimes"]},
+      {"asin": "B0BP9SNVH9", "title": "Fire TV Stick 4K Max (2nd Gen)", "brand": "Amazon", "price_usd": 59.99, "rating": 4.6, "review_count": 92000, "top_features": ["Wi-Fi 6E", "AI Art Mode", "Faster processor"], "top_complaints": ["Wi-Fi 6E underused", "ads-heavy home screen"]},
+      {"asin": "B0CCZ1L8K2", "title": "Chromecast with Google TV 4K", "brand": "Google", "price_usd": 49.99, "rating": 4.4, "review_count": 68000, "top_features": ["Google TV recommendations", "Voice remote", "Personal Profiles"], "top_complaints": ["8GB storage fills fast", "occasional Google account sync issues"]}
+    ],
+    "B075X8471B": [
+      {"asin": "B0BP9SNVH9", "title": "Fire TV Stick 4K Max (2nd Gen)", "brand": "Amazon", "price_usd": 59.99, "rating": 4.6, "review_count": 92000, "top_features": ["Wi-Fi 6E", "AI Art Mode"], "top_complaints": ["Wi-Fi 6E underused"]},
+      {"asin": "B08XVYZ1Y5", "title": "Roku Streaming Stick 4K", "brand": "Roku", "price_usd": 49.99, "rating": 4.7, "review_count": 184000, "top_features": ["Dolby Vision and Atmos", "Cross-platform OS"], "top_complaints": ["fewer Amazon-specific features"]},
+      {"asin": "B0BL61SVRJ", "title": "Roku Express HD", "brand": "Roku", "price_usd": 29.99, "rating": 4.7, "review_count": 56000, "top_features": ["Cheapest streaming player", "Simple setup"], "top_complaints": ["1080p max", "lacks voice remote"]}
+    ],
+    "B0791TX5P5": [
+      {"asin": "B0BL61SVRJ", "title": "Roku Express HD", "brand": "Roku", "price_usd": 29.99, "rating": 4.7, "review_count": 56000, "top_features": ["Cheapest streaming player", "Simple setup"], "top_complaints": ["1080p max", "lacks voice remote"]},
+      {"asin": "B08RTM5GVD", "title": "Fire TV Stick Lite", "brand": "Amazon", "price_usd": 19.99, "rating": 4.6, "review_count": 88000, "top_features": ["Budget-tier price", "1080p HD"], "top_complaints": ["remote lacks TV controls", "fewer apps"]},
+      {"asin": "B098L4XLDV", "title": "Roku Streaming Stick HD", "brand": "Roku", "price_usd": 24.99, "rating": 4.6, "review_count": 21000, "top_features": ["Compact form", "Voice remote available"], "top_complaints": ["no 4K", "Wi-Fi 5 only"]}
+    ],
+    "B010BWYDYA": [
+      {"asin": "B0BL5WRXBP", "title": "Fire HD 8 (12th Gen)", "brand": "Amazon", "price_usd": 99.99, "rating": 4.5, "review_count": 35000, "top_features": ["8-inch HD", "Hexa-core processor", "13hr battery"], "top_complaints": ["app store is Amazon-only", "performance still budget-tier"]},
+      {"asin": "B08L5T17BS", "title": "Fire HD 10 (13th Gen)", "brand": "Amazon", "price_usd": 139.99, "rating": 4.5, "review_count": 28000, "top_features": ["10.1-inch FHD", "Octa-core", "Up to 1TB microSD"], "top_complaints": ["weight for kids", "limited side-loading"]},
+      {"asin": "B0D1YL1JKX", "title": "Samsung Galaxy Tab A9", "brand": "Samsung", "price_usd": 159.00, "rating": 4.3, "review_count": 14000, "top_features": ["Google Play store", "Dolby Atmos speakers", "Lightweight"], "top_complaints": ["only 4GB RAM", "no headphone jack on Plus"]}
+    ],
+    "B00N2ZDXW2": [
+      {"asin": "B086Q54K53", "title": "Ring Battery Doorbell Plus", "brand": "Ring", "price_usd": 179.99, "rating": 4.5, "review_count": 92000, "top_features": ["Head-to-toe view", "Quick replies", "Color night vision"], "top_complaints": ["Ring Protect required for video history", "battery life shorter in cold"]},
+      {"asin": "B0BFTGCVSV", "title": "Google Nest Doorbell (Battery)", "brand": "Google", "price_usd": 179.99, "rating": 4.5, "review_count": 28000, "top_features": ["On-device AI alerts", "3hr free event history", "Familiar face alerts"], "top_complaints": ["best features need Nest Aware", "narrower field of view"]},
+      {"asin": "B09NL3D89P", "title": "Eufy Security Video Doorbell 2K (Battery)", "brand": "Eufy", "price_usd": 159.99, "rating": 4.4, "review_count": 17000, "top_features": ["No mandatory subscription", "Local storage", "Dual motion sensors"], "top_complaints": ["app less polished", "occasional notification delay"]},
+      {"asin": "B0BB7FRYRH", "title": "Wyze Video Doorbell Pro", "brand": "Wyze", "price_usd": 89.99, "rating": 4.2, "review_count": 11000, "top_features": ["Affordable", "1440x1440 head-to-toe view", "Local storage option"], "top_complaints": ["wired install only", "occasional video glitches"]}
+    ],
+    "B08RLW7918": [
+      {"asin": "B0CW9TG2P9", "title": "Wyze Cam v4", "brand": "Wyze", "price_usd": 35.98, "rating": 4.5, "review_count": 19000, "top_features": ["2.5K video", "Color night vision", "Free 14-day event history"], "top_complaints": ["wired only", "premium features need Cam Plus"]},
+      {"asin": "B0BCQYNZ19", "title": "Blink Mini 2", "brand": "Amazon", "price_usd": 39.99, "rating": 4.3, "review_count": 31000, "top_features": ["Indoor or outdoor with adapter", "Person detection (subscription)", "Two-way audio"], "top_complaints": ["needs Blink subscription for stored clips", "wired only"]},
+      {"asin": "B0BWFM2X4M", "title": "Eufy SoloCam S340 Solar", "brand": "Eufy", "price_usd": 199.99, "rating": 4.5, "review_count": 8500, "top_features": ["Solar panel included", "3K dual lens", "No subscription required"], "top_complaints": ["price", "limited cloud option"]},
+      {"asin": "B07VQXJBPF", "title": "Wyze Cam Pan v3", "brand": "Wyze", "price_usd": 49.97, "rating": 4.5, "review_count": 24000, "top_features": ["Pan-tilt 360°", "Outdoor rated", "Color night vision"], "top_complaints": ["mechanical noise during pan", "wired only"]}
+    ]
+  },
+
+  "prices": {
+    "B08XPWDSWW": {"current_price": 26.99, "min_price_90d": 19.99, "max_price_90d": 29.99, "avg_price_90d": 25.10, "volatility": "low", "key_events": [{"day_offset": -45, "event": "Prime Day dip to $19.99"}, {"day_offset": -42, "event": "Return to $26.99"}]},
+    "B07S764D9V": {"current_price": 12.99, "min_price_90d": 9.99,  "max_price_90d": 14.99, "avg_price_90d": 12.30, "volatility": "low", "key_events": [{"day_offset": -30, "event": "Coupon dropped, $2 off"}]},
+    "B07PXGQC1Q": {"current_price": 129.00, "min_price_90d": 99.00, "max_price_90d": 129.00, "avg_price_90d": 119.50, "volatility": "medium", "key_events": [{"day_offset": -60, "event": "Holiday low at $99"}, {"day_offset": -50, "event": "Back to MSRP"}]},
+    "B01K8B8YA8": {"current_price": 24.99, "min_price_90d": 14.99, "max_price_90d": 29.99, "avg_price_90d": 23.40, "volatility": "medium", "key_events": [{"day_offset": -55, "event": "Lightning deal $14.99"}, {"day_offset": -53, "event": "Back to $29.99"}]},
+    "B07H65KP63": {"current_price": 29.99, "min_price_90d": 19.99, "max_price_90d": 39.99, "avg_price_90d": 30.10, "volatility": "medium", "key_events": [{"day_offset": -40, "event": "Prime member discount $19.99"}]},
+    "B0BW4PFM58": {"current_price": 32.99, "min_price_90d": 27.99, "max_price_90d": 39.99, "avg_price_90d": 33.20, "volatility": "low", "key_events": []},
+    "B07GZFM1ZM": {"current_price": 39.99, "min_price_90d": 27.99, "max_price_90d": 49.99, "avg_price_90d": 39.40, "volatility": "medium", "key_events": [{"day_offset": -25, "event": "$12 off promotional pricing"}]},
+    "B075X8471B": {"current_price": 24.99, "min_price_90d": 19.99, "max_price_90d": 39.99, "avg_price_90d": 26.50, "volatility": "medium", "key_events": [{"day_offset": -50, "event": "Bulk deal $19.99 each"}]},
+    "B0791TX5P5": {"current_price": 19.99, "min_price_90d": 14.99, "max_price_90d": 24.99, "avg_price_90d": 19.80, "volatility": "low", "key_events": []},
+    "B010BWYDYA": {"current_price": 49.99, "min_price_90d": 29.99, "max_price_90d": 59.99, "avg_price_90d": 47.20, "volatility": "high", "key_events": [{"day_offset": -65, "event": "Prime Day half-price $29.99"}, {"day_offset": -10, "event": "Mid-tier dip $39.99"}]},
+    "B00N2ZDXW2": {"current_price": 99.99, "min_price_90d": 79.99, "max_price_90d": 99.99, "avg_price_90d": 93.40, "volatility": "low", "key_events": [{"day_offset": -35, "event": "Discount to $79.99 for 7 days"}]},
+    "B08RLW7918": {"current_price": 35.98, "min_price_90d": 25.98, "max_price_90d": 39.99, "avg_price_90d": 34.10, "volatility": "low", "key_events": [{"day_offset": -45, "event": "Discontinuation rumor caused drop"}, {"day_offset": -42, "event": "Recovered to normal"}]}
+  }
+}

@@ -1,0 +1,28 @@
+# ListingLens Copilot — agent-specific dependencies.
+#
+# These extend the main requirements.txt with what the agent layer needs.
+# Kept separate so the existing Render deployment isn't forced to install
+# the agent stack until the /agent endpoint is wired up (Stage 5).
+#
+# Install locally with:
+#   uv venv .venv
+#   source .venv/bin/activate
+#   uv pip install -r requirements.txt -r requirements-agent.txt
+#
+# All version pins were validated to NOT downgrade the existing langchain v1
+# ecosystem (see plan file for the dry-run output).
+
+# Agent orchestration (LangGraph v1, released alongside LangChain v1)
+langgraph>=1.0,<2
+
+# Model Context Protocol — exposes tools as a stdio server
+mcp>=1.0
+
+# Structured outputs for the Synthesizer node
+instructor>=1.7
+
+# Evaluation harness (DeepEval handles LLM-as-judge primitives)
+deepeval>=2.0
+
+# Tracing / observability for LangGraph
+langsmith>=0.3
