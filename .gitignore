@@ -13,3 +13,4 @@ frontend/.next/
 frontend/node_modules/
 
 .agents/
+.deepeval/

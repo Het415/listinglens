@@ -1,0 +1,74 @@
+name: Copilot eval (smoke)
+
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'eval/**'
+      - 'requirements-agent.txt'
+      - 'src/rag_chatbot.py'
+      - 'src/fusion.py'
+      - '.github/workflows/eval-on-pr.yml'
+
+jobs:
+  smoke-eval:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install OS deps for XGBoost (libomp)
+        run: sudo apt-get update && sudo apt-get install -y libgomp1
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          # Strip the macOS-incompatible torch pin; CI runs on Linux where the
+          # original +cpu wheel works, but installing from PyPI is simpler.
+          grep -v "^torch" requirements.txt | grep -v "^--extra-index-url" > /tmp/req.txt
+          pip install -r /tmp/req.txt -r requirements-agent.txt
+          # Linux can install the torch+cpu wheel directly:
+          pip install torch==2.1.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+
+      - name: Run 5-query smoke eval (no judge — cost-free)
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          HUGGINGFACE_API_KEY: ${{ secrets.HUGGINGFACE_API_KEY }}
+          LANGSMITH_TRACING: 'false'
+        run: |
+          python -m eval.run_eval --limit 5 --no-judge --output-tag pr-smoke
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval/reports/
+
+      - name: Comment summary on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const reports = fs.readdirSync('eval/reports').filter(f => f.includes('pr-smoke') && f.endsWith('.md'));
+            if (reports.length === 0) {
+              core.warning('No smoke-eval report generated');
+              return;
+            }
+            const body = '## Copilot smoke eval (5 queries, no judge)\n\n' +
+              fs.readFileSync(path.join('eval/reports', reports[reports.length - 1]), 'utf8');
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body.slice(0, 60000),
+            });
