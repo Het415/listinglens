@@ -1,26 +1,32 @@
-"""LangGraph single-node ReAct agent for ListingLens Copilot (Stage 2).
+"""LangGraph multi-node agent for ListingLens Copilot (Stage 3).
 
 Graph topology:
 
-    START → agent → [tool_calls?] → tools → agent  ...
-                                  └→ END
+    START → Planner → Executor → [route_after_executor]
+                          ↑           │
+                          └─ tools ───┤  (tool call present → run tools, loop back)
+                                      │
+                                      ▼
+                                 Synthesizer → [route_after_synth]
+                                      │             │
+                                      │             └─ Executor (one re-plan loop)
+                                      ▼
+                                     END
 
-After END, a synthesizer step (instructor + Groq) converts the trajectory
-into a Recommendation. Stage 3 will lift the synthesizer into its own node;
-Stage 2 keeps it as a post-loop call so the graph stays minimal.
+Compared to Stage 2's single-node ReAct: the Planner runs once up front to
+classify the query and propose a tool sequence; the Executor is now strictly
+"pick the next tool to run" and consumes the plan; the Synthesizer is a
+proper node (not a post-loop function). A bounded re-plan loop kicks in when
+the Synthesizer's confidence is below threshold.
 """
 import os
-from typing import Literal
 
 from dotenv import load_dotenv
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    SystemMessage,
-    ToolMessage,
 )
 from langchain_core.tools import tool
-from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
@@ -32,29 +38,25 @@ from ..mcp_server.tools import (
     trends as trends_tool,
 )
 from ..mcp_server.tools._loader import supported_asins
-from .prompts import SYNTHESIZER_SYSTEM_PROMPT, react_system_prompt
+from .nodes.executor import make_executor_node
+from .nodes.planner import plan_node
+from .nodes.synthesizer import synthesize_node
 from .schemas import (
     AgentOutput,
     AgentState,
     AgentTrace,
-    Recommendation,
 )
 
 load_dotenv()
 
 MAX_TOOL_ITERATIONS = 8
-# AGENT_MODEL is separate from the existing /chat endpoint's GROQ_MODEL.
-# Default is Llama 4 Scout: it emits valid JSON tool_calls reliably on Groq.
-# llama-3.3-70b-versatile occasionally emits Llama-native <function=name{...}>
-# XML on tool-heavy prompts (e.g., launch decisions), failing Groq validation.
-# Override via AGENT_MODEL env var if you want a different model.
-AGENT_MODEL = os.getenv("AGENT_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+MAX_REPLANS = 1                       # one extra Executor loop on low confidence
+REPLAN_CONFIDENCE_THRESHOLD = 0.5     # below this triggers the re-plan loop
 
 
-# ── Tool wrappers ─────────────────────────────────────────────────────────────
-# The MCP-layer functions take `asin` as an explicit arg. For the LangGraph
-# agent, ASIN is part of state — not something the LLM should re-supply on
-# every call. So we build per-ASIN tool closures at graph-build time.
+# ── Per-ASIN tool wrappers ────────────────────────────────────────────────────
+# Same as Stage 2: bind ASIN at graph-build time so the LLM never has to
+# supply it. Each tool here is a thin closure over the Stage-1 MCP tool.
 
 
 def _build_tools_for_asin(asin: str) -> list:
@@ -97,130 +99,90 @@ def _build_tools_for_asin(asin: str) -> list:
     return [review_qa, predict_return_risk, competitor_search, price_history, trend_signal]
 
 
-# ── Graph nodes ───────────────────────────────────────────────────────────────
+# ── Routing edges ─────────────────────────────────────────────────────────────
 
 
-def _make_agent_node(llm_with_tools):
-    """Closure-builds the `agent` node, which calls the LLM and returns its message."""
+def _route_after_executor(state: AgentState):
+    """After the Executor emits a message, decide where to go next.
 
-    def agent_node(state: AgentState) -> dict:
-        response = llm_with_tools.invoke(state["messages"])
-        new_iterations = state.get("iterations", 0)
-        if isinstance(response, AIMessage) and response.tool_calls:
-            new_iterations += len(response.tool_calls)
-        return {"messages": [response], "iterations": new_iterations}
-
-    return agent_node
-
-
-def _route_after_agent(state: AgentState) -> Literal["tools", "end"]:
-    """Conditional edge: continue to tools, or finish."""
+    - If the message has tool_calls → run ToolNode (then loop back).
+    - If the iteration cap is hit → force Synthesizer.
+    - Otherwise (no tool calls) → Synthesizer.
+    """
     last = state["messages"][-1]
-    if not isinstance(last, AIMessage):
-        return "end"
-    if not last.tool_calls:
-        return "end"
     if state.get("iterations", 0) >= MAX_TOOL_ITERATIONS:
+        return "synthesize"
+    if isinstance(last, AIMessage) and last.tool_calls:
+        return "tools"
+    return "synthesize"
+
+
+def _route_after_synthesizer(state: AgentState):
+    """After the Synthesizer, optionally re-plan if confidence is low.
+
+    Only ever loops back once (replans_done cap). The Synthesizer's
+    recommendation is already in state — the re-loop will let the Executor
+    gather more evidence, then the Synthesizer overwrites the recommendation
+    with a better-grounded one.
+    """
+    rec = state.get("recommendation")
+    if rec is None:
         return "end"
-    return "tools"
+    if state.get("replans_done", 0) >= MAX_REPLANS:
+        return "end"
+    if rec.confidence < REPLAN_CONFIDENCE_THRESHOLD:
+        return "replan"
+    return "end"
+
+
+def _bump_replan_counter(state: AgentState) -> dict:
+    """Tiny pass-through node that increments replans_done before re-entering
+    the Executor. Keeping it explicit makes the LangSmith trace readable.
+    """
+    return {"replans_done": state.get("replans_done", 0) + 1}
 
 
 # ── Graph builder ─────────────────────────────────────────────────────────────
 
 
 def build_graph(asin: str):
-    """Build a compiled LangGraph for a specific ASIN.
-
-    Returns the compiled graph and the list of tool objects (the latter is
-    useful for the run.py CLI to extract names for trajectory tracking).
-    """
+    """Build a compiled multi-node LangGraph for a specific ASIN."""
     tools = _build_tools_for_asin(asin)
-    llm = ChatGroq(model=AGENT_MODEL, temperature=0.1, max_tokens=1024)
-    # parallel_tool_calls=False is the standard Groq+Llama tool-use stabilizer:
-    # Llama 3.3 70B sometimes emits the wrong tool-call format when allowed to
-    # call multiple tools in parallel. Forcing serial calls keeps it on the
-    # JSON tool_calls path Groq's API expects.
-    llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False)
 
     graph = StateGraph(AgentState)
-    graph.add_node("agent", _make_agent_node(llm_with_tools))
+    graph.add_node("planner", plan_node)
+    graph.add_node("executor", make_executor_node(tools))
     graph.add_node("tools", ToolNode(tools))
+    graph.add_node("synthesizer", synthesize_node)
+    graph.add_node("bump_replan", _bump_replan_counter)
 
-    graph.add_edge(START, "agent")
+    graph.add_edge(START, "planner")
+    graph.add_edge("planner", "executor")
     graph.add_conditional_edges(
-        "agent",
-        _route_after_agent,
-        {"tools": "tools", "end": END},
+        "executor",
+        _route_after_executor,
+        {"tools": "tools", "synthesize": "synthesizer"},
     )
-    graph.add_edge("tools", "agent")
+    graph.add_edge("tools", "executor")
+    graph.add_conditional_edges(
+        "synthesizer",
+        _route_after_synthesizer,
+        {"replan": "bump_replan", "end": END},
+    )
+    graph.add_edge("bump_replan", "executor")
 
     return graph.compile(), tools
-
-
-# ── Synthesizer (post-loop structured output) ─────────────────────────────────
-
-
-def _synthesize_recommendation(
-    query: str,
-    final_messages: list,
-) -> Recommendation:
-    """Run instructor + Groq once to convert the trajectory into a Recommendation.
-
-    Stage 3 will lift this into a dedicated Synthesizer node; Stage 2 keeps
-    it as a post-loop call so the LangGraph state machine stays simple.
-    """
-    import instructor
-    from groq import Groq
-
-    client = instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
-
-    # Build a compact transcript of the agent's research, hiding system noise.
-    transcript_lines: list[str] = []
-    for m in final_messages:
-        if isinstance(m, SystemMessage):
-            continue
-        if isinstance(m, HumanMessage):
-            transcript_lines.append(f"USER QUESTION: {m.content}")
-        elif isinstance(m, AIMessage):
-            if m.tool_calls:
-                for tc in m.tool_calls:
-                    transcript_lines.append(
-                        f"AGENT CALLED: {tc['name']}({tc.get('args', {})})"
-                    )
-            if m.content:
-                transcript_lines.append(f"AGENT THOUGHT/ANSWER: {m.content}")
-        elif isinstance(m, ToolMessage):
-            content = str(m.content)
-            if len(content) > 1500:
-                content = content[:1500] + " ...[truncated]"
-            transcript_lines.append(f"TOOL RESULT [{m.name}]: {content}")
-
-    transcript = "\n\n".join(transcript_lines)
-
-    return client.chat.completions.create(
-        model=AGENT_MODEL,
-        response_model=Recommendation,
-        max_retries=2,
-        messages=[
-            {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": (
-                    f"Original seller question: {query}\n\n"
-                    f"--- Agent trajectory ---\n{transcript}\n\n"
-                    f"--- End trajectory ---\n\n"
-                    f"Produce the structured Recommendation now."
-                ),
-            },
-        ],
-    )
 
 
 # ── Top-level entry ───────────────────────────────────────────────────────────
 
 
 def run_agent(asin: str, query: str) -> AgentOutput:
-    """Run the agent end-to-end for one (asin, query) and return AgentOutput."""
+    """Run the multi-node agent end-to-end and return AgentOutput.
+
+    Same external signature as Stage 2 so the CLI and (future) API endpoint
+    don't need to change.
+    """
     catalog = supported_asins()
     if asin not in catalog:
         raise ValueError(
@@ -234,28 +196,25 @@ def run_agent(asin: str, query: str) -> AgentOutput:
     initial_state: AgentState = {
         "asin": asin,
         "query": query,
-        "messages": [
-            SystemMessage(content=react_system_prompt(asin, product_name)),
-            HumanMessage(content=query),
-        ],
+        "product_name": product_name,
+        "messages": [HumanMessage(content=query)],
         "iterations": 0,
+        "tools_called": [],
+        "plan": [],
+        "replans_done": 0,
     }
 
-    final_state = compiled.invoke(initial_state)
+    final_state = compiled.invoke(initial_state, config={"recursion_limit": 50})
 
-    # Collect trace
-    tools_called: list[str] = []
-    for m in final_state["messages"]:
-        if isinstance(m, AIMessage) and m.tool_calls:
-            tools_called.extend(tc["name"] for tc in m.tool_calls)
+    recommendation = final_state.get("recommendation")
+    if recommendation is None:
+        raise RuntimeError("Synthesizer did not produce a Recommendation")
 
     trace = AgentTrace(
-        tools_called=tools_called,
-        n_tool_calls=len(tools_called),
+        tools_called=final_state.get("tools_called", []),
+        n_tool_calls=len(final_state.get("tools_called", [])),
         iterations=final_state.get("iterations", 0),
     )
-
-    recommendation = _synthesize_recommendation(query, final_state["messages"])
 
     return AgentOutput(
         asin=asin,

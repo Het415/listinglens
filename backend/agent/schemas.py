@@ -3,12 +3,50 @@
 The agent's external contract is `Recommendation` — everything else is an
 internal shape. AgentState is the LangGraph state passed between nodes.
 """
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Optional
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
 from pydantic import BaseModel, Field
 from typing_extensions import TypedDict
+
+
+QueryType = Literal["launch", "returns", "improve", "unknown"]
+ToolName = Literal[
+    "review_qa",
+    "predict_return_risk",
+    "competitor_search",
+    "price_history",
+    "trend_signal",
+]
+
+
+class Plan(BaseModel):
+    """Output of the Planner node — classification + proposed tool sequence."""
+
+    query_type: QueryType = Field(
+        ...,
+        description=(
+            "launch: 'Should I launch X?'. "
+            "returns: 'Why are returns spiking?' / churn / dissatisfaction. "
+            "improve: 'How do I improve this listing?' / positioning / copy. "
+            "unknown: doesn't fit the above."
+        ),
+    )
+    tool_sequence: list[ToolName] = Field(
+        ...,
+        min_length=1,
+        max_length=6,
+        description=(
+            "The initial tool sequence the executor should run. "
+            "Pick 2-4 tools for most queries; 1 tool only for the very narrowest. "
+            "Order matters — list the most informative tool first."
+        ),
+    )
+    rationale: str = Field(
+        ...,
+        description="One sentence explaining why this plan fits the query.",
+    )
 
 
 # ── Final structured output ───────────────────────────────────────────────────
@@ -60,19 +98,29 @@ class Recommendation(BaseModel):
 
 # ── LangGraph state ───────────────────────────────────────────────────────────
 
-class AgentState(TypedDict):
+class AgentState(TypedDict, total=False):
     """State threaded through the LangGraph nodes.
 
     `asin` is set once at entry and read by every tool from state, never
     parsed out of the natural-language query. This is the ASIN-scoped UX
     decision in the plan: the user picks a product first, then asks the
     agent freeform questions in that product's context.
+
+    The state grows as the graph progresses: Planner fills query_type and
+    plan; Executor appends messages and increments iterations; Synthesizer
+    writes recommendation. replans_done caps the low-confidence re-loop.
     """
 
     asin: str
     query: str
+    product_name: str  # resolved from supported_asins at entry
     messages: Annotated[list[AnyMessage], add_messages]
-    iterations: int  # tool-call iteration counter for the 8-cap
+    iterations: int  # tool-call counter (cap = 8)
+    query_type: QueryType  # filled by Planner
+    plan: list[str]  # remaining tool names to call (mutates as Executor consumes them)
+    tools_called: list[str]  # accumulating record of executed tools (for trace + dedup)
+    recommendation: Optional["Recommendation"]  # filled by Synthesizer
+    replans_done: int  # how many low-confidence re-loops triggered (cap = 1)
 
 
 # ── CLI / API shape ───────────────────────────────────────────────────────────
