@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Send, Sparkles, Zap, Bot, Trash2 } from 'lucide-react'
+import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
@@ -100,6 +100,9 @@ function AssistantPageContent() {
   // effect doesn't immediately overwrite stored history with the empty
   // default during first render.
   const [hydrated, setHydrated] = useState(false)
+  // Mobile trace dropdown is controlled — closed by default, auto-opens
+  // while streaming so users see progress, user can close again any time.
+  const [traceOpen, setTraceOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -315,7 +318,7 @@ function AssistantPageContent() {
 
   return (
     <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 min-h-0">
+      <div className="flex-1 grid grid-cols-1 grid-rows-[auto_1fr] lg:grid-cols-[1fr_360px] lg:grid-rows-1 gap-4 min-h-0">
         <div className="flex flex-col min-h-0">
           <div className="mb-4">
             <div className="flex items-center justify-between mb-2 gap-2">
@@ -483,7 +486,42 @@ function AssistantPageContent() {
           </div>
         </div>
 
-        <div className="min-h-[300px] lg:min-h-0">
+        {/* Trace pane.
+            - Desktop (lg+): a fixed 360px right rail rendered inline.
+            - Mobile / tablet: collapses into a dropdown above the chat —
+              like Claude / Gemini's "thinking" thread — so the full-height
+              trace panel doesn't crowd a short viewport. Uses controlled
+              state instead of <details> because some global CSS in this
+              stack prevented native <details> from collapsing its body. */}
+        <div className="lg:hidden order-first bg-card border border-border rounded-xl overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setTraceOpen((v) => !v)}
+            aria-expanded={traceOpen || loading}
+            className="w-full flex items-center gap-2 px-4 py-3 cursor-pointer text-left"
+          >
+            <Sparkles className="w-4 h-4 text-purple-400" />
+            <span className="text-sm font-medium text-foreground">Agent trace</span>
+            <span className="text-xs text-muted-foreground ml-auto">
+              {trace.length === 0
+                ? 'idle'
+                : `${trace.length} event${trace.length === 1 ? '' : 's'}`}
+            </span>
+            <ChevronDown
+              className={`w-4 h-4 text-muted-foreground transition ${
+                traceOpen || loading ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+          {(traceOpen || loading) && (
+            <div className="border-t border-border h-[260px]">
+              <TracePanel steps={trace} isStreaming={loading} hideHeader />
+            </div>
+          )}
+        </div>
+
+        {/* Desktop trace rail — unchanged. */}
+        <div className="hidden lg:block min-h-0">
           <TracePanel steps={trace} isStreaming={loading} />
         </div>
       </div>
