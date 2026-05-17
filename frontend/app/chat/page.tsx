@@ -254,7 +254,13 @@ function ChatPageContent() {
   )
 
   return (
-    <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
+    // max-w-3xl pins the chat column to roughly the same width as /agent's
+    // chat column (which is constrained by the 360px trace pane on the
+    // right). Left-anchored (no mx-auto) so the messages start at the
+    // same x-position as /agent's chat column — empty space sits on the
+    // right where the trace pane would be on /agent, keeping the two
+    // surfaces visually consistent.
+    <div className="flex flex-col w-full max-w-3xl h-full min-h-0 p-4 md:p-6">
       {/* Suggested questions strip — the redundant product-name + ASIN
           block was removed (topbar already conveys product context). */}
       <div className="mb-4">
