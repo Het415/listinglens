@@ -473,62 +473,65 @@ function AgentPageContent() {
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
-            {messages.length === 0 && !loading && (
-              <div className="flex flex-col items-center justify-center h-full text-center px-4">
-                <Sparkles className="w-8 h-8 text-purple-400/60 mb-3" />
-                <p className="text-sm text-muted-foreground max-w-md">
-                  Ask the Copilot a question about this product. It will plan a
-                  research path, call the right tools, and return a structured
-                  recommendation with cited evidence.
-                </p>
-              </div>
-            )}
+          {messages.length === 0 && !loading ? (
+            // Empty state — not inside the overflow-y-auto container so it
+            // never triggers a scrollbar. Just a centered flex child filling
+            // the remaining vertical space.
+            <div className="flex-1 flex flex-col items-center justify-center text-center px-4 min-h-0">
+              <Sparkles className="w-8 h-8 text-purple-400/60 mb-3" />
+              <p className="text-sm text-muted-foreground max-w-md">
+                Ask the Copilot a question about this product. It will plan a
+                research path, call the right tools, and return a structured
+                recommendation with cited evidence.
+              </p>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
+              {messages.map((m, i) => {
+                if (m.role === 'user') {
+                  return (
+                    <div key={i} className="flex justify-end">
+                      <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-blue-600 text-white rounded-br-sm">
+                        {m.content}
+                      </div>
+                    </div>
+                  )
+                }
+                if (m.error) {
+                  return (
+                    <div key={i} className="flex justify-start">
+                      <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-rose-500/10 border border-rose-500/40 text-rose-300">
+                        {m.error}
+                      </div>
+                    </div>
+                  )
+                }
+                if (m.recommendation) {
+                  return (
+                    <div key={i} className="flex justify-start">
+                      <div className="max-w-[95%] w-full">
+                        <RecommendationCard rec={m.recommendation} />
+                      </div>
+                    </div>
+                  )
+                }
+                return null
+              })}
 
-            {messages.map((m, i) => {
-              if (m.role === 'user') {
-                return (
-                  <div key={i} className="flex justify-end">
-                    <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-blue-600 text-white rounded-br-sm">
-                      {m.content}
+              {loading && (
+                <div className="flex justify-start">
+                  <div className="bg-card border border-border rounded-xl px-4 py-3">
+                    <div className="flex gap-1">
+                      <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                      <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                      <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                     </div>
-                  </div>
-                )
-              }
-              if (m.error) {
-                return (
-                  <div key={i} className="flex justify-start">
-                    <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-rose-500/10 border border-rose-500/40 text-rose-300">
-                      {m.error}
-                    </div>
-                  </div>
-                )
-              }
-              if (m.recommendation) {
-                return (
-                  <div key={i} className="flex justify-start">
-                    <div className="max-w-[95%] w-full">
-                      <RecommendationCard rec={m.recommendation} />
-                    </div>
-                  </div>
-                )
-              }
-              return null
-            })}
-
-            {loading && (
-              <div className="flex justify-start">
-                <div className="bg-card border border-border rounded-xl px-4 py-3">
-                  <div className="flex gap-1">
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                    <span className="w-2 h-2 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
                   </div>
                 </div>
-              </div>
-            )}
-            <div ref={bottomRef} />
-          </div>
+              )}
+              <div ref={bottomRef} />
+            </div>
+          )}
 
           {/* Input */}
           <div className="border-t border-border pt-4 mt-2">
