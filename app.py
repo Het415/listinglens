@@ -115,6 +115,15 @@ class AgentQueryRequest(BaseModel):
     query: str
 
 
+class AssistantQueryRequest(BaseModel):
+    asin: str
+    query: str
+    # User explicitly picks the mode via the segmented toggle on /assistant.
+    # "quick"   → review_qa only (fast grounded Q&A)
+    # "copilot" → full Planner→Executor→Synthesizer agent
+    mode: str = "copilot"
+
+
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
@@ -389,6 +398,111 @@ async def agent_query_mock(request: AgentQueryRequest):
         async for event in stream_mock_returns():
             payload = json.dumps(event["data"], default=str)
             yield f"event: {event['event']}\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.post("/assistant/query")
+async def assistant_query(request: AssistantQueryRequest):
+    """Unified entry point for any seller question.
+
+    The user picks the mode explicitly via the /assistant segmented toggle:
+      - "quick"   → review_qa directly (~5s, grounded answer + sources)
+      - "copilot" → full Planner→Executor→Synthesizer agent (~10-30s,
+                    structured Recommendation + tools trace)
+
+    All events use the same vocabulary as /agent/query so the TracePanel
+    is reusable. The quick path adds a terminal `answer` event (the quick
+    analogue of `recommendation`).
+    """
+    mode = request.mode if request.mode in ("quick", "copilot") else "copilot"
+
+    async def event_stream():
+        # First event echoes the routed mode so the frontend can confirm.
+        yield f"event: kind\ndata: {json.dumps({'value': mode})}\n\n"
+
+        if mode == "copilot":
+            try:
+                from backend.agent.graph import run_agent_streaming
+            except Exception as e:
+                err = json.dumps({"message": f"Agent unavailable: {type(e).__name__}: {e}"})
+                yield f"event: error\ndata: {err}\n\n"
+                return
+
+            try:
+                async for event in run_agent_streaming(request.asin, request.query):
+                    payload = json.dumps(event["data"], default=str)
+                    yield f"event: {event['event']}\ndata: {payload}\n\n"
+            except Exception as e:
+                err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+                yield f"event: error\ndata: {err}\n\n"
+            return
+
+        # 2. Quick path — emit a minimal trace so TracePanel renders something,
+        #    then call review_qa, then emit the `answer` payload.
+        try:
+            from backend.mcp_server.tools.review_qa import review_qa
+            from backend.mcp_server.tools._loader import supported_asins
+        except Exception as e:
+            err = json.dumps({"message": f"review_qa unavailable: {type(e).__name__}: {e}"})
+            yield f"event: error\ndata: {err}\n\n"
+            return
+
+        catalog = supported_asins()
+        if request.asin not in catalog:
+            err = json.dumps({
+                "message": f"Unknown ASIN: {request.asin}",
+                "known": sorted(catalog.keys()),
+            })
+            yield f"event: error\ndata: {err}\n\n"
+            return
+        product_name = catalog[request.asin]
+
+        yield (
+            "event: started\n"
+            f"data: {json.dumps({'asin': request.asin, 'product_name': product_name, 'query': request.query})}\n\n"
+        )
+        yield (
+            "event: node_started\n"
+            f"data: {json.dumps({'node': 'review_qa', 'label': 'searching reviews'})}\n\n"
+        )
+        yield (
+            "event: tool_call\n"
+            f"data: {json.dumps({'tool': 'review_qa', 'args': {'asin': request.asin, 'question': request.query}})}\n\n"
+        )
+
+        try:
+            # review_qa is synchronous (FAISS retrieval + Groq LLM). Run it
+            # in a worker thread so the event loop stays free to flush SSE
+            # frames; asyncio.to_thread uses the default thread executor and
+            # plays well with the upstream FAISS/Bert init.
+            result = await asyncio.to_thread(review_qa, request.asin, request.query)
+        except Exception as e:
+            err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+            yield f"event: error\ndata: {err}\n\n"
+            return
+
+        preview = (result.get("answer") or "")[:200]
+        yield (
+            "event: tool_result\n"
+            f"data: {json.dumps({'tool': 'review_qa', 'result_preview': preview})}\n\n"
+        )
+        yield (
+            "event: node_completed\n"
+            f"data: {json.dumps({'node': 'review_qa'})}\n\n"
+        )
+        yield (
+            "event: answer\n"
+            f"data: {json.dumps({'content': result.get('answer', ''), 'sources': result.get('sources', []), 'n_sources': result.get('n_sources', 0)}, default=str)}\n\n"
+        )
+        yield "event: done\ndata: {}\n\n"
 
     return StreamingResponse(
         event_stream(),
