@@ -2,10 +2,30 @@ services:
   - type: web
     name: listinglens-api
     env: python
-    buildCommand: pip install --upgrade pip && pip install --prefer-binary -r requirements.txt
+    # Two install steps: the existing requirements.txt first (so Render can
+    # still build the base service even if agent deps fail), then the agent
+    # stack (langgraph, mcp, instructor, deepeval, langsmith) on top.
+    buildCommand: |
+      pip install --upgrade pip &&
+      pip install --prefer-binary -r requirements.txt &&
+      pip install --prefer-binary -r requirements-agent.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
         sync: false
       - key: HUGGINGFACE_API_KEY
         sync: false
+      # LangSmith tracing — leave empty/unset in Render dashboard to disable
+      # in production; eval/run_eval flips override=True locally so the
+      # parent shell never blocks the user's own key.
+      - key: LANGSMITH_API_KEY
+        sync: false
+      - key: LANGSMITH_TRACING
+        value: "false"
+      - key: LANGSMITH_PROJECT
+        value: "listinglens-copilot"
+      # AGENT_MODEL pins the model used by the multi-node agent. Defaults
+      # to Llama 4 Scout on Groq which is reliable for tool-calling.
+      # Override only if Groq deprecates the model.
+      - key: AGENT_MODEL
+        value: "meta-llama/llama-4-scout-17b-16e-instruct"
