@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Send, Sparkles, Zap, Bot } from 'lucide-react'
+import { Send, Sparkles, Zap, Bot, Trash2 } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
@@ -82,6 +82,11 @@ function ModeToggle({
   )
 }
 
+// sessionStorage key for the chat history. Per-ASIN so different products
+// don't share conversations; per-tab so it survives sidebar navigation but
+// doesn't pile up forever in localStorage.
+const historyKey = (asin: string) => `assistant_history_${asin}`
+
 function AssistantPageContent() {
   const searchParams = useSearchParams()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
@@ -91,6 +96,10 @@ function AssistantPageContent() {
   const [trace, setTrace] = useState<TraceStep[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  // `hydrated` flips after the initial sessionStorage read so the persist
+  // effect doesn't immediately overwrite stored history with the empty
+  // default during first render.
+  const [hydrated, setHydrated] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -103,6 +112,40 @@ function AssistantPageContent() {
       } catch {}
     }
   }, [asin])
+
+  // Hydrate messages from sessionStorage when ASIN changes (or on mount).
+  // Switching ASIN swaps to that product's history.
+  useEffect(() => {
+    setHydrated(false)
+    try {
+      const raw = sessionStorage.getItem(historyKey(asin))
+      setMessages(raw ? (JSON.parse(raw) as ChatMessage[]) : [])
+    } catch {
+      setMessages([])
+    }
+    setTrace([])
+    setHydrated(true)
+  }, [asin])
+
+  // Persist messages whenever they change. Skipped until hydration finishes
+  // so we don't clobber stored history with [].
+  useEffect(() => {
+    if (!hydrated) return
+    try {
+      if (messages.length === 0) {
+        sessionStorage.removeItem(historyKey(asin))
+      } else {
+        sessionStorage.setItem(historyKey(asin), JSON.stringify(messages))
+      }
+    } catch {
+      // sessionStorage may throw in private-mode browsers; ignore.
+    }
+  }, [messages, asin, hydrated])
+
+  const clearChat = useCallback(() => {
+    setMessages([])
+    setTrace([])
+  }, [])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -275,11 +318,25 @@ function AssistantPageContent() {
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 min-h-0">
         <div className="flex flex-col min-h-0">
           <div className="mb-4">
-            <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center justify-between mb-2 gap-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Try a question
               </p>
-              <ModeToggle mode={mode} onChange={setMode} disabled={loading} />
+              <div className="flex items-center gap-2">
+                {messages.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={clearChat}
+                    disabled={loading}
+                    title="Clear chat history for this product"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-muted-foreground hover:text-foreground hover:bg-background-secondary border border-transparent hover:border-border transition disabled:opacity-50"
+                  >
+                    <Trash2 className="w-3 h-3" />
+                    Clear
+                  </button>
+                )}
+                <ModeToggle mode={mode} onChange={setMode} disabled={loading} />
+              </div>
             </div>
             <div className="flex gap-2 overflow-x-auto pb-1">
               {samples.map((q) => (
