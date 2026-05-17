@@ -4,12 +4,13 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import { Logo } from './logo'
-import { 
-  LayoutDashboard, 
-  MessageSquareText, 
-  Eye, 
-  GitCompare, 
-  Bot, 
+import {
+  LayoutDashboard,
+  MessageSquareText,
+  Eye,
+  GitCompare,
+  Bot,
+  Sparkles,
   Settings,
   Clock
 } from 'lucide-react'
@@ -20,6 +21,7 @@ const navItems = [
   { href: '/dashboard/visual', label: 'Visual Scoring', icon: Eye },
   { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
   { href: '/chat', label: 'Ask AI', icon: Bot },
+  { href: '/agent', label: 'Copilot', icon: Sparkles },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
@@ -46,6 +48,9 @@ export function Sidebar() {
   const askAiHref = currentAsin
     ? `/chat?asin=${encodeURIComponent(currentAsin)}`
     : '/chat'
+  const agentHref = currentAsin
+    ? `/agent?asin=${encodeURIComponent(currentAsin)}`
+    : '/agent'
 
   return (
     <aside className="hidden md:flex w-[220px] flex-col bg-background border-r border-border-subtle h-screen sticky top-0">
@@ -67,8 +72,10 @@ export function Sidebar() {
                     ? visualHref
                     : item.href === '/chat'
                       ? askAiHref
+                      : item.href === '/agent'
+                        ? agentHref
                     : item.href
-            const isActive = pathname === item.href || 
+            const isActive = pathname === item.href ||
               (item.href === '/dashboard' && pathname.startsWith('/dashboard') && pathname !== '/dashboard/reviews' && pathname !== '/dashboard/visual' && pathname !== '/dashboard/compare' && pathname !== '/dashboard/settings')
             const Icon = item.icon
             
@@ -130,6 +137,9 @@ export function MobileNav() {
   const askAiHref = currentAsin
     ? `/chat?asin=${encodeURIComponent(currentAsin)}`
     : '/chat'
+  const agentHref = currentAsin
+    ? `/agent?asin=${encodeURIComponent(currentAsin)}`
+    : '/agent'
 
   const mobileItems = navItems.slice(0, 5)
 
@@ -146,6 +156,8 @@ export function MobileNav() {
                   ? visualHref
                   : item.href === '/chat'
                     ? askAiHref
+                    : item.href === '/agent'
+                      ? agentHref
                   : item.href
           const isActive = pathname === item.href || 
             (item.href === '/dashboard' && pathname.startsWith('/dashboard'))

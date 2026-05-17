@@ -18,13 +18,19 @@ classify the query and propose a tool sequence; the Executor is now strictly
 "pick the next tool to run" and consumes the plan; the Synthesizer is a
 proper node (not a post-loop function). A bounded re-plan loop kicks in when
 the Synthesizer's confidence is below threshold.
+
+Stage 5 adds run_agent_streaming() — an async generator yielding events
+suitable for Server-Sent Events. The frontend subscribes to these and
+animates the trace panel as the agent progresses.
 """
 import os
+from typing import AsyncIterator
 
 from dotenv import load_dotenv
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
+    ToolMessage,
 )
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
@@ -222,3 +228,149 @@ def run_agent(asin: str, query: str) -> AgentOutput:
         recommendation=recommendation,
         trace=trace,
     )
+
+
+# ── Streaming entry (Stage 5) ─────────────────────────────────────────────────
+
+
+def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
+    """Translate one LangGraph state-update into 0+ frontend-friendly events.
+
+    Each event is `{"event": <name>, "data": <json-serializable dict>}`.
+    """
+    out: list[dict] = []
+
+    if node_name == "planner":
+        out.append({
+            "event": "node_started",
+            "data": {"node": "planner", "label": "Planning research..."},
+        })
+        # The planner emits an AIMessage with content like:
+        #   [Planner] query_type=launch; plan=['competitor_search', ...]; rationale=...
+        out.append({
+            "event": "plan_ready",
+            "data": {
+                "query_type": delta.get("query_type"),
+                "plan": delta.get("plan", []),
+            },
+        })
+        out.append({"event": "node_completed", "data": {"node": "planner"}})
+
+    elif node_name == "executor":
+        out.append({
+            "event": "node_started",
+            "data": {"node": "executor", "label": "Picking next action..."},
+        })
+        # New messages added by executor — usually one AIMessage that may
+        # contain tool_calls. Emit a tool_call event per call.
+        msgs = delta.get("messages") or []
+        for m in msgs:
+            if isinstance(m, AIMessage):
+                if m.tool_calls:
+                    for tc in m.tool_calls:
+                        out.append({
+                            "event": "tool_call",
+                            "data": {
+                                "tool": tc.get("name"),
+                                "args": tc.get("args", {}),
+                            },
+                        })
+                elif m.content:
+                    out.append({
+                        "event": "executor_thought",
+                        "data": {"content": str(m.content)[:600]},
+                    })
+        out.append({"event": "node_completed", "data": {"node": "executor"}})
+
+    elif node_name == "tools":
+        # ToolNode appends one ToolMessage per tool that ran.
+        msgs = delta.get("messages") or []
+        for m in msgs:
+            if isinstance(m, ToolMessage):
+                content = str(m.content)
+                if len(content) > 1200:
+                    content = content[:1200] + " ...[truncated]"
+                out.append({
+                    "event": "tool_result",
+                    "data": {
+                        "tool": getattr(m, "name", "unknown"),
+                        "result_preview": content,
+                    },
+                })
+
+    elif node_name == "synthesizer":
+        out.append({
+            "event": "node_started",
+            "data": {"node": "synthesizer", "label": "Synthesizing recommendation..."},
+        })
+        rec = delta.get("recommendation")
+        if rec is not None:
+            # `rec` is a Pydantic Recommendation; serialize for the wire.
+            from .schemas import Recommendation
+            if isinstance(rec, Recommendation):
+                rec_data = rec.model_dump()
+            else:
+                rec_data = rec  # already a dict
+            out.append({"event": "recommendation", "data": rec_data})
+        out.append({"event": "node_completed", "data": {"node": "synthesizer"}})
+
+    elif node_name == "bump_replan":
+        out.append({
+            "event": "replan",
+            "data": {"reason": "low confidence — gathering more evidence"},
+        })
+
+    return out
+
+
+async def run_agent_streaming(asin: str, query: str) -> AsyncIterator[dict]:
+    """Async generator yielding events as the agent runs.
+
+    Each yielded item is `{"event": <name>, "data": <dict>}` — the FastAPI
+    layer turns these into SSE frames.
+    """
+    catalog = supported_asins()
+    if asin not in catalog:
+        yield {
+            "event": "error",
+            "data": {"message": f"Unknown ASIN: {asin}",
+                     "known": sorted(catalog.keys())},
+        }
+        return
+    product_name = catalog[asin]
+
+    yield {
+        "event": "started",
+        "data": {"asin": asin, "product_name": product_name, "query": query},
+    }
+
+    compiled, _ = build_graph(asin)
+    initial_state: AgentState = {
+        "asin": asin,
+        "query": query,
+        "product_name": product_name,
+        "messages": [HumanMessage(content=query)],
+        "iterations": 0,
+        "tools_called": [],
+        "plan": [],
+        "replans_done": 0,
+    }
+
+    try:
+        async for chunk in compiled.astream(
+            initial_state,
+            config={"recursion_limit": 50},
+            stream_mode="updates",
+        ):
+            # chunk is {node_name: state_delta}
+            for node_name, delta in chunk.items():
+                for event in _delta_to_events(node_name, delta):
+                    yield event
+    except Exception as e:
+        yield {
+            "event": "error",
+            "data": {"message": f"{type(e).__name__}: {e}"},
+        }
+        return
+
+    yield {"event": "done", "data": {}}

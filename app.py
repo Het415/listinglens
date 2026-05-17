@@ -4,6 +4,7 @@ import pandas as pd
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -107,6 +108,11 @@ class AnalyzeRequest(BaseModel):
 class ChatRequest(BaseModel):
     asin: str
     question: str
+
+
+class AgentQueryRequest(BaseModel):
+    asin: str
+    query: str
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
@@ -322,6 +328,76 @@ def get_cached_reviews(asin: str):
         "total_reviews": len(reviews),
         "reviews": reviews,
     }
+
+
+@app.post("/agent/query")
+async def agent_query(request: AgentQueryRequest):
+    """Stage 5: streaming agent endpoint.
+
+    Returns Server-Sent Events as the multi-node agent progresses:
+      planner_done → executor (tool_call/tool_result) loop → synthesizer → done.
+
+    The agent code is imported INSIDE this handler so any import-time
+    failure in backend.agent.* doesn't take down the existing /analyze
+    and /chat endpoints during a Render cold start.
+    """
+    try:
+        from backend.agent.graph import run_agent_streaming
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Agent layer unavailable: {type(e).__name__}: {e}",
+        )
+
+    async def event_stream():
+        try:
+            async for event in run_agent_streaming(request.asin, request.query):
+                payload = json.dumps(event["data"], default=str)
+                yield f"event: {event['event']}\ndata: {payload}\n\n"
+        except Exception as e:
+            err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+            yield f"event: error\ndata: {err}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disables nginx buffering on Render
+        },
+    )
+
+
+@app.post("/agent/query/mock")
+async def agent_query_mock(request: AgentQueryRequest):
+    """Stage 5 frontend-dev fixture: streams a canned trace without calling
+    Groq. Same SSE shape as the live /agent/query endpoint, so frontend code
+    is identical between mock and live.
+
+    The `query` and `asin` fields are ignored — the fixture always streams
+    the canonical TOZO-T10 returns scenario.
+    """
+    try:
+        from backend.agent.mock_stream import stream_mock_returns
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Mock stream unavailable: {type(e).__name__}: {e}",
+        )
+
+    async def event_stream():
+        async for event in stream_mock_returns():
+            payload = json.dumps(event["data"], default=str)
+            yield f"event: {event['event']}\ndata: {payload}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/health")
