@@ -14,3 +14,7 @@ frontend/node_modules/
 
 .agents/
 .deepeval/
+
+# Personal launch artifacts — kept locally but not in the public repo
+docs/LOOM_SCRIPT.md
+docs/LINKEDIN_POST.md

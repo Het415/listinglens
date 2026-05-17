@@ -10,7 +10,7 @@
 [![MCP](https://img.shields.io/badge/Tools-MCP-7C3AED?style=for-the-badge)](https://modelcontextprotocol.io)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%204-orange?style=for-the-badge)](https://groq.com)
 
-**[Live demo](https://listinglens-kappa.vercel.app/agent)** · **Loom walkthrough (90s):** *TBD — see [docs/LOOM_SCRIPT.md](docs/LOOM_SCRIPT.md)*
+**[Live demo](https://listinglens-kappa.vercel.app/agent)** · **Loom walkthrough (90s):** *coming soon*
 
 > ![Copilot demo — agent picks tools, streams a trace, returns a structured recommendation](docs/copilot-demo.gif)
 > *Click a sample query → Planner picks the tools → Executor runs them → Synthesizer writes a Recommendation with cited evidence. Replace this GIF with your own screen recording at `docs/copilot-demo.gif`.*
