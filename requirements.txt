@@ -30,3 +30,11 @@ langchain-community==0.4.1
 langchain-huggingface==1.2.1
 langchain-groq==1.1.2
 langchain-text-splitters==1.1.1
+
+# Agent layer (was requirements-agent.txt). Folded in so Render installs
+# them in the same step as the base deps — the previous two-step build
+# was silently skipping these in production, leaving /agent/query and
+# /assistant/query (copilot mode) returning ModuleNotFoundError.
+langgraph>=1.0,<2
+mcp>=1.0
+instructor>=1.7
