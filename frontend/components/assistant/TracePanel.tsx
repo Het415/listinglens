@@ -157,9 +157,13 @@ function TracePreview() {
 export function TracePanel({
   steps,
   isStreaming,
+  hideHeader = false,
 }: {
   steps: TraceStep[]
   isStreaming: boolean
+  // Mobile uses an outer <details> summary as the header, so this lets the
+  // panel render headerless inside it without duplicating the title row.
+  hideHeader?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -172,14 +176,16 @@ export function TracePanel({
   const elapsedSec = (elapsedMs / 1000).toFixed(1)
 
   return (
-    <div className="bg-card border border-border rounded-xl flex flex-col min-h-0 h-full">
-      <div className="px-4 py-3 border-b border-border flex items-center gap-2">
-        <Sparkles className="w-4 h-4 text-purple-400" />
-        <span className="text-sm font-medium text-foreground">Agent trace</span>
-        {steps.length > 0 && (
-          <span className="text-xs text-muted-foreground ml-auto">{steps.length} events</span>
-        )}
-      </div>
+    <div className={`flex flex-col min-h-0 h-full ${hideHeader ? '' : 'bg-card border border-border rounded-xl'}`}>
+      {!hideHeader && (
+        <div className="px-4 py-3 border-b border-border flex items-center gap-2">
+          <Sparkles className="w-4 h-4 text-purple-400" />
+          <span className="text-sm font-medium text-foreground">Agent trace</span>
+          {steps.length > 0 && (
+            <span className="text-xs text-muted-foreground ml-auto">{steps.length} events</span>
+          )}
+        </div>
+      )}
       <div ref={ref} className="flex-1 min-h-0 overflow-y-auto px-4 py-3">
         {steps.length === 0 ? (
           <TracePreview />

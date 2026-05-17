@@ -9,7 +9,6 @@ import {
   MessageSquareText,
   GitCompare,
   Sparkles,
-  Settings,
 } from 'lucide-react'
 
 const navItems = [
@@ -17,7 +16,6 @@ const navItems = [
   { href: '/dashboard/reviews', label: 'Review Analysis', icon: MessageSquareText },
   { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
   { href: '/assistant', label: 'AI Assistant', icon: Sparkles },
-  { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
 function useAsinHrefs() {
@@ -74,8 +72,7 @@ export function Sidebar() {
               (item.href === '/dashboard' &&
                 pathname.startsWith('/dashboard') &&
                 pathname !== '/dashboard/reviews' &&
-                pathname !== '/dashboard/compare' &&
-                pathname !== '/dashboard/settings')
+                pathname !== '/dashboard/compare')
             const Icon = item.icon
 
             return (
