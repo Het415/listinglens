@@ -255,29 +255,23 @@ function ChatPageContent() {
 
   return (
     <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
-      {/* Top strip: product context + suggested questions */}
-      <div className="flex items-start justify-between gap-6 mb-4">
-        <div className="min-w-0">
-          <p className="text-sm font-medium text-foreground truncate">{productName}</p>
-          <p className="text-xs text-muted-foreground truncate">{asin}</p>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide hidden sm:block">
-            Suggested Questions
-          </p>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {SUGGESTED.map((q, i) => (
-              <button
-                key={i}
-                onClick={() => sendMessage(q)}
-                disabled={loading}
-                className="flex-none text-xs px-3 py-2 rounded-lg border border-border hover:border-blue-500 text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50"
-              >
-                {q}
-              </button>
-            ))}
-          </div>
+      {/* Suggested questions strip — the redundant product-name + ASIN
+          block was removed (topbar already conveys product context). */}
+      <div className="mb-4">
+        <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+          Suggested Questions
+        </p>
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {SUGGESTED.map((q, i) => (
+            <button
+              key={i}
+              onClick={() => sendMessage(q)}
+              disabled={loading}
+              className="flex-none text-xs px-3 py-2 rounded-lg border border-border hover:border-blue-500 text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50"
+            >
+              {q}
+            </button>
+          ))}
         </div>
       </div>
 
