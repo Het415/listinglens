@@ -115,16 +115,31 @@ python -m eval.run_eval --gold eval/gold_set.jsonl --limit 5
 
 ---
 
-## Results (filled in at Stage 4)
+## Results
 
-```
-| Metric             | Full agent | Single-tool | No-tool |
-|--------------------|------------|-------------|---------|
-| Decision accuracy  |    TBD     |    TBD      |   TBD   |
-| Avg trajectory F1  |    TBD     |    TBD      |   N/A   |
-| Avg tokens/query   |    TBD     |    TBD      |   TBD   |
-| p95 latency        |    TBD     |    TBD      |   TBD   |
-| $/query            |    TBD     |    TBD      |   TBD   |
-```
+First full-agent eval, 2026-05-16 (30 gold queries, Claude Haiku 3 judge):
 
-Latest report: `reports/` (none yet — Stage 4)
+| Metric                        | Full agent |
+|-------------------------------|------------|
+| Decision accuracy             | 56.7%      |
+| Trajectory F1 (avg)           | 0.850      |
+| Trajectory precision (avg)    | 0.920      |
+| Trajectory recall (avg)       | 0.824      |
+| First-tool match rate         | 66.7%      |
+| Judge: decision correctness   | 0.431      |
+| Judge: evidence relevance     | 0.444      |
+| Judge: anti-hallucination     | 0.737      |
+| Judge: completeness           | 0.759      |
+| Latency p50 / p95 (s)         | 18.2 / 34.5 |
+| Error rate                    | 10.0% (Groq daily TPD cap hit on 3/30) |
+
+**Reading the numbers honestly:**
+
+- **Trajectory is the agent's strongest dimension.** F1 of 0.85 with 0.92 precision means the Planner reliably picks the right tools; recall of 0.82 means it occasionally skips one.
+- **Decision accuracy of 56.7% reflects over-confidence on launch queries.** The agent often outputs `go` where the gold says `needs_more_data` or `no_go`. The trajectory was correct in those cases — the agent saw the right evidence but committed too eagerly.
+- **Anti-hallucination 0.74** confirms the cited evidence usually supports the claims.
+- **The 10% error rate** was all Groq daily-TPD-limit hits at the end of the run, not agent bugs.
+
+Latest report: [reports/2026-05-16-full.md](reports/2026-05-16-full.md)
+
+Baselines (`no_tool`, `single_tool`) deferred: the full-agent eval used 498k of Groq's 500k daily TPD cap. They'll run with the cheap Haiku 3 judge after quota reset.
