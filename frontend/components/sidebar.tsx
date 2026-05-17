@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   MessageSquareText,
   GitCompare,
-  Bot,
   Sparkles,
   Settings,
 } from 'lucide-react'
@@ -17,34 +16,46 @@ const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/reviews', label: 'Review Analysis', icon: MessageSquareText },
   { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
-  { href: '/chat', label: 'Ask AI', icon: Bot },
-  { href: '/agent', label: 'Copilot', icon: Sparkles },
+  { href: '/assistant', label: 'AI Assistant', icon: Sparkles },
   { href: '/dashboard/settings', label: 'Settings', icon: Settings },
 ]
 
-export function Sidebar() {
+function useAsinHrefs() {
   const pathname = usePathname()
   const [currentAsin, setCurrentAsin] = useState<string | null>(null)
 
   useEffect(() => {
-    // Avoid `useSearchParams()` (requires Suspense in Next.js app router).
-    // For sidebar prefill, we only need this on the client.
     const sp = new URLSearchParams(window.location.search)
     setCurrentAsin(sp.get('asin'))
   }, [pathname])
 
-  const compareHref = currentAsin
-    ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
-    : '/dashboard/compare'
-  const reviewsHref = currentAsin
-    ? `/dashboard/reviews?asin=${encodeURIComponent(currentAsin)}`
-    : '/dashboard/reviews'
-  const askAiHref = currentAsin
-    ? `/chat?asin=${encodeURIComponent(currentAsin)}`
-    : '/chat'
-  const agentHref = currentAsin
-    ? `/agent?asin=${encodeURIComponent(currentAsin)}`
-    : '/agent'
+  const withAsin = (base: string) =>
+    currentAsin ? `${base}?asin=${encodeURIComponent(currentAsin)}` : base
+
+  return {
+    pathname,
+    compareHref: withAsin('/dashboard/compare'),
+    reviewsHref: withAsin('/dashboard/reviews'),
+    assistantHref: withAsin('/assistant'),
+  }
+}
+
+function resolveHref(
+  itemHref: string,
+  hrefs: {
+    compareHref: string
+    reviewsHref: string
+    assistantHref: string
+  },
+) {
+  if (itemHref === '/dashboard/compare') return hrefs.compareHref
+  if (itemHref === '/dashboard/reviews') return hrefs.reviewsHref
+  if (itemHref === '/assistant') return hrefs.assistantHref
+  return itemHref
+}
+
+export function Sidebar() {
+  const { pathname, ...hrefs } = useAsinHrefs()
 
   return (
     <aside className="hidden md:flex w-[220px] flex-col bg-background border-r border-border-subtle h-screen sticky top-0">
@@ -57,18 +68,14 @@ export function Sidebar() {
       <nav className="flex-1 py-4">
         <ul className="space-y-1">
           {navItems.map((item) => {
-            const href =
-              item.href === '/dashboard/compare'
-                ? compareHref
-                : item.href === '/dashboard/reviews'
-                  ? reviewsHref
-                  : item.href === '/chat'
-                    ? askAiHref
-                    : item.href === '/agent'
-                      ? agentHref
-                  : item.href
-            const isActive = pathname === item.href ||
-              (item.href === '/dashboard' && pathname.startsWith('/dashboard') && pathname !== '/dashboard/reviews' && pathname !== '/dashboard/compare' && pathname !== '/dashboard/settings')
+            const href = resolveHref(item.href, hrefs)
+            const isActive =
+              pathname === item.href ||
+              (item.href === '/dashboard' &&
+                pathname.startsWith('/dashboard') &&
+                pathname !== '/dashboard/reviews' &&
+                pathname !== '/dashboard/compare' &&
+                pathname !== '/dashboard/settings')
             const Icon = item.icon
 
             return (
@@ -97,26 +104,7 @@ export function Sidebar() {
 }
 
 export function MobileNav() {
-  const pathname = usePathname()
-  const [currentAsin, setCurrentAsin] = useState<string | null>(null)
-
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search)
-    setCurrentAsin(sp.get('asin'))
-  }, [pathname])
-
-  const compareHref = currentAsin
-    ? `/dashboard/compare?asin=${encodeURIComponent(currentAsin)}`
-    : '/dashboard/compare'
-  const reviewsHref = currentAsin
-    ? `/dashboard/reviews?asin=${encodeURIComponent(currentAsin)}`
-    : '/dashboard/reviews'
-  const askAiHref = currentAsin
-    ? `/chat?asin=${encodeURIComponent(currentAsin)}`
-    : '/chat'
-  const agentHref = currentAsin
-    ? `/agent?asin=${encodeURIComponent(currentAsin)}`
-    : '/agent'
+  const { pathname, ...hrefs } = useAsinHrefs()
 
   const mobileItems = navItems.slice(0, 5)
 
@@ -124,17 +112,9 @@ export function MobileNav() {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background-secondary border-t border-border-subtle z-50">
       <ul className="flex justify-around py-2">
         {mobileItems.map((item) => {
-          const href =
-            item.href === '/dashboard/compare'
-              ? compareHref
-              : item.href === '/dashboard/reviews'
-                ? reviewsHref
-                : item.href === '/chat'
-                  ? askAiHref
-                  : item.href === '/agent'
-                    ? agentHref
-                  : item.href
-          const isActive = pathname === item.href ||
+          const href = resolveHref(item.href, hrefs)
+          const isActive =
+            pathname === item.href ||
             (item.href === '/dashboard' && pathname.startsWith('/dashboard'))
           const Icon = item.icon
 
@@ -143,9 +123,7 @@ export function MobileNav() {
               <Link
                 href={href}
                 className={`flex flex-col items-center gap-1 px-3 py-2 text-xs transition-colors ${
-                  isActive
-                    ? 'text-accent-blue'
-                    : 'text-text-secondary'
+                  isActive ? 'text-accent-blue' : 'text-text-secondary'
                 }`}
               >
                 <Icon className="w-5 h-5" />
