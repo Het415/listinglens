@@ -1,30 +1,92 @@
 'use client'
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { Send, Sparkles } from 'lucide-react'
+import { Send, Sparkles, Zap, Bot } from 'lucide-react'
+import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
 import { readSSE } from '@/components/assistant/sse'
-import type { Recommendation, TraceStep, ChatMessage } from '@/components/assistant/types'
+import type {
+  Recommendation,
+  TraceStep,
+  ChatMessage,
+} from '@/components/assistant/types'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-// Use the mock endpoint by default while the live agent is rate-limited.
-// Toggle to the real endpoint by setting NEXT_PUBLIC_AGENT_LIVE=true.
-const AGENT_ENDPOINT =
-  process.env.NEXT_PUBLIC_AGENT_LIVE === 'true' ? '/agent/query' : '/agent/query/mock'
+type Mode = 'quick' | 'copilot'
 
-const SAMPLE_QUERIES = [
-  { label: 'Why are returns spiking?', icon: '↩' },
-  { label: 'Should I launch a noise-canceling variant?', icon: '🆕' },
-  { label: 'How do I position against competitors?', icon: '🎯' },
-  { label: "What's hurting my conversion rate?", icon: '📉' },
-]
+const SAMPLE_QUERIES: Record<Mode, { label: string; icon: string }[]> = {
+  quick: [
+    { label: 'What do 1-star reviews say?', icon: '⭐' },
+    { label: 'Customer complaints about battery?', icon: '🔋' },
+    { label: 'Which features do buyers love?', icon: '💚' },
+    { label: 'Common quality issues mentioned?', icon: '⚠️' },
+  ],
+  copilot: [
+    { label: 'Should I launch a noise-canceling variant?', icon: '🆕' },
+    { label: 'Why are returns spiking?', icon: '↩' },
+    { label: 'How do I position against competitors?', icon: '🎯' },
+    { label: "What's hurting my conversion rate?", icon: '📉' },
+  ],
+}
 
-function AgentPageContent() {
+function ModeToggle({
+  mode,
+  onChange,
+  disabled,
+}: {
+  mode: Mode
+  onChange: (m: Mode) => void
+  disabled?: boolean
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Assistant mode"
+      className="inline-flex items-center gap-0.5 rounded-full border border-border bg-background-secondary p-0.5"
+    >
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'quick'}
+        onClick={() => onChange('quick')}
+        disabled={disabled}
+        title="Fast grounded Q&A — RAG over reviews, ~5s"
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+          mode === 'quick'
+            ? 'bg-teal-500/15 text-teal-300 border border-teal-500/40'
+            : 'text-muted-foreground hover:text-foreground'
+        }`}
+      >
+        <Zap className="w-3.5 h-3.5" />
+        Quick Q&A
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={mode === 'copilot'}
+        onClick={() => onChange('copilot')}
+        disabled={disabled}
+        title="Multi-step Copilot — Planner → Executor → Synthesizer, ~10-30s"
+        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors disabled:opacity-50 ${
+          mode === 'copilot'
+            ? 'bg-purple-500/15 text-purple-300 border border-purple-500/40'
+            : 'text-muted-foreground hover:text-foreground'
+        }`}
+      >
+        <Bot className="w-3.5 h-3.5" />
+        Copilot
+      </button>
+    </div>
+  )
+}
+
+function AssistantPageContent() {
   const searchParams = useSearchParams()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
   const [productName, setProductName] = useState(asin)
+  const [mode, setMode] = useState<Mode>('quick')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [trace, setTrace] = useState<TraceStep[]>([])
   const [input, setInput] = useState('')
@@ -65,8 +127,6 @@ function AgentPageContent() {
     return () => document.removeEventListener('keydown', onKey)
   }, [loading])
 
-  // Evidence card → trace row scroll-and-highlight. Walks the trace in
-  // reverse to find the latest tool_result matching the clicked tool.
   const handleEvidenceClick = useCallback(
     (tool: string) => {
       for (let i = trace.length - 1; i >= 0; i--) {
@@ -84,7 +144,7 @@ function AgentPageContent() {
         }
       }
     },
-    [trace]
+    [trace],
   )
 
   const submit = async (query: string) => {
@@ -95,21 +155,26 @@ function AgentPageContent() {
     setMessages((prev) => [...prev, { role: 'user', content: query }])
 
     try {
-      const res = await fetch(`${API_URL}${AGENT_ENDPOINT}`, {
+      const res = await fetch(`${API_URL}/assistant/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ asin, query }),
+        body: JSON.stringify({ asin, query, mode }),
       })
       if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`)
       }
 
       let recommendation: Recommendation | null = null
+      let quickAnswer: { content: string; sources: any[] } | null = null
       let errored: string | null = null
 
       for await (const { event, data } of readSSE(res)) {
         const now = Date.now()
         switch (event) {
+          case 'kind':
+            // backend echoes the chosen mode — no UI action needed, the
+            // frontend already knows it.
+            break
           case 'started':
             if (data?.product_name) setProductName(data.product_name)
             break
@@ -154,6 +219,12 @@ function AgentPageContent() {
           case 'recommendation':
             recommendation = data as Recommendation
             break
+          case 'answer':
+            quickAnswer = {
+              content: data?.content ?? '',
+              sources: data?.sources ?? [],
+            }
+            break
           case 'error':
             errored = data?.message || 'Unknown error'
             setTrace((p) => [...p, { kind: 'error', message: errored!, ts: now }])
@@ -162,39 +233,56 @@ function AgentPageContent() {
             setTrace((p) => [...p, { kind: 'done', ts: now }])
             break
           case 'node_completed':
-            // intentional no-op — already implicit when next node starts
+            // implicit
             break
         }
       }
 
-      setMessages((prev) => [
-        ...prev,
-        errored
-          ? { role: 'assistant', error: errored }
-          : recommendation
-            ? { role: 'assistant', recommendation }
-            : { role: 'assistant', error: 'Agent finished without a recommendation' },
-      ])
+      setMessages((prev) => {
+        if (errored) return [...prev, { role: 'assistant', error: errored }]
+        if (recommendation) return [...prev, { role: 'assistant', recommendation }]
+        if (quickAnswer)
+          return [
+            ...prev,
+            {
+              role: 'assistant',
+              content: quickAnswer.content,
+              sources: quickAnswer.sources,
+            },
+          ]
+        return [
+          ...prev,
+          { role: 'assistant', error: 'Assistant finished without a result' },
+        ]
+      })
     } catch (e: any) {
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', error: e?.message || 'Network failure — is the backend running?' },
+        {
+          role: 'assistant',
+          error: e?.message || 'Network failure — is the backend running?',
+        },
       ])
     } finally {
       setLoading(false)
     }
   }
 
+  const samples = SAMPLE_QUERIES[mode]
+
   return (
     <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 min-h-0">
         <div className="flex flex-col min-h-0">
           <div className="mb-4">
-            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
-              Try a query
-            </p>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Try a question
+              </p>
+              <ModeToggle mode={mode} onChange={setMode} disabled={loading} />
+            </div>
             <div className="flex gap-2 overflow-x-auto pb-1">
-              {SAMPLE_QUERIES.map((q) => (
+              {samples.map((q) => (
                 <button
                   key={q.label}
                   onClick={() => submit(q.label)}
@@ -212,11 +300,25 @@ function AgentPageContent() {
             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 min-h-0">
               <Sparkles className="w-8 h-8 text-purple-400/60 mb-3" />
               <p className="text-sm text-muted-foreground max-w-md">
-                Ask the Copilot a question about this product. It will plan a research path,
-                call the right tools, and return a structured recommendation with cited evidence.
+                {mode === 'quick' ? (
+                  <>
+                    <strong className="text-foreground">Quick Q&amp;A</strong> — grounded
+                    answers from this product&apos;s reviews with cited sources. Fast (~5s).
+                  </>
+                ) : (
+                  <>
+                    <strong className="text-foreground">Copilot</strong> — the agent plans
+                    a research path, calls multiple tools, and returns a structured
+                    recommendation with cited evidence. (~10–30s)
+                  </>
+                )}
               </p>
               <p className="text-[11px] text-muted-foreground/70 mt-3">
-                Press <kbd className="px-1.5 py-0.5 text-[10px] bg-card border border-border rounded font-mono">⌘K</kbd> to focus the input
+                Press{' '}
+                <kbd className="px-1.5 py-0.5 text-[10px] bg-card border border-border rounded font-mono">
+                  ⌘K
+                </kbd>{' '}
+                to focus the input
               </p>
             </div>
           ) : (
@@ -252,6 +354,13 @@ function AgentPageContent() {
                     </div>
                   )
                 }
+                if (m.content !== undefined) {
+                  return (
+                    <div key={i} className="flex justify-start">
+                      <AssistantMessage msg={m} />
+                    </div>
+                  )
+                }
                 return null
               })}
 
@@ -281,12 +390,10 @@ function AgentPageContent() {
 
           <div className="border-t border-border pt-4 mt-2">
             <p className="text-xs text-muted-foreground text-center mb-2">
-              Copilot uses 5 tools (RAG, return-risk model, competitors, prices, trends).
-              {AGENT_ENDPOINT.endsWith('/mock') && (
-                <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] uppercase tracking-wider">
-                  mock mode
-                </span>
-              )}
+              {mode === 'quick'
+                ? 'Quick Q&A — grounded in '
+                : 'Copilot uses 5 tools — '}
+              {productName} reviews.
             </p>
             <div className="flex gap-2">
               <div className="relative flex-1">
@@ -295,7 +402,11 @@ function AgentPageContent() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && submit(input)}
-                  placeholder="Ask the Copilot..."
+                  placeholder={
+                    mode === 'quick'
+                      ? 'Ask about this product\'s reviews...'
+                      : 'Ask the Copilot a strategic question...'
+                  }
                   disabled={loading}
                   className="peer w-full bg-card border border-border rounded-xl px-4 py-3 pr-12 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-blue-500 disabled:opacity-50"
                 />
@@ -323,7 +434,7 @@ function AgentPageContent() {
   )
 }
 
-export default function AgentPage() {
+export default function AssistantPage() {
   return (
     <Suspense
       fallback={
@@ -332,7 +443,7 @@ export default function AgentPage() {
         </div>
       }
     >
-      <AgentPageContent />
+      <AssistantPageContent />
     </Suspense>
   )
 }
