@@ -76,7 +76,12 @@ app = FastAPI(
 # NEXT_PUBLIC_API_URL only tells the frontend *where* to call — CORS must allow your
 # actual Vercel hostname (production, previews, or a custom domain).
 _default_cors = (
+    # Vercel-hosted production URLs.
+    "https://listinglens-kappa.vercel.app,"
     "https://listinglens-five.vercel.app,"
+    # Custom production domain.
+    "https://listinglens.hetprajapati.me,"
+    # Local dev.
     "http://localhost:3000,http://127.0.0.1:3000"
 )
 _cors_origins = [
