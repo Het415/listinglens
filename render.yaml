@@ -2,13 +2,15 @@ services:
   - type: web
     name: listinglens-api
     env: python
-    # Two install steps: the existing requirements.txt first (so Render can
-    # still build the base service even if agent deps fail), then the agent
-    # stack (langgraph, mcp, instructor, deepeval, langsmith) on top.
+    # Single install step. The agent layer (langgraph, mcp, instructor) is
+    # folded into requirements.txt so the same install that builds the base
+    # service also brings in what /agent/query and /assistant/query
+    # (copilot mode) need. The previous two-step pattern was letting the
+    # second install fail silently, so the agent module was missing in
+    # production while the service still came up healthy.
     buildCommand: |
       pip install --upgrade pip &&
-      pip install --prefer-binary -r requirements.txt &&
-      pip install --prefer-binary -r requirements-agent.txt
+      pip install --prefer-binary -r requirements.txt
     startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: GROQ_API_KEY
