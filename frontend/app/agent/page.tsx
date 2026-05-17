@@ -445,44 +445,34 @@ function AgentPageContent() {
 
   return (
     <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
-      {/* Product strip + sample queries */}
-      <div className="flex items-start justify-between gap-6 mb-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <Sparkles className="w-4 h-4 text-purple-400" />
-            <p className="text-sm font-medium text-foreground truncate">
-              Copilot
-            </p>
-          </div>
-          <p className="text-xs text-muted-foreground truncate">
-            {productName} · {asin}
-          </p>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide hidden sm:block">
-            Try a query
-          </p>
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {SAMPLE_QUERIES.map((q) => (
-              <button
-                key={q.label}
-                onClick={() => submit(q.label)}
-                disabled={loading}
-                className="flex-none text-xs px-3 py-2 rounded-lg border border-border hover:border-blue-500 text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50"
-              >
-                <span className="mr-1.5">{q.icon}</span>
-                {q.label}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      {/* Two-pane main area: chat (left) + trace (right) */}
+      {/* Two-pane main area: chat (left) + trace (right).
+          The page-level header was removed — topbar + sidebar already
+          convey 'Copilot' + the product context. Sample-query row now
+          lives inside the chat column so it doesn't extend across the
+          trace pane. */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 min-h-0">
         {/* Chat pane */}
         <div className="flex flex-col min-h-0">
+          {/* Sample queries strip (chat-column only) */}
+          <div className="mb-4">
+            <p className="text-xs font-medium text-muted-foreground mb-2 uppercase tracking-wide">
+              Try a query
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {SAMPLE_QUERIES.map((q) => (
+                <button
+                  key={q.label}
+                  onClick={() => submit(q.label)}
+                  disabled={loading}
+                  className="flex-none text-xs px-3 py-2 rounded-lg border border-border hover:border-blue-500 text-muted-foreground hover:text-foreground transition-colors whitespace-nowrap disabled:opacity-50"
+                >
+                  <span className="mr-1.5">{q.icon}</span>
+                  {q.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
             {messages.length === 0 && !loading && (
               <div className="flex flex-col items-center justify-center h-full text-center px-4">
