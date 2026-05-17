@@ -202,12 +202,16 @@ function RecommendationCard({ rec }: { rec: Recommendation }) {
 
 // ── Trace panel ──────────────────────────────────────────────────────────────
 
-function TraceRow({ step }: { step: TraceStep }) {
+function TraceRow({ step, inFlight }: { step: TraceStep; inFlight: boolean }) {
   switch (step.kind) {
     case 'node_started':
       return (
         <div className="flex items-start gap-2 py-1.5">
-          <Loader2 className="w-3.5 h-3.5 mt-0.5 text-blue-400 animate-spin shrink-0" />
+          {inFlight ? (
+            <Loader2 className="w-3.5 h-3.5 mt-0.5 text-blue-400 animate-spin shrink-0" />
+          ) : (
+            <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 text-emerald-400 shrink-0" />
+          )}
           <div className="text-xs">
             <span className="text-foreground font-medium">{step.node}</span>
             <span className="text-muted-foreground ml-2">{step.label}</span>
@@ -291,11 +295,16 @@ function TraceRow({ step }: { step: TraceStep }) {
   }
 }
 
-function TracePanel({ steps }: { steps: TraceStep[] }) {
+function TracePanel({ steps, isStreaming }: { steps: TraceStep[]; isStreaming: boolean }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     ref.current?.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' })
   }, [steps.length])
+
+  // Only the LAST event in the trace is "in flight", and only while
+  // streaming. Once a newer event arrives (or the stream ends), prior
+  // node_started rows flip from spinner to checkmark.
+  const lastIdx = steps.length - 1
 
   return (
     <div className="bg-card border border-border rounded-xl flex flex-col min-h-0 h-full">
@@ -314,7 +323,7 @@ function TracePanel({ steps }: { steps: TraceStep[] }) {
         ) : (
           <div className="divide-y divide-border/40">
             {steps.map((s, i) => (
-              <TraceRow key={i} step={s} />
+              <TraceRow key={i} step={s} inFlight={isStreaming && i === lastIdx} />
             ))}
           </div>
         )}
@@ -564,7 +573,7 @@ function AgentPageContent() {
 
         {/* Trace pane (right; collapses below on mobile) */}
         <div className="min-h-[300px] lg:min-h-0">
-          <TracePanel steps={trace} />
+          <TracePanel steps={trace} isStreaming={loading} />
         </div>
       </div>
     </div>
