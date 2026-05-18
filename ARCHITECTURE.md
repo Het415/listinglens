@@ -235,7 +235,7 @@ v1 is the foundation; v2 doesn't replace it. Concretely:
 
 This matters for two reasons:
 1. **Demo narrative.** "I extended my RAG project into an agent" reads stronger in interviews than "I built two separate projects."
-2. **Stability.** The v1 deploy at [/chat](https://listinglens-kappa.vercel.app/chat) keeps working with zero risk of breakage. Render's free tier serves both v1 and v2 endpoints from the same Python process.
+2. **Stability.** The v1 deploy at [/chat](https://listinglens.hetprajapati.me/chat) keeps working with zero risk of breakage. Render's free tier serves both v1 and v2 endpoints from the same Python process.
 
 ---
 

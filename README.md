@@ -2,7 +2,7 @@
 
 > An AI agent for Amazon sellers. Plans research, calls the right tools, returns a structured recommendation with cited evidence.
 
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Vercel-black?style=for-the-badge)](https://listinglens-kappa.vercel.app)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Online-black?style=for-the-badge)](https://listinglens.hetprajapati.me)
 [![Python](https://img.shields.io/badge/Python-3.11-green?style=for-the-badge&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
@@ -10,7 +10,7 @@
 [![MCP](https://img.shields.io/badge/Tools-MCP-7C3AED?style=for-the-badge)](https://modelcontextprotocol.io)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%204-orange?style=for-the-badge)](https://groq.com)
 
-**[Live demo](https://listinglens-kappa.vercel.app/agent)** · **Loom walkthrough (90s):** *coming soon*
+**[Live demo](https://listinglens.hetprajapati.me/agent)** · **Loom walkthrough (90s):** *coming soon*
 
 > ![Copilot demo — agent picks tools, streams a trace, returns a structured recommendation](docs/copilot-demo.gif)
 > *Click a sample query → Planner picks the tools → Executor runs them → Synthesizer writes a Recommendation with cited evidence. Replace this GIF with your own screen recording at `docs/copilot-demo.gif`.*
@@ -25,9 +25,9 @@ Amazon sellers juggle Helium 10, Jungle Scout, Keepa, manual review scrolling, a
 
 ## What's new in v2: the Copilot
 
-v1 (still live at [/dashboard](https://listinglens-kappa.vercel.app) and [/chat](https://listinglens-kappa.vercel.app/chat)) was a passive RAG: ask a question, retrieve from FAISS, LLM answers. Fixed steps, fixed order.
+v1 (still live at [/dashboard](https://listinglens.hetprajapati.me) and [/chat](https://listinglens.hetprajapati.me/chat)) was a passive RAG: ask a question, retrieve from FAISS, LLM answers. Fixed steps, fixed order.
 
-v2 ([/agent](https://listinglens-kappa.vercel.app/agent)) is an **active agent**. Given a seller question, it:
+v2 ([/agent](https://listinglens.hetprajapati.me/agent)) is an **active agent**. Given a seller question, it:
 
 1. **Plans** — classifies the query type (launch / returns / improve) and picks a tool sequence
 2. **Executes** — runs the planned tools, can re-plan if results surprise it
@@ -301,4 +301,4 @@ listinglens/
 
 **Het Prajapati** — MS Data Science, Northeastern University (May 2027)
 
-[LinkedIn](https://linkedin.com/in/het-prajapati6210) · [GitHub](https://github.com/Het415) · [Live Demo](https://listinglens-kappa.vercel.app/agent)
+[LinkedIn](https://linkedin.com/in/het-prajapati6210) · [GitHub](https://github.com/Het415) · [Live Demo](https://listinglens.hetprajapati.me/agent)

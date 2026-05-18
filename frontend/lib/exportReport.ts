@@ -143,7 +143,7 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
   const amberLabel = hexRgb('#D97706')
   const redLabel = hexRgb('#DC2626')
 
-  const footerUrl = 'https://listinglens-kappa.vercel.app'
+  const footerUrl = 'https://listinglens.hetprajapati.me'
 
   let y = 0
 

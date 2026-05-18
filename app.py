@@ -89,8 +89,12 @@ _cors_origins = [
     for o in os.getenv("CORS_ALLOWED_ORIGINS", _default_cors).split(",")
     if o.strip()
 ]
-# Any *.vercel.app (production + preview URLs) unless disabled via CORS_ORIGIN_REGEX=""
-_cors_regex_raw = os.getenv("CORS_ORIGIN_REGEX", r"https://.*\.vercel\.app")
+# Any *.vercel.app (production + preview URLs) and any *.hetprajapati.me subdomain
+# (custom domain + future previews) unless disabled via CORS_ORIGIN_REGEX=""
+_cors_regex_raw = os.getenv(
+    "CORS_ORIGIN_REGEX",
+    r"https://([a-z0-9-]+\.)*(vercel\.app|hetprajapati\.me)",
+)
 _cors_regex = _cors_regex_raw.strip() if _cors_regex_raw.strip().lower() not in ("", "none", "false") else None
 
 _cors_kw: dict = {
