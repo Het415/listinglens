@@ -1,6 +1,6 @@
 'use client'
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
@@ -89,9 +89,18 @@ const historyKey = (asin: string) => `assistant_history_${asin}`
 
 function AssistantPageContent() {
   const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
   const asin = searchParams.get('asin') || 'B08XPWDSWW'
+  // Pre-filled question + mode from dashboard deep-links
+  // (e.g. /assistant?asin=...&q=How+do+I...&mode=copilot).
+  const prefillQuery = searchParams.get('q')
+  const prefillModeRaw = searchParams.get('mode')
+  const prefillMode: Mode | null =
+    prefillModeRaw === 'quick' || prefillModeRaw === 'copilot' ? prefillModeRaw : null
+
   const [productName, setProductName] = useState(asin)
-  const [mode, setMode] = useState<Mode>('quick')
+  const [mode, setMode] = useState<Mode>(prefillMode ?? 'quick')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [trace, setTrace] = useState<TraceStep[]>([])
   const [input, setInput] = useState('')
@@ -105,6 +114,10 @@ function AssistantPageContent() {
   const [traceOpen, setTraceOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Tracks the last `?q=` we auto-submitted, so navigating back to a deep-link
+  // URL after URL cleanup doesn't replay the same question. A new deep-link
+  // (different `q`) will still fire because the value changes.
+  const lastAutoSubmittedRef = useRef<string | null>(null)
 
   useEffect(() => {
     const cached = sessionStorage.getItem(`analysis_${asin}`)
@@ -193,8 +206,12 @@ function AssistantPageContent() {
     [trace],
   )
 
-  const submit = async (query: string) => {
+  const submit = async (query: string, overrideMode?: Mode) => {
     if (!query.trim() || loading) return
+    // Auto-submit from a deep-link calls `setMode(prefillMode)` and `submit(...)`
+    // back-to-back. setState is async and submit's closure still has the old
+    // mode, so without this override the fetch body would send the wrong mode.
+    const submitMode = overrideMode ?? mode
     setInput('')
     setLoading(true)
     setTrace([])
@@ -204,7 +221,7 @@ function AssistantPageContent() {
       const res = await fetch(`${API_URL}/assistant/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ asin, query, mode }),
+        body: JSON.stringify({ asin, query, mode: submitMode }),
       })
       if (!res.ok) {
         throw new Error(`${res.status} ${res.statusText}`)
@@ -313,6 +330,29 @@ function AssistantPageContent() {
       setLoading(false)
     }
   }
+
+  // Auto-submit support for dashboard deep-links: /assistant?asin=…&q=…&mode=copilot.
+  // Fires once per unique `q` value, after sessionStorage hydration finishes,
+  // so the new turn is appended to (not racing with) any existing history.
+  // After submit we strip `q`/`mode` from the URL so back-button doesn't replay.
+  useEffect(() => {
+    if (!hydrated || !prefillQuery || loading) return
+    if (lastAutoSubmittedRef.current === prefillQuery) return
+
+    if (prefillMode && prefillMode !== mode) {
+      setMode(prefillMode)
+    }
+    lastAutoSubmittedRef.current = prefillQuery
+    // Pass prefillMode explicitly — setMode above hasn't flushed yet.
+    submit(prefillQuery, prefillMode ?? mode)
+
+    const params = new URLSearchParams(searchParams.toString())
+    params.delete('q')
+    params.delete('mode')
+    const cleaned = params.toString()
+    router.replace(cleaned ? `${pathname}?${cleaned}` : pathname, { scroll: false })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hydrated, prefillQuery, prefillMode])
 
   const samples = SAMPLE_QUERIES[mode]
 

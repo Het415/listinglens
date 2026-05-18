@@ -160,6 +160,7 @@ function DashboardPageContent() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         <div className="lg:col-span-7">
           <TopicAnalysis
+            asin={asin}
             topics={topics}
             features={features}
             summary={summary}
@@ -167,7 +168,7 @@ function DashboardPageContent() {
           />
         </div>
         <div className="lg:col-span-5">
-          <QualityBreakdown risk={risk} features={features} />
+          <QualityBreakdown asin={asin} risk={risk} features={features} />
         </div>
       </div>
 

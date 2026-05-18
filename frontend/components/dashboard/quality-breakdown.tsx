@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo } from 'react'
-import { Check, X, AlertTriangle, ArrowRight } from 'lucide-react'
+import Link from 'next/link'
+import { Check, X, AlertTriangle, ArrowRight, Sparkles } from 'lucide-react'
 
 export type RiskInput = {
   risk_label?: string
@@ -17,6 +18,8 @@ export type FeaturesInput = {
 }
 
 export type QualityBreakdownProps = {
+  /** Used to build the /assistant deep-link for the "Ask Copilot" CTA. */
+  asin?: string
   risk?: RiskInput | null
   features?: FeaturesInput | null
 }
@@ -160,7 +163,7 @@ function shouldUseFallback(
   return checks.length === 0
 }
 
-export function QualityBreakdown({ risk, features }: QualityBreakdownProps) {
+export function QualityBreakdown({ asin, risk, features }: QualityBreakdownProps) {
   const { qualityChecks, recommendations } = useMemo(() => {
     if (shouldUseFallback(risk, features)) {
       return {
@@ -173,6 +176,19 @@ export function QualityBreakdown({ risk, features }: QualityBreakdownProps) {
       recommendations: buildRecommendations(risk?.explanation),
     }
   }, [risk, features])
+
+  // Phrase the deep-link question using actual risk signals when we have them,
+  // so the Copilot lands with concrete context instead of a generic prompt.
+  const askCopilotHref = useMemo(() => {
+    if (!asin) return null
+    const label = risk?.risk_label?.toUpperCase()
+    const pct = typeof risk?.risk_pct === 'number' ? Math.round(risk.risk_pct) : null
+    const question =
+      label && pct != null
+        ? `My listing's return risk is ${label} at ${pct}%. Walk me through the highest-priority changes to bring it down — what should I fix first, and why?`
+        : `What concrete changes should I prioritize to improve this listing's conversion and reduce returns? Rank them by impact.`
+    return `/assistant?asin=${encodeURIComponent(asin)}&mode=copilot&q=${encodeURIComponent(question)}`
+  }, [asin, risk?.risk_label, risk?.risk_pct])
 
   return (
     <div className="space-y-4">
@@ -197,6 +213,28 @@ export function QualityBreakdown({ risk, features }: QualityBreakdownProps) {
             </div>
           ))}
         </div>
+
+        {askCopilotHref && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <Link
+              href={askCopilotHref}
+              className="group flex items-center justify-between gap-3 rounded-lg border border-border bg-accent-blue/5 hover:bg-accent-blue/10 hover:border-accent-blue/40 px-3 py-2.5 transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <Sparkles className="w-4 h-4 text-accent-blue flex-shrink-0" />
+                <span className="text-sm font-medium text-text-primary truncate">
+                  Ask the Copilot to expand on these
+                </span>
+              </div>
+              <span
+                aria-hidden
+                className="text-accent-blue transition-transform group-hover:translate-x-0.5 flex-shrink-0"
+              >
+                →
+              </span>
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   )

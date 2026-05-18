@@ -1,7 +1,8 @@
 'use client'
 
 import { useMemo } from 'react'
-import { AlertTriangle, Info } from 'lucide-react'
+import Link from 'next/link'
+import { AlertTriangle, Info, Sparkles } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -18,6 +19,8 @@ export type TopicItem = {
 }
 
 export type TopicAnalysisProps = {
+  /** Used to build the /assistant deep-link for the "Ask Copilot" CTA. */
+  asin?: string
   topics?: TopicItem[]
   features?: Record<string, number> | null
   summary?: {
@@ -218,19 +221,33 @@ function buildInsight(props: TopicAnalysisProps): string {
 }
 
 export function TopicAnalysis({
+  asin,
   topics,
   features,
   summary,
   riskInsight,
 }: TopicAnalysisProps) {
-  const { rows, insight } = useMemo(() => {
+  const { rows, insight, worstTopic } = useMemo(() => {
     const hasTopics = Array.isArray(topics) && topics.length > 0
     const rows = !hasTopics
       ? [...FALLBACK_TOPICS].sort((a, b) => b.negative - a.negative)
       : buildTopicRows(topics!, summary, features)
     const insight = buildInsight({ topics, features, summary, riskInsight })
-    return { rows, insight }
+    // Top row, but only if it's actually a complaint (negative > positive).
+    // No CTA on a card showing only positive themes.
+    const top = rows[0]
+    const worstTopic = top && top.negative > top.positive ? top : null
+    return { rows, insight, worstTopic }
   }, [topics, features, summary, riskInsight])
+
+  // Deep-link into the Copilot pre-filled with a question about the worst
+  // topic. Only rendered when we have an ASIN AND a real complaint topic.
+  const askCopilotHref =
+    asin && worstTopic
+      ? `/assistant?asin=${encodeURIComponent(asin)}&mode=copilot&q=${encodeURIComponent(
+          `How do I address customer complaints about ${worstTopic.name}? What changes should I make to my listing, product, or messaging?`,
+        )}`
+      : null
 
   return (
     <div className="bg-background-card border border-border rounded-xl p-5 animate-fade-up opacity-0 stagger-5">
@@ -259,9 +276,25 @@ export function TopicAnalysis({
         ))}
       </div>
 
-      <div className="mt-6 flex items-start gap-3 p-4 bg-accent-amber/10 border-l-2 border-accent-amber rounded-r-lg">
-        <AlertTriangle className="w-4 h-4 text-accent-amber flex-shrink-0 mt-0.5" />
-        <p className="text-sm text-text-secondary">{insight}</p>
+      <div className="mt-6 p-4 bg-accent-amber/10 border-l-2 border-accent-amber rounded-r-lg">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 text-accent-amber flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-text-secondary">{insight}</p>
+        </div>
+        {askCopilotHref && (
+          <div className="mt-3 pl-7">
+            <Link
+              href={askCopilotHref}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-accent-blue hover:text-accent-blue/80 transition-colors group"
+            >
+              <Sparkles className="w-3.5 h-3.5 transition-transform group-hover:scale-110" />
+              Ask Copilot how to fix this
+              <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
+                →
+              </span>
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   )
