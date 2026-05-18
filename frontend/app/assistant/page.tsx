@@ -6,6 +6,7 @@ import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
 import { readSSE } from '@/components/assistant/sse'
+import { DEMO_ASIN } from '@/lib/demo-config'
 import type {
   Recommendation,
   TraceStep,
@@ -91,7 +92,7 @@ function AssistantPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
-  const asin = searchParams.get('asin') || 'B08XPWDSWW'
+  const asin = searchParams.get('asin') || DEMO_ASIN
   // Pre-filled question + mode from dashboard deep-links
   // (e.g. /assistant?asin=...&q=How+do+I...&mode=copilot).
   const prefillQuery = searchParams.get('q')

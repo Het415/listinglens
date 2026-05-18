@@ -7,7 +7,9 @@ import { QualityBreakdown } from '@/components/dashboard/quality-breakdown'
 import { SentimentTimeline } from '@/components/dashboard/sentiment-timeline'
 import { PhraseClouds } from '@/components/dashboard/phrase-clouds'
 import { ReviewDistribution } from '@/components/dashboard/review-distribution'
+import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { exportToPDF } from '@/lib/exportReport'
+import { DEMO_ASIN } from '@/lib/demo-config'
 import { useDashboardExport } from './dashboard-export-context'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -18,7 +20,12 @@ function DashboardPageContent() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const searchParams = useSearchParams()
-  const asin = searchParams.get('asin') || 'B08XPWDSWW'
+  // `isDemo` drives the onboarding banner — if no ?asin= was specified, the
+  // user landed here without analyzing a real product, so we silently load the
+  // demo TOZO listing and surface that fact via <DemoModeBanner />.
+  const asinParam = searchParams.get('asin')
+  const isDemo = !asinParam
+  const asin = asinParam || DEMO_ASIN
 
   const { setAnalysis, setOnExport, setIsExporting } = useDashboardExport()
 
@@ -113,6 +120,8 @@ function DashboardPageContent() {
 
   return (
     <div className="p-4 md:p-6 space-y-6">
+      {isDemo && <DemoModeBanner productName={data?.product_name} />}
+
       {/* Section 1 - Score Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <ScoreCard

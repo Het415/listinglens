@@ -7,6 +7,8 @@ import { ArrowLeft, ChevronDown, ChevronRight } from 'lucide-react'
 import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts'
 
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
+import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
+import { DEMO_ASIN } from '@/lib/demo-config'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
   /\/$/,
@@ -133,7 +135,12 @@ function sentimentIndicatorEstimate(params: {
 
 function ReviewsPageInner() {
   const searchParams = useSearchParams()
-  const asinFromQuery = searchParams.get('asin') || 'B08XPWDSWW'
+  const asinParam = searchParams.get('asin')
+  // Same pattern as the main dashboard — silent fallback to the demo product
+  // gets a banner so first-time visitors aren't confused about whose data
+  // they're looking at.
+  const isDemo = !asinParam
+  const asinFromQuery = asinParam || DEMO_ASIN
   const [mounted, setMounted] = useState(false)
   const [asin, setAsin] = useState('')
 
@@ -345,6 +352,8 @@ function ReviewsPageInner() {
           </p>
         </div>
       </div>
+
+      {isDemo && <DemoModeBanner productName={analysis?.product_name} />}
 
       {error && (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
