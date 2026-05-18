@@ -21,10 +21,13 @@ if TYPE_CHECKING:
 
 JUDGE_PROVIDER = os.getenv("JUDGE_PROVIDER", "anthropic")
 JUDGE_MODEL_OPENAI = os.getenv("JUDGE_MODEL_OPENAI", "gpt-4o-mini")
-# Default to Haiku 3 — 4x cheaper than Haiku 4.5 ($0.25/M in, $1.25/M out
-# vs $1/M in, $5/M out). Reasoning quality is plenty for 0-1 scoring tasks.
-# Override via JUDGE_MODEL_ANTHROPIC env var if you need a smarter judge.
-JUDGE_MODEL_ANTHROPIC = os.getenv("JUDGE_MODEL_ANTHROPIC", "claude-3-haiku-20240307")
+# Default to Haiku 4.5 ($1/M in, $5/M out). The previous default
+# (claude-3-haiku-20240307, the original Haiku 3 from March 2024) has been
+# retired by Anthropic and now returns 404, silently zeroing out every judge
+# score. Haiku 4.5 is also what eval/run_eval.py:_judge_label() advertises
+# in the report header, so the two stay consistent.
+# Override via JUDGE_MODEL_ANTHROPIC env var to use a cheaper or smarter judge.
+JUDGE_MODEL_ANTHROPIC = os.getenv("JUDGE_MODEL_ANTHROPIC", "claude-haiku-4-5-20251001")
 
 
 def _judge_model_instance():
