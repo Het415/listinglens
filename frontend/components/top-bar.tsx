@@ -7,6 +7,8 @@ import { useTheme } from 'next-themes'
 import { Logo } from './logo'
 import { Download, ChevronRight, Moon, Sun } from 'lucide-react'
 
+import { DEMO_ASIN } from '@/lib/demo-config'
+
 export function TopBar({
   onExport,
   isExporting,
@@ -15,7 +17,7 @@ export function TopBar({
   isExporting?: boolean
 }) {
   const searchParams = useSearchParams()
-  const asin = searchParams.get('asin') || 'B08XPWDSWW'
+  const asin = searchParams.get('asin') || DEMO_ASIN
   const [productName, setProductName] = useState(asin)
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -111,7 +113,7 @@ export function TopBar({
         </button>
 
         <Link
-          href={`/chat?asin=${encodeURIComponent(asin)}`}
+          href={`/assistant?asin=${encodeURIComponent(asin)}`}
           className="flex items-center gap-2 px-4 py-2 text-sm bg-accent-teal text-white font-medium rounded-lg hover:bg-accent-teal/90 transition-colors h-9"
         >
           Ask AI
