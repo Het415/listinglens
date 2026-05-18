@@ -523,6 +523,27 @@ async def assistant_query(request: AssistantQueryRequest):
     )
 
 
+@app.get("/competitors/{asin}")
+def get_competitors(asin: str, max_results: int = 5):
+    """Returns synthetic competitor cards for an ASIN's category.
+
+    Thin wrapper around the `competitor_search` MCP tool so the frontend
+    can pre-populate the Compare page and the dashboard's market-context
+    panel without spinning up the full agent. The competitor ASINs are
+    *mock data* and intentionally outside the analyzed catalog — see
+    `backend/data/mock_market_data.json` and `eval/README.md` for the
+    v1 mock policy. Clients should label these as synthetic.
+    """
+    try:
+        from backend.mcp_server.tools.competitor import competitor_search
+
+        return competitor_search(asin, max_results=max_results)
+    except ValueError as e:
+        # competitor_search raises ValueError for unknown ASINs; map to 404
+        # so the frontend can render an empty-state instead of an error toast.
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 @app.get("/health")
 def health():
     """Health check endpoint for Render deployment."""

@@ -1,7 +1,11 @@
 'use client'
 
 import { Suspense, useMemo, useState, useEffect, useRef } from 'react'
+import { useSearchParams } from 'next/navigation'
 import { Star } from 'lucide-react'
+
+import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-panel'
+import { DEMO_ASIN } from '@/lib/demo-config'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -143,6 +147,12 @@ function ProductSlot({
 }
 
 function ComparePageContent() {
+  const searchParams = useSearchParams()
+  // `?asin=` is set by deep-links from /dashboard ("Open in Compare"). When
+  // the user lands on /dashboard/compare directly we fall back to the demo
+  // ASIN so the Market Competitors panel still has something to render.
+  const contextAsin = searchParams.get('asin') || DEMO_ASIN
+
   const [slot1, setSlot1] = useState('')
   const [slot2, setSlot2] = useState('')
   const [slot3, setSlot3] = useState('')
@@ -385,6 +395,14 @@ function ComparePageContent() {
           </div>
         </>
       )}
+
+      {/* Market reference panel — synthetic competitor cards from
+          competitor_search. CTA is hidden because we're already on /compare. */}
+      <CompetitorMarketPanel
+        asin={contextAsin}
+        maxResults={5}
+        showCompareCta={false}
+      />
     </div>
   )
 }

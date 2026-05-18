@@ -7,6 +7,7 @@ import { QualityBreakdown } from '@/components/dashboard/quality-breakdown'
 import { SentimentTimeline } from '@/components/dashboard/sentiment-timeline'
 import { PhraseClouds } from '@/components/dashboard/phrase-clouds'
 import { ReviewDistribution } from '@/components/dashboard/review-distribution'
+import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-panel'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { exportToPDF } from '@/lib/exportReport'
 import { DEMO_ASIN } from '@/lib/demo-config'
@@ -192,6 +193,16 @@ function DashboardPageContent() {
           starDistribution={summary.raw_star_distribution}
         />
       </div>
+
+      {/* Section 5 - Market context. Synthetic competitor data from
+          competitor_search; deep-links to /dashboard/compare for the
+          side-by-side metrics view. */}
+      <CompetitorMarketPanel
+        asin={asin}
+        maxResults={3}
+        showCompareCta
+        staggerIndex={8}
+      />
     </div>
   )
 }
