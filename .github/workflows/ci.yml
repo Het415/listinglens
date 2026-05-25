@@ -1,0 +1,94 @@
+# ── ListingLens CI ────────────────────────────────────────────────────────────
+# Single workflow, two jobs. Path filters keep frontend changes from
+# triggering the backend job and vice versa — useful for the monorepo
+# layout where a CSS tweak shouldn't rerun pytest.
+#
+# The Docker image-build steps are deliberately *not* pushing to a
+# registry. We just verify the Dockerfiles build cleanly on every PR;
+# pushing would require GHCR/Docker Hub creds and a separate
+# release workflow. Keep this CI cheap and read-only.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel superseded runs on the same PR — saves Actions minutes when
+# you push twice in a minute.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Backend ────────────────────────────────────────────────────────────────
+  backend:
+    name: Backend (pytest + docker build)
+    runs-on: ubuntu-latest
+    # Skip when only frontend files changed. paths-filter would be more
+    # precise but adds an action dep; this heuristic is good enough.
+    if: |
+      github.event_name == 'push' ||
+      !startsWith(github.event.pull_request.title, '[frontend]')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install --prefer-binary -r requirements-dev.txt
+
+      - name: Run pytest
+        env:
+          # ENV_MODE=production matches conftest.py — tests assert
+          # against the disk-cache-only serving path.
+          ENV_MODE: production
+          # No secrets needed for the smoke suite; agent/LLM tests are
+          # out of scope here. If/when added, gate on:
+          # GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: pytest tests/ -v
+
+      - name: Build backend Docker image
+        run: docker build -t listinglens-api:ci .
+
+  # ── Frontend ───────────────────────────────────────────────────────────────
+  frontend:
+    name: Frontend (build + docker build)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Next.js
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build
+
+      - name: Build frontend Docker image
+        run: docker build -t listinglens-frontend:ci .

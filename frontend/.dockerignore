@@ -1,0 +1,23 @@
+# ── Frontend build-context exclusions ─────────────────────────────────────────
+# Everything here is hidden from `COPY . .` in frontend/Dockerfile.
+
+node_modules
+.next
+out
+
+# Local env vars — never bake into the image (use docker run -e or
+# compose `environment:` to inject NEXT_PUBLIC_API_URL etc.)
+.env
+.env.local
+.env.*.local
+
+# Dev/editor noise
+.git
+.gitignore
+.DS_Store
+.vscode
+.idea
+
+# Type-check artifacts and logs
+tsconfig.tsbuildinfo
+*.log

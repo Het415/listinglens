@@ -15,6 +15,18 @@ frontend/node_modules/
 .agents/
 .deepeval/
 
+# Claude Code internal state — worktrees, plan files, agent scratch.
+# Should never enter git history.
+.claude/worktrees/
+
+# TypeScript incremental compilation cache — regenerated on every
+# `next build`, churns on every push.
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+
+# Pytest + tooling caches
+.pytest_cache/
+
 # Personal launch artifacts — kept locally but not in the public repo
 docs/LOOM_SCRIPT.md
 docs/LINKEDIN_POST.md
