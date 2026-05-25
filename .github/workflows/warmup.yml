@@ -1,0 +1,69 @@
+name: Keep backend warm
+
+# Free-tier hosts (Railway / Render free) spin the API down after ~15 min idle,
+# and the first request after spin-up pays 30-60s for Python + FAISS + LangGraph
+# to come back. This cron hits POST /warmup every 10 minutes with the demo ASIN
+# so the FAISS index and compiled agent graph stay hot for recruiters dropping
+# in unannounced.
+#
+# Override the target by setting a repo variable `BACKEND_URL` under
+# Settings → Secrets and variables → Actions → Variables. No secret needed —
+# /warmup is intentionally unauthenticated and side-effect-free.
+
+on:
+  schedule:
+    # Every 10 minutes. Render/Railway spin down after ~15 min idle, so this
+    # gives one safety margin retry before the next spin-down window.
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-warmup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    # Don't fail the workflow run on a single bad ping — a transient 5xx during
+    # a cold boot is expected and self-healing; we just want the next cron tick
+    # to retry. GitHub still records the step status.
+    continue-on-error: true
+
+    steps:
+      - name: POST /warmup with demo ASIN
+        env:
+          # Falls back to the currently-live Railway URL when the repo var is
+          # unset. Update the var (not this file) if the backend moves.
+          BACKEND_URL: ${{ vars.BACKEND_URL || 'https://listinglens-api-production.up.railway.app' }}
+          # DEMO_ASIN matches frontend/lib/demo-config.ts:14 — the TOZO T10
+          # earbuds product the dashboard loads by default.
+          DEMO_ASIN: B08XPWDSWW
+        run: |
+          set -u
+          echo "Pinging $BACKEND_URL/warmup with asin=$DEMO_ASIN"
+          # --max-time 90 survives a 60-70s cold boot + the fire-and-forget
+          # response. --retry 2 + --retry-delay 15 handles transient 502s
+          # mid-deploy without spamming.
+          HTTP_CODE=$(curl -sS \
+            --max-time 90 \
+            --retry 2 \
+            --retry-delay 15 \
+            --retry-connrefused \
+            -o /tmp/warmup-body.json \
+            -w "%{http_code}" \
+            -X POST \
+            -H 'content-type: application/json' \
+            -d "{\"asin\":\"$DEMO_ASIN\"}" \
+            "$BACKEND_URL/warmup") || HTTP_CODE="000"
+
+          echo "HTTP $HTTP_CODE"
+          echo "--- response body ---"
+          cat /tmp/warmup-body.json || true
+          echo
+
+          # 2xx → success. Anything else logs but doesn't fail the run
+          # (continue-on-error covers the step; this just gives a clear signal
+          # in the run summary).
+          if [ "$HTTP_CODE" -ge 200 ] && [ "$HTTP_CODE" -lt 300 ]; then
+            echo "✓ warmup ok"
+            exit 0
+          fi
+          echo "✗ warmup non-2xx; will retry next cron tick"
+          exit 1
