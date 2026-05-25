@@ -31,3 +31,9 @@ services:
       # Override only if Groq deprecates the model.
       - key: AGENT_MODEL
         value: "meta-llama/llama-4-scout-17b-16e-instruct"
+      # Free-tier instance can't afford the post-boot preload sweep; keep
+      # the lifespan minimal and let the frontend /warmup ping load the
+      # demo ASIN on demand. Flip to "1" if you move to a paid plan with
+      # headroom for eager loading.
+      - key: PRELOAD_CACHE
+        value: "0"

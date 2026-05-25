@@ -1,10 +1,30 @@
 import os
 import json
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+@lru_cache(maxsize=1)
+def _load_return_risk_model():
+    """Loads the XGBoost return-risk classifier once per process.
+
+    Disk reads were happening on every predict call — small but adds up when
+    the agent fires this tool several times per query.
+    """
+    import xgboost as xgb
+
+    model_path = "data/processed/xgboost_model.json"
+    if not os.path.exists(model_path):
+        print("No trained model found — training now...")
+        train_model()
+
+    model = xgb.XGBClassifier()
+    model.load_model(model_path)
+    return model
 
 # ── Proxy Label Engineering ────────────────────────────────────────────────────
 
@@ -228,17 +248,7 @@ def predict_return_risk(features: dict) -> dict:
         confidence:  float 0-1
         explanation: human-readable explanation
     """
-    import xgboost as xgb
-
-    model_path = "data/processed/xgboost_model.json"
-
-    # train model if it doesn't exist yet
-    if not os.path.exists(model_path):
-        print("No trained model found — training now...")
-        train_model()
-
-    model = xgb.XGBClassifier()
-    model.load_model(model_path)
+    model = _load_return_risk_model()
 
     # build feature vector
     X = build_feature_vector(features).reshape(1, -1)

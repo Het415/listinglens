@@ -1,10 +1,26 @@
 import os
 import json
 import time
+from functools import lru_cache
 import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+@lru_cache(maxsize=1)
+def _get_embeddings():
+    """Process-wide singleton for the sentence-transformers embeddings model.
+
+    Loading MiniLM costs ~3-5s and ~80MB of RAM. Reusing one instance across
+    every ASIN's vectorstore matters on a 512MB free-tier instance.
+    """
+    from langchain_huggingface import HuggingFaceEmbeddings
+
+    return HuggingFaceEmbeddings(
+        model_name="sentence-transformers/all-MiniLM-L6-v2",
+        model_kwargs={"device": "cpu"},
+    )
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -31,7 +47,6 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
         FAISS vectorstore object
     """
     from langchain_community.vectorstores import FAISS
-    from langchain_huggingface import HuggingFaceEmbeddings
     from langchain_core.documents import Document
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
@@ -50,10 +65,7 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
     # FAISS.save_local writes both files; dir alone or one file is not valid cache
     if exists_faiss and exists_pkl:
         print(f"Loading cached vectorstore for {asin}...")
-        embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-        )
+        embeddings = _get_embeddings()
         return FAISS.load_local(
             cache_path,
             embeddings,
@@ -97,10 +109,7 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
     print(f"Created {len(documents)} chunks from {len(df_enriched)} reviews")
 
     # embed using local sentence transformer — completely free
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-    )
+    embeddings = _get_embeddings()
 
     # build FAISS index
     vectorstore = FAISS.from_documents(documents, embeddings)

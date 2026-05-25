@@ -40,10 +40,15 @@ async def lifespan(app: FastAPI):
     else:
         app_state["supported_asins"] = SUPPORTED_ASINS
     app_state["cache"] = {}
-    
-    # start server immediately — load cache in background
-    asyncio.create_task(preload_cache())
-    
+
+    # Opt-in: the background preload sequentially fires the full NLP+FAISS
+    # pipeline for every supported ASIN, which on Render's free tier spikes
+    # RAM/CPU and contends with the first real request. Default to OFF in
+    # production; flip PRELOAD_CACHE=1 locally if you want a warm cache after
+    # boot.
+    if os.getenv("PRELOAD_CACHE", "0") == "1":
+        asyncio.create_task(preload_cache())
+
     yield
     print("Shutting down...")
 
@@ -131,6 +136,10 @@ class AssistantQueryRequest(BaseModel):
     # "quick"   → review_qa only (fast grounded Q&A)
     # "copilot" → full Planner→Executor→Synthesizer agent
     mode: str = "copilot"
+
+
+class WarmupRequest(BaseModel):
+    asin: str | None = None
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
@@ -552,3 +561,44 @@ def health():
         "cached_asins": list(app_state.get("cache", {}).keys()),
         "supported_asins": len(app_state.get("supported_asins", {})),
     }
+
+
+def _warm_asin_sync(asin: str) -> None:
+    """Blocking worker — loads FAISS chain + compiles LangGraph for one ASIN.
+
+    Runs in a thread executor so the /warmup request returns immediately.
+    Failures are swallowed and logged; warmup is best-effort.
+    """
+    try:
+        # Hydrate the in-memory NLP/risk cache and disk-cached FAISS index.
+        run_full_pipeline(asin)
+        df_enriched = pd.read_csv(f"data/processed/nlp_{asin}.csv").head(100)
+        from src.rag_chatbot import run_rag_pipeline
+
+        rag = run_rag_pipeline(df_enriched, asin)
+        app_state[f"chain_{asin}"] = rag["chain"]
+    except Exception as e:
+        print(f"[warmup] chain warmup failed for {asin}: {e}")
+
+    try:
+        from backend.agent.graph import build_graph
+
+        build_graph(asin)
+    except Exception as e:
+        print(f"[warmup] graph warmup failed for {asin}: {e}")
+
+
+@app.post("/warmup")
+async def warmup(req: WarmupRequest):
+    """Fire-and-forget warmup. Returns immediately; loads heavy resources in
+    a background thread so the next real request to /chat or /agent/query
+    skips the cold load.
+    """
+    supported = app_state.get("supported_asins", {})
+    asin = req.asin if req.asin and req.asin in supported else next(iter(supported), None)
+    if not asin:
+        return {"warmed": False, "reason": "no supported ASINs"}
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(None, _warm_asin_sync, asin)
+    return {"warmed": True, "asin": asin}

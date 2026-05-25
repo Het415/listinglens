@@ -150,9 +150,18 @@ def _bump_replan_counter(state: AgentState) -> dict:
 
 # ── Graph builder ─────────────────────────────────────────────────────────────
 
+# Compiled graphs are tied to their ASIN's tool bindings, so cache per-ASIN.
+# State is per-invocation, so the compiled graph is safe to share across
+# concurrent requests.
+_GRAPH_CACHE: dict[str, tuple] = {}
+
 
 def build_graph(asin: str):
-    """Build a compiled multi-node LangGraph for a specific ASIN."""
+    """Build (or fetch a cached) compiled multi-node LangGraph for an ASIN."""
+    cached = _GRAPH_CACHE.get(asin)
+    if cached is not None:
+        return cached
+
     tools = _build_tools_for_asin(asin)
 
     graph = StateGraph(AgentState)
@@ -177,7 +186,9 @@ def build_graph(asin: str):
     )
     graph.add_edge("bump_replan", "executor")
 
-    return graph.compile(), tools
+    compiled = graph.compile(), tools
+    _GRAPH_CACHE[asin] = compiled
+    return compiled
 
 
 # ── Top-level entry ───────────────────────────────────────────────────────────

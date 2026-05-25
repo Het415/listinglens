@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from 'next'
 import { DM_Sans, DM_Mono, Instrument_Serif } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
+import { BackendWarmup } from '@/components/backend-warmup'
 import './globals.css'
 
 const dmSans = DM_Sans({ 
@@ -51,6 +52,7 @@ export default function RootLayout({
         className={`${dmSans.variable} ${dmMono.variable} ${instrumentSerif.variable} font-sans antialiased bg-background text-foreground transition-colors duration-300`}
       >
         <ThemeProvider defaultTheme="light">{children}</ThemeProvider>
+        <BackendWarmup />
         <Analytics />
       </body>
     </html>
