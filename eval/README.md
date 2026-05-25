@@ -113,6 +113,35 @@ python -m eval.run_eval --baseline=single_tool
 python -m eval.run_eval --gold eval/gold_set.jsonl --limit 5
 ```
 
+### After landing a prompt/schema change — measure the lift
+
+When you change anything in the synthesizer, planner, or schemas, the
+ritual is: re-run the eval, then diff against the previous report.
+
+```bash
+# 1. Run the eval (waits on Groq quota — daily 500k tokens)
+python -m eval.run_eval
+
+# 2. Diff the new report against the previous one. By default this
+#    auto-picks the two most-recently-modified .jsonl files in
+#    eval/reports/ (excluding baselines).
+python -m eval.compare_reports
+
+# 3. Explicit before/after when comparing across non-adjacent runs
+python -m eval.compare_reports \
+  eval/reports/2026-05-18-full-judged.jsonl \
+  eval/reports/2026-05-25-full.jsonl
+
+# 4. Markdown output for pasting into PR descriptions
+python -m eval.compare_reports --markdown
+```
+
+The diff highlights per-query-type accuracy deltas, lists every query
+that flipped (newly passing / newly failing), and flags trajectory F1
+and judge-score regressions. Use it as a regression gate — a prompt
+change that improves launch accuracy but tanks returns accuracy should
+show up here, not in the wild.
+
 ---
 
 ## Results
