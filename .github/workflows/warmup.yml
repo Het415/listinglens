@@ -31,7 +31,7 @@ jobs:
         env:
           # Falls back to the currently-live Railway URL when the repo var is
           # unset. Update the var (not this file) if the backend moves.
-          BACKEND_URL: ${{ vars.BACKEND_URL || 'https://listinglens-api-production.up.railway.app' }}
+          BACKEND_URL: ${{ vars.BACKEND_URL || 'https://listinglens-api.onrender.com' }}
           # DEMO_ASIN matches frontend/lib/demo-config.ts:14 — the TOZO T10
           # earbuds product the dashboard loads by default.
           DEMO_ASIN: B08XPWDSWW
