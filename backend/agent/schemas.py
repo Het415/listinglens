@@ -94,6 +94,17 @@ class Recommendation(BaseModel):
         default_factory=list,
         description="Concrete next actions the seller could take",
     )
+    evidence_gaps: list[str] = Field(
+        default_factory=list,
+        description=(
+            "What evidence is missing that, if present, would change or "
+            "strengthen the decision. Forces the model to say what it does "
+            "NOT know before committing to a decision — empty list means "
+            "the agent is claiming the trajectory was sufficient. For "
+            "launch queries, a non-empty list should push the decision to "
+            "'needs_more_data'."
+        ),
+    )
 
 
 # ── LangGraph state ───────────────────────────────────────────────────────────
