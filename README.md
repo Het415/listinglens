@@ -1,183 +1,155 @@
-# ListingLens Copilot — Agentic Seller Intelligence
+# ListingLens Copilot
 
-> An AI agent for Amazon sellers. Plans research, calls the right tools, returns a structured recommendation with cited evidence.
+> An AI agent for Amazon sellers that plans its own research, calls the right tools, and returns a structured recommendation with cited evidence.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Online-black?style=for-the-badge)](https://listinglens.hetprajapati.me)
 [![Python](https://img.shields.io/badge/Python-3.11-green?style=for-the-badge&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/Agent-LangGraph%20v1-FF6F00?style=for-the-badge)](https://github.com/langchain-ai/langgraph)
-[![MCP](https://img.shields.io/badge/Tools-MCP-7C3AED?style=for-the-badge)](https://modelcontextprotocol.io)
 [![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%204-orange?style=for-the-badge)](https://groq.com)
 
-
-> ![Copilot demo — agent picks tools, streams a trace, returns a structured recommendation](docs/copilot-demo.gif)
-> *Click a sample query → Planner picks the tools → Executor runs them → Synthesizer writes a Recommendation with cited evidence. Replace this GIF with your own screen recording at `docs/copilot-demo.gif`.*
+![Copilot demo — agent picks tools, streams a trace, returns a structured recommendation](docs/copilot-demo.gif)
 
 ---
 
-## The problem this solves
+## What it does
 
-Amazon sellers juggle Helium 10, Jungle Scout, Keepa, manual review scrolling, and gut feel when asking "Should I launch this variant?" or "Why are my returns spiking?". No single tool *reasons* across these signals. ListingLens Copilot does — it autonomously plans a research workflow, invokes the right tools, and returns a recommendation with cited evidence and a confidence score.
+Amazon sellers juggle Helium 10, Jungle Scout, Keepa, manual review scrolling, and gut feel when they ask things like *"Should I launch this variant?"* or *"Why are my returns spiking?"*. No single tool actually **reasons** across those signals.
+
+ListingLens Copilot does. Ask it a question, and the agent:
+
+1. **Plans** — figures out what kind of question it is and what data it needs
+2. **Executes** — calls the right tools (review search, return-risk model, competitor lookup, price history, demand trends), re-planning if results surprise it
+3. **Synthesizes** — produces a recommendation with cited evidence and a confidence score
+
+The whole reasoning trace is visible live in the UI, so you can see *why* the agent reached its conclusion — not just *what* it concluded.
 
 ---
 
-## What's new in v2: the Copilot
+## Try it
 
-v1 (still live at [/dashboard](https://listinglens.hetprajapati.me) and [/chat](https://listinglens.hetprajapati.me/chat)) was a passive RAG: ask a question, retrieve from FAISS, LLM answers. Fixed steps, fixed order.
+**Live demo:** [listinglens.hetprajapati.me/agent](https://listinglens.hetprajapati.me/agent)
 
-v2 ([/agent](https://listinglens.hetprajapati.me/agent)) is an **active agent**. Given a seller question, it:
+Pick any of the 12 pre-analyzed products (TOZO T10, Fire Stick 4K, AirPods, …), then try a sample query like:
 
-1. **Plans** — classifies the query type (launch / returns / improve) and picks a tool sequence
-2. **Executes** — runs the planned tools, can re-plan if results surprise it
-3. **Synthesizes** — produces a structured `Recommendation` with cited evidence
+- "Why are returns spiking?"
+- "Should I launch this product?"
+- "How does this compare to competitors?"
 
-Five tools are wired into the agent:
+You'll see the planner pick tools, the executor run them with live results, and the synthesizer write a structured recommendation — all streaming in real time.
 
-| Tool | Purpose | Implementation |
+---
+
+## Headline numbers
+
+Evaluated on a 30-query benchmark, judged by Claude Haiku (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-05-16-full.md](eval/reports/2026-05-16-full.md).
+
+| Metric | Score | What it means |
 |---|---|---|
-| `review_qa` | Grounded Q&A over the product's reviews | **Reuses** the v1 FAISS RAG over real Amazon reviews |
-| `predict_return_risk` | HIGH/MEDIUM/LOW return-risk score with drivers | **Reuses** the v1 XGBoost classifier |
-| `competitor_search` | 3-5 competing products with prices, ratings, complaints | Mock data seeded for the 12 supported ASINs |
-| `price_history` | 90-day price curve with volatility + events | Synthetic curve generated deterministically from a seed |
-| `trend_signal` | 12-month category demand index + direction | Mock seeded per category |
+| **Tool-selection accuracy** | **0.85** | The planner picks the right tools the vast majority of the time |
+| **Decision accuracy** | **57%** | Final recommendation matches the gold-set decision 17/30 times |
+| Latency (p50 / p95) | 18s / 35s | End-to-end including the judge |
+| Error rate | 10% | All 3 failures were Groq daily-quota hits, not agent bugs |
 
-Two of the five tools are powered by the **real** v1 models (FAISS RAG + XGBoost). Three are synthetic mocks at this stage — see [Stage 6 → "What I'd do next"](#what-id-do-next).
-
----
-
-## Eval results — the credibility anchor
-
-The whole project is graded by a 30-query gold set with LLM-as-judge (Claude Haiku 3, different model family from the Llama agent → no same-family bias) + trajectory F1. Full report at [eval/reports/2026-05-16-full.md](eval/reports/2026-05-16-full.md).
-
-| Metric | Full agent | Notes |
-|---|---|---|
-| **Trajectory F1 (avg)** | **0.850** | Strongest signal — the Planner picks the right tools |
-| Trajectory precision (avg) | 0.920 | Rarely calls a wrong tool |
-| Trajectory recall (avg) | 0.824 | Occasionally misses one |
-| First-tool match rate | 66.7% | Planner picks the right *starting* tool 2/3 of the time |
-| **Decision accuracy** | **56.7%** | Agent's decision matches gold 17/30 — most failures are over-confidence on launch queries |
-| Judge: anti-hallucination | 0.737 | Claims are mostly supported by cited evidence |
-| Judge: completeness | 0.759 | Recommendations address all critical aspects |
-| Latency p50 / p95 | 18.2s / 34.5s | Per-query end-to-end including LLM-as-judge |
-| Error rate | 10.0% | 3/30 — all Groq daily-quota hits at end of run, not agent bugs |
-
-**Reading these honestly:** Trajectory is the agent's strongest dimension — it consistently picks the right tools. Decision accuracy is moderate because the agent is over-confident on launch queries (predicts `go` where the gold says `needs_more_data` or `no_go`). The trajectory was correct in those cases; the agent saw the right evidence but committed too eagerly. The eval surfaces this systematically — that's exactly what it's for. Fixing the over-confidence is the next iteration of prompts, informed by this data.
-
-Baselines (no-tool LLM, single-tool agent) are coming next — they ran into Groq's daily 500k-token cap during the first full eval. The eval harness is designed to run them as soon as the quota resets.
+**Honest reading:** tool selection is the agent's strongest dimension. Decision accuracy is moderate because the agent over-commits on launch queries — it sees the right evidence but says "go" where the gold says "needs more data." That over-confidence is the next iteration's prompt target, surfaced systematically by the eval. The eval is the dev loop, not the scoreboard.
 
 ---
 
-## Architecture
+## How it works
 
 ```
                 ┌──────────────────────────────────┐
                 │  Next.js 16 frontend (Vercel)    │
-                │  ├─ /dashboard   (v1)            │
-                │  ├─ /chat        (v1)            │
-                │  └─ /agent       (v2 Copilot)    │
-                │     ├─ ChatStream                │
-                │     ├─ TracePanel (live SSE)     │
-                │     └─ Recommendation card       │
+                │  └─ /agent — live streaming UI   │
                 └─────────────┬────────────────────┘
-                              │ SSE
+                              │ live event stream
                 ┌─────────────▼────────────────────┐
                 │  FastAPI backend (Render)        │
-                │  ├─ POST /analyze   (v1)         │
-                │  ├─ POST /chat      (v1)         │
-                │  ├─ POST /agent/query     (NEW)  │
-                │  └─ POST /agent/query/mock (NEW) │
+                │  POST /agent/query               │
                 └─────────────┬────────────────────┘
                               │
                 ┌─────────────▼────────────────────┐
-                │  LangGraph v1 multi-node agent   │
-                │  ┌──────────────────────────┐    │
-                │  │  Planner  (instructor)   │    │
-                │  └──────────┬───────────────┘    │
-                │             ▼                    │
-                │  ┌──────────────────────────┐    │
-                │  │  Executor  ◄─┐           │    │
-                │  │  + ToolNode  │ (loop ≤8) │    │
-                │  └──────────┬───┴───────────┘    │
-                │             ▼                    │
-                │  ┌──────────────────────────┐    │
-                │  │  Synthesizer (instructor)│    │
-                │  └──┬───────────────────────┘    │
-                │     │ if confidence < 0.5         │
-                │     └──→ Executor (1 replan)     │
+                │  LangGraph agent                 │
+                │   ┌──────────────────────────┐   │
+                │   │  Planner                 │   │
+                │   └──────────┬───────────────┘   │
+                │              ▼                   │
+                │   ┌──────────────────────────┐   │
+                │   │  Executor  ◄─┐           │   │
+                │   │  + Tools     │ (loop ≤8) │   │
+                │   └──────────┬───┴───────────┘   │
+                │              ▼                   │
+                │   ┌──────────────────────────┐   │
+                │   │  Synthesizer             │   │
+                │   └──┬───────────────────────┘   │
+                │      │ if confidence < 0.5       │
+                │      └──→ Executor (1 replan)    │
                 └─────────────┬────────────────────┘
-                              │ MCP (stdio)
+                              │
                 ┌─────────────▼────────────────────┐
-                │  MCP Tool Server                 │
-                │  ├─ review_qa         → FAISS RAG (real reviews)
-                │  ├─ predict_return_risk → XGBoost (real model)
-                │  ├─ competitor_search → mock seed
-                │  ├─ price_history     → mock seed
-                │  └─ trend_signal      → mock seed
+                │  5 Tools                         │
+                │  • review_qa         (real RAG)  │
+                │  • predict_return_risk (real ML) │
+                │  • competitor_search (synthetic) │
+                │  • price_history     (synthetic) │
+                │  • trend_signal      (synthetic) │
                 └──────────────────────────────────┘
 ```
 
-Deep dive: **[ARCHITECTURE.md](ARCHITECTURE.md)** — state machine details, why each node exists, eval methodology.
+Two of the five tools are real:
+- **`review_qa`** — semantic search over actual Amazon reviews using vector embeddings, then an LLM answers grounded in what it found
+- **`predict_return_risk`** — an XGBoost classifier trained on engineered review features (96.5% accuracy on held-out data)
 
----
+The other three (competitor, price, trend) are deterministic synthetic data — the agent doesn't know the difference, which means the architecture is real even where the data isn't yet. Wiring real market data in is a tool-layer swap, not an agent change.
 
-## Tech stack
-
-| Layer | Choice | Why |
-|---|---|---|
-| Agent orchestration | LangGraph v1 | State-machine traceability; native ToolNode + checkpointer |
-| Agent LLM | Groq Llama 4 Scout (`meta-llama/llama-4-scout-17b-16e-instruct`) | Fast, reliable JSON tool-calls. Llama 3.3 70B sometimes emits Llama-native `<function=...>` syntax that breaks Groq's parser |
-| Tool protocol | MCP (Model Context Protocol) | Cross-vendor tool standard; tools are also importable Python functions for dev iteration |
-| Structured output | Pydantic v2 + `instructor` | Type-safe Recommendation; no JSON parsing pain |
-| Evaluation | DeepEval `GEval` + custom trajectory eval | LLM-as-judge primitives; trajectory F1 + ordering bonus on top |
-| Judge LLM | Claude Haiku 3 (Anthropic) | Different family from agent (Llama) → no same-family bias |
-| Tracing | LangSmith | Every node + tool call as a visual span |
-| RAG (v1, reused) | FAISS + sentence-transformers `all-MiniLM-L6-v2` | 2,800+ chunks/product, on-disk, free |
-| Return-risk (v1, reused) | XGBoost on engineered review features | 96.5% accuracy, 0.997 ROC-AUC on held-out data |
-| Sentiment | HuggingFace Inference API — RoBERTa | Per-review compound score |
-| Backend | FastAPI + Uvicorn (Render) | REST + SSE streaming |
-| Frontend | Next.js 16 + Tailwind 4 + Radix (Vercel) | App Router with per-route layouts |
-| Vector store | FAISS (on-disk) | See [What I'd do next](#what-id-do-next) for the scale-up migration path |
+For the deep dive — state machine, why each node exists, eval methodology — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
 ## Run it yourself
 
-**Prerequisites:** Python 3.11+, Node.js 18+, `libomp` on macOS (`brew install libomp`).
+### Option A: Docker (recommended)
 
 ```bash
 git clone https://github.com/Het415/listinglens.git && cd listinglens
+cp .env.example .env       # add GROQ_API_KEY and HUGGINGFACE_API_KEY
+docker compose up --build
+```
 
-# Backend (existing /chat + new /agent)
-uv venv .venv && source .venv/bin/activate
-pip install -r requirements.txt -r requirements-agent.txt
-# Set GROQ_API_KEY, HUGGINGFACE_API_KEY in .env. Optional: ANTHROPIC_API_KEY (eval judge), LANGSMITH_API_KEY (tracing).
-uvicorn app:app --reload --port 8000
+That's it. API on `http://localhost:8000`, Redis cache on `:6379`. First build is 5–10 min (downloading ~1.5 GB of ML wheels); subsequent rebuilds are seconds.
 
-# Frontend (in another terminal)
+Then in another terminal, run the frontend:
+
+```bash
 cd frontend && npm install
 echo "NEXT_PUBLIC_API_URL=http://localhost:8000" > .env.local
 npm run dev
 ```
 
-Open `http://localhost:3000/agent` → pick an ASIN → click a sample query → watch the trace animate.
+Open `http://localhost:3000/agent`.
 
-**Run the eval:**
+### Option B: Python venv (no Docker)
 
 ```bash
-# Full agent on 30 gold queries, with LLM-as-judge
-python -m eval.run_eval
-
-# Skip judges (no Anthropic key required)
-python -m eval.run_eval --no-judge
-
-# Smoke eval (5 queries) — what GitHub Actions runs on PRs
-python -m eval.run_eval --limit 5
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app:app --reload --port 8000
 ```
 
-Reports written to `eval/reports/YYYY-MM-DD-{variant}.md` + `.jsonl`.
+Frontend setup is identical to Option A.
 
-**Run the agent CLI** (skip the frontend):
+### Run the eval
+
+```bash
+python -m eval.run_eval                    # full agent on 30 gold queries
+python -m eval.run_eval --no-judge         # skip LLM judging (no Anthropic key needed)
+python -m eval.run_eval --limit 5          # 5-query smoke (what CI runs on PRs)
+```
+
+Reports land in `eval/reports/YYYY-MM-DD-{variant}.md`.
+
+### Run the agent from the command line
 
 ```bash
 python -m backend.agent.run --asin B08XPWDSWW "Why are returns spiking?" --pretty
@@ -185,114 +157,71 @@ python -m backend.agent.run --asin B08XPWDSWW "Why are returns spiking?" --prett
 
 ---
 
-## What I'd do next
+## What's under the hood
 
-The judgment section. These are deliberate omissions, not oversights — each one is worth doing *only* when there's a specific reason.
+**Agent layer:** [LangGraph](https://github.com/langchain-ai/langgraph) v1 as the state machine, [Groq](https://groq.com) running Llama 4 Scout for the LLM (fast, reliable structured output), [instructor](https://github.com/jxnl/instructor) + Pydantic v2 for type-safe outputs, [MCP](https://modelcontextprotocol.io) (Anthropic's tool protocol) as the tool interface.
 
-1. **Scale beyond 12 ASINs.** Current setup is FAISS-on-disk + all 12 vectorstores preloaded at startup ([app.py:31-64](app.py:31)). Fine for ≤50 products on the Render free tier. Cheap fix for more: lazy-load per request (~2 hours). Real scale (≥100 products or user-submitted ASINs): swap FAISS for a managed vector DB — Pinecone, Qdrant Cloud, or pgvector on Supabase. The `review_qa` tool's interface doesn't change; only retrieval underneath. **Don't migrate before there's a reason** — adding a managed DB doesn't make the agent smarter.
+**Real-data tools:** FAISS for vector search over ~2,800 review chunks per product, sentence-transformers `all-MiniLM-L6-v2` for embeddings, XGBoost for return-risk classification, HuggingFace's RoBERTa for sentiment.
 
-2. **Multi-turn memory.** Today is single-query → single-recommendation. Add LangGraph's SQLite checkpointer for conversation memory so the user can follow up ("OK and how does this change if I drop the price by 10%?") without re-running the full research path.
+**Eval:** custom trajectory-matching algorithm + DeepEval's `GEval` for LLM-as-judge scoring. Claude Haiku as judge (different family from Llama → no same-family bias). LangSmith for trace visualization.
 
-3. **Self-critique loop.** Add a Critic node between Synthesizer and END that evaluates *reasoning quality* (different from the existing confidence-based replan). On low quality, route back to Executor with explicit "expand on X" feedback.
+**Infrastructure:** FastAPI + Uvicorn on Render (Python buildpack), Next.js 16 + Tailwind 4 + Radix on Vercel, Redis sidecar for caching expensive agent queries (840× speedup on repeats — see [docker-compose.yml](docker-compose.yml)).
 
-4. **Fine-tuned planner.** After logging 300+ real queries with labels, fine-tune a small model (Llama 3.2 3B + LoRA) for just the planning step. The Planner is a smaller, more constrained task than full agency — a natural candidate for SFT.
-
-5. **Domain pivot.** Same agent architecture, different tool layer: SEC filings + earnings transcripts + market data. One weekend to port. Same Planner/Executor/Synthesizer; only the tools change.
+**CI:** [GitHub Actions](.github/workflows/ci.yml) builds the backend + frontend Docker images and runs pytest on every PR. A separate workflow runs a 5-query smoke eval against the agent.
 
 ---
 
-## How v1 (RAG + XGBoost) still works underneath
+## What I'd build next
 
-The v1 dashboard, chat, and analysis pages are untouched and continue to serve 12 pre-analyzed products. They power two of the five v2 agent tools (`review_qa` reuses the FAISS RAG, `predict_return_risk` reuses the XGBoost classifier). v2 extends v1; it doesn't replace it.
+The judgment section — deliberate omissions, not oversights.
 
-Key v1 implementation details (still relevant because they're part of the agent's tool layer):
+1. **Scale past 12 products.** Current setup preloads FAISS indexes at startup. Fine for ~50 products on the free tier; for ≥100, swap FAISS for a managed vector DB (Pinecone, Qdrant, or pgvector). The `review_qa` tool interface doesn't change — only what's underneath. Don't migrate before there's a reason.
 
-- **Return-risk proxy labels** — real return-rate data isn't publicly available; the XGBoost model trains on a proxy combining `pct_negative`, `(1 - rating_avg/5)`, and `rating_sentiment_gap`. The third feature is the novel one: it catches products where customers write positive text but rate low — a leading indicator of returns before star ratings catch up. Performance on held-out data: 96.5% accuracy, 0.997 ROC-AUC. See [src/fusion.py](src/fusion.py).
-- **RAG with metadata filter** — if the user's question mentions a star rating ("what do 1-star reviewers say"), retrieval applies a hard metadata filter to only those reviews before semantic search. Prevents the LLM from blending positive and negative content. See [src/rag_chatbot.py:123](src/rag_chatbot.py:123).
-- **Star-balanced sampling** — sentiment is run on 250 reviews per product, balanced 50 per star rating, before scoring. Removes the bias from products with 90% five-star reviews drowning out real complaints. See [src/nlp_pipeline.py](src/nlp_pipeline.py).
+2. **Multi-turn memory.** Today is single-query → single-recommendation. Adding LangGraph's SQLite checkpointer would let users follow up ("how does this change if I drop the price 10%?") without re-running the full research path.
 
----
+3. **Self-critique loop.** A Critic node between Synthesizer and END that evaluates *reasoning quality* (different from the existing confidence-based replan). Routes back with explicit "expand on X" feedback when reasoning is thin.
 
-## Supported products (12 pre-analyzed ASINs)
+4. **Fine-tuned planner.** After logging 300+ real queries with labels, fine-tune a small model (Llama 3.2 3B + LoRA) just for the planning step. Planning is a smaller, more constrained task than full agency — a natural candidate for supervised fine-tuning.
 
-| ASIN | Product |
-|---|---|
-| B08XPWDSWW | TOZO T10 Bluetooth Earbuds |
-| B07GZFM1ZM | Fire Stick 4K |
-| B075X8471B | Fire TV Stick with Alexa |
-| B01K8B8YA8 | Echo Dot 2nd Generation |
-| B07H65KP63 | Echo Dot 3rd Generation |
-| B0791TX5P5 | Fire TV Stick HD |
-| B010BWYDYA | Fire Tablet 7 inch |
-| B07S764D9V | Panasonic ErgoFit Wired Earbuds |
-| B0BW4PFM58 | OontZ Angle 3 Bluetooth Speaker |
-| B07PXGQC1Q | Apple AirPods 2nd Generation |
-| B00N2ZDXW2 | Ring Video Doorbell |
-| B08RLW7918 | WYZE Cam v2 Security Camera |
-
-Pre-computing analysis for a new ASIN:
-
-```bash
-python precompute.py --asin B07XJ8C8F7
-git add data/processed/ && git commit -m "add new product ASIN" && git push origin main
-```
-
-Render redeploys automatically.
-
----
-
-## Project structure
-
-```
-listinglens/
-├── app.py                            # FastAPI: /analyze, /chat, /agent/query, /agent/query/mock
-├── src/                              # v1 RAG + ML pipeline (untouched)
-│   ├── ingest.py
-│   ├── nlp_pipeline.py
-│   ├── fusion.py                     # XGBoost return-risk classifier
-│   └── rag_chatbot.py                # FAISS RAG over reviews
-├── backend/                          # v2 Copilot
-│   ├── agent/
-│   │   ├── graph.py                  # LangGraph state machine + streaming
-│   │   ├── nodes/
-│   │   │   ├── planner.py
-│   │   │   ├── executor.py
-│   │   │   └── synthesizer.py
-│   │   ├── prompts.py
-│   │   ├── schemas.py                # Pydantic Recommendation + AgentState
-│   │   ├── mock_stream.py            # Canned SSE fixture for demos
-│   │   └── run.py                    # CLI entry
-│   ├── mcp_server/
-│   │   ├── server.py                 # FastMCP stdio server
-│   │   └── tools/                    # 5 tools as Python functions + MCP wrappers
-│   └── data/mock_market_data.json    # Seed for competitor/price/trend tools
-├── eval/                             # 30-query gold set + LLM-as-judge + trajectory F1
-│   ├── gold_set.jsonl
-│   ├── run_eval.py
-│   ├── judges.py
-│   ├── trajectory_eval.py
-│   ├── baselines.py
-│   └── reports/
-├── frontend/
-│   └── app/
-│       ├── chat/                     # v1 chat UI
-│       ├── dashboard/                # v1 dashboard
-│       └── agent/                    # v2 Copilot UI
-│           ├── layout.tsx
-│           └── page.tsx
-├── .github/workflows/eval-on-pr.yml  # 5-query smoke eval on PRs
-└── ARCHITECTURE.md                   # Deep dive
-```
+5. **Domain pivot.** Same architecture, different tools: SEC filings + earnings transcripts + market data. One weekend to port. The Planner/Executor/Synthesizer stay; only the tool layer changes.
 
 ---
 
 ## What I learned building this
 
-**The eval IS the development loop.** I spent more time iterating on prompts after looking at the eval report than I did writing the original prompts. Without the gold set + LLM-as-judge + trajectory F1, "improving the agent" would have been vibes — "this answer feels better than before". With the eval, regressions and improvements are numbers.
+**The eval IS the development loop.** I spent more time iterating prompts after reading eval reports than I did writing the original prompts. Without a gold set + judge + trajectory scoring, "improving the agent" would have been vibes. With it, regressions and improvements are numbers.
 
-**The trace panel is the unfair advantage.** Most agent demos show a final answer and you have to trust it. Showing the planner, the tool calls, the tool results, and the synthesizer in a live timeline does two things: it lets recruiters *see* the agent reasoning (which is the actual technical signal), and it gives me a real-time debugger when something goes wrong in dev.
+**The trace panel is the unfair advantage.** Most agent demos show a final answer and ask you to trust it. Showing the planner, the tools, the results, and the synthesizer in a live timeline lets people *see* the reasoning — and gives me a real-time debugger.
 
-**Honest evaluation beats inflated metrics.** The agent has a 56.7% decision accuracy. That's lower than what I'd see on a marketing slide. But the over-confidence pattern is *exactly* what a follow-up iteration of prompts will target, and the trajectory F1 of 0.85 says the planner is working. Hiring managers respond to honest numbers + a clear "what we'd fix next" story more than to suspiciously perfect ones.
+**Honest evaluation beats inflated metrics.** 57% decision accuracy is lower than what fits on a marketing slide. But the failure pattern (over-confidence on launch queries) is *exactly* what a follow-up iteration targets, and the 0.85 tool-selection score says the planner works. Hiring managers respond to honest numbers + a clear "what we'd fix next" story more than to suspiciously perfect ones.
+
+---
+
+## Project structure (brief)
+
+```
+listinglens/
+├── app.py                  # FastAPI entrypoint
+├── src/                    # v1 RAG + ML pipeline (used by agent tools)
+├── backend/
+│   ├── agent/              # LangGraph state machine + nodes
+│   ├── mcp_server/tools/   # 5 tools as Python functions + MCP wrappers
+│   └── cache.py            # Redis-backed SSE cache
+├── eval/                   # 30-query gold set + judge + trajectory eval
+├── frontend/app/agent/     # Next.js Copilot UI
+├── Dockerfile              # Backend image
+├── docker-compose.yml      # api + redis sidecar
+└── .github/workflows/      # CI: pytest + docker build + smoke eval
+```
+
+Add a new pre-analyzed product:
+
+```bash
+python precompute.py --asin B07XJ8C8F7
+git add data/processed/ && git commit -m "add new ASIN" && git push
+```
+
+Render auto-redeploys.
 
 ---
 
