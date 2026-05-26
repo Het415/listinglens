@@ -1,0 +1,55 @@
+# ── Exclude from the backend image build context ─────────────────────────────
+# Anything listed here is invisible to `COPY . .` in the Dockerfile,
+# which keeps the image small and the build fast. The bind-mount in
+# docker-compose has its own masking via anonymous volumes — this file
+# governs image builds (CI image-build job, `docker build`, etc.).
+
+# Version control
+.git
+.gitignore
+.github
+
+# Local Python envs (compiled for host OS — useless and broken inside
+# a Linux container).
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
+
+# Frontend lives in its own image — backend doesn't need any of it.
+frontend
+
+# Heavy raw data that's only needed by the dev-mode ingest pipeline.
+# data/processed/ DOES ship in the image so production can serve from
+# disk without re-running NLP.
+data/raw
+
+# Eval artifacts (LangSmith dumps, deepeval reports) and agent-mode
+# scratch space — never needed at runtime.
+.deepeval
+.agents
+.claude
+eval/reports
+eval/cache
+
+# Secrets — must never bake into a layer.
+.env
+.env.local
+.env.*.local
+
+# Docs/scripts only relevant on the host.
+docs/LOOM_SCRIPT.md
+docs/LINKEDIN_POST.md
+
+# Test artifacts
+.coverage
+htmlcov

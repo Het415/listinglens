@@ -38,3 +38,9 @@ langchain-text-splitters==1.1.1
 langgraph>=1.0,<2
 mcp>=1.0
 instructor>=1.7
+
+# Optional cache backend. backend/cache.py degrades to passthrough when
+# REDIS_URL is unset, so this dep is harmless on the Render Python deploy
+# (Render doesn't set REDIS_URL); it activates only when docker-compose
+# wires a redis sidecar.
+redis>=5.0,<6

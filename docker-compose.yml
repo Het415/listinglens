@@ -1,0 +1,75 @@
+# ── Local dev orchestration ───────────────────────────────────────────────────
+# `docker compose up` brings the API + a Redis sidecar online. Production
+# deploy is still Render's Python buildpack (see render.yaml) — this file
+# is the development source of truth, not the deployment source of truth.
+#
+# Usage:
+#   cp .env.example .env       # fill in GROQ_API_KEY etc.
+#   docker compose up --build  # api on :8000, redis on :6379
+#
+# To run tests inside the api container:
+#   docker compose exec api pytest tests/ -v
+
+services:
+  api:
+    build: .
+    image: listinglens-api:dev
+    # Force x86_64 emulation. Required on Apple Silicon because
+    # requirements.txt pins torch==2.1.0+cpu, and the PyTorch CPU index
+    # only ships that wheel for linux/amd64 (arm64 +cpu wheels started
+    # at torch 2.6). Render production is x86_64 Linux, so this also
+    # gives us dev/prod parity. Rosetta makes this ~2x slower than a
+    # native arm64 build — acceptable for a dev container.
+    platform: linux/amd64
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      # Override values that must point at compose-internal hostnames.
+      # `redis` resolves to the redis service via the default compose
+      # network. `host.docker.internal` would be wrong here.
+      REDIS_URL: redis://redis:6379
+      # Default to development so missing ASINs trigger the live NLP
+      # pipeline instead of 404'ing. Flip to "production" via .env when
+      # rehearsing the Render serving path locally.
+      ENV_MODE: development
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      # Bind-mount the repo for hot-reload — uvicorn --reload picks up
+      # edits to app.py / backend/ / src/ instantly.
+      - .:/app
+      # Anonymous volumes that shadow host-only artifacts which would
+      # otherwise leak into the container and break things:
+      #   - .venv has macOS Python binaries that won't execute on Linux
+      #   - __pycache__ would collide between host and container Python
+      #   - frontend/node_modules is multi-GB and irrelevant to the API
+      - /app/.venv
+      - /app/__pycache__
+      - /app/frontend
+    # --reload enables the bind-mount hot-reload loop; remove this line
+    # if you want the image's prod CMD instead.
+    command: ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      # Exposed to host so you can `redis-cli` directly when debugging.
+      # Remove this published port if multiple compose stacks fight over
+      # 6379 on the same machine.
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    volumes:
+      # Named volume so cache survives `docker compose down` (without
+      # `-v`). Wipe with `docker compose down -v` when you want a clean
+      # slate.
+      - redis_data:/data
+
+volumes:
+  redis_data:

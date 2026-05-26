@@ -256,6 +256,8 @@ def analyze_product(request: AnalyzeRequest):
     Subsequent calls return cached results instantly.
     """
     from src.ingest import extract_asin
+    if not request.asin and not request.url_or_asin:
+        raise HTTPException(status_code=400, detail="Provide `asin` or `url_or_asin`")
     try:
         asin = request.asin or extract_asin(request.url_or_asin)
     except ValueError as e:
@@ -385,8 +387,15 @@ async def agent_query(request: AgentQueryRequest):
             err = json.dumps({"message": f"{type(e).__name__}: {e}"})
             yield f"event: error\ndata: {err}\n\n"
 
+    # Redis cache wrapper — degrades to passthrough if REDIS_URL is unset
+    # or Redis is unreachable. Key includes mode="agent" to keep
+    # /agent/query and /assistant/query namespaces separate even when the
+    # (asin, query) pair is identical.
+    from backend.cache import cached_sse_stream, make_key
+    cache_key = make_key(request.asin, request.query, mode="agent")
+
     return StreamingResponse(
-        event_stream(),
+        cached_sse_stream(cache_key, event_stream()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -522,8 +531,14 @@ async def assistant_query(request: AssistantQueryRequest):
         )
         yield "event: done\ndata: {}\n\n"
 
+    # Cache by (asin, query, mode). Quick and copilot modes produce
+    # very different traces for the same question, so the mode is part
+    # of the key — never serve a quick-mode trace to a copilot caller.
+    from backend.cache import cached_sse_stream, make_key
+    cache_key = make_key(request.asin, request.query, mode=f"assistant:{mode}")
+
     return StreamingResponse(
-        event_stream(),
+        cached_sse_stream(cache_key, event_stream()),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
