@@ -11,9 +11,7 @@ export default function DashboardLayout({
   return (
     <DashboardExportProvider>
       <div className="flex min-h-screen bg-background">
-        <Suspense fallback={<div className="hidden md:block w-[220px]" />}>
-          <Sidebar />
-        </Suspense>
+        <Sidebar />
         <div className="flex-1 flex flex-col pb-16 md:pb-0">
           <Suspense fallback={<div className="h-[60px] bg-background-secondary border-b border-border" />}>
             <TopBarWithExport />
@@ -22,9 +20,7 @@ export default function DashboardLayout({
             {children}
           </main>
         </div>
-        <Suspense fallback={null}>
-          <MobileNav />
-        </Suspense>
+        <MobileNav />
       </div>
     </DashboardExportProvider>
   )

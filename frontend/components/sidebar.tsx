@@ -1,5 +1,6 @@
 'use client'
 
+import { Suspense } from 'react'
 import Link from 'next/link'
 import { usePathname, useSearchParams } from 'next/navigation'
 import { Logo } from './logo'
@@ -47,7 +48,18 @@ function resolveHref(
   return itemHref
 }
 
+// useSearchParams() forces a Suspense boundary or the whole page bails out of
+// static prerendering at build time. The boundary lives here, inside the shared
+// component, so every layout that renders <Sidebar /> is covered automatically.
 export function Sidebar() {
+  return (
+    <Suspense fallback={<div className="hidden md:block w-[220px] border-r border-border-subtle" />}>
+      <SidebarInner />
+    </Suspense>
+  )
+}
+
+function SidebarInner() {
   const { pathname, ...hrefs } = useAsinHrefs()
 
   return (
@@ -96,6 +108,14 @@ export function Sidebar() {
 }
 
 export function MobileNav() {
+  return (
+    <Suspense fallback={null}>
+      <MobileNavInner />
+    </Suspense>
+  )
+}
+
+function MobileNavInner() {
   const { pathname, ...hrefs } = useAsinHrefs()
 
   const mobileItems = navItems.slice(0, 5)
