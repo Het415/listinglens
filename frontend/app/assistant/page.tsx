@@ -121,11 +121,14 @@ function AssistantPageContent() {
   const lastAutoSubmittedRef = useRef<string | null>(null)
 
   useEffect(() => {
+    // Reset first so the previous product's name never lingers when the ASIN
+    // changes without a remount (same route, new ?asin=).
+    setProductName(asin)
     const cached = sessionStorage.getItem(`analysis_${asin}`)
     if (cached) {
       try {
         const data = JSON.parse(cached)
-        setProductName(data.product_name || asin)
+        if (data?.product_name) setProductName(data.product_name)
       } catch {}
     }
   }, [asin])

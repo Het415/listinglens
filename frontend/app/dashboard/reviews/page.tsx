@@ -164,21 +164,40 @@ function ReviewsPageInner() {
       setAnalysis(null)
       setReviews([])
       try {
-        const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`)
-
-        if (!analyzeRes.ok) {
-          throw new Error(`Analysis not found for ASIN ${asinFromQuery}`)
+        // 1. Analysis: prefer the sessionStorage cache the landing/dashboard
+        //    pages already populated — saves a network round-trip and makes
+        //    switching products feel instant. Fall back to the API on a miss.
+        let analyzeJson: AnalyzeResponse | null = null
+        const cached = sessionStorage.getItem(`analysis_${asinFromQuery}`)
+        if (cached) {
+          try {
+            analyzeJson = JSON.parse(cached) as AnalyzeResponse
+          } catch {
+            /* corrupt cache — fetch fresh below */
+          }
         }
 
-        const analyzeJson = (await analyzeRes.json()) as AnalyzeResponse
+        // 2. Kick off the per-review fetch immediately (in parallel with the
+        //    analysis fetch when we need one) instead of waiting in series.
+        const reviewsPromise = fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`)
+
+        if (!analyzeJson) {
+          const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`)
+          if (!analyzeRes.ok) {
+            throw new Error(`Analysis not found for ASIN ${asinFromQuery}`)
+          }
+          analyzeJson = (await analyzeRes.json()) as AnalyzeResponse
+        }
 
         if (cancelled) return
         setAnalysis(analyzeJson)
 
-        // Reviews endpoint may not exist on older deployments.
+        // 3. Resolve the per-review rows. Endpoint may not exist on older
+        //    deployments — degrade gracefully to summary-only.
         try {
-          const reviewsRes = await fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`)
+          const reviewsRes = await reviewsPromise
           if (!reviewsRes.ok) {
+            if (cancelled) return
             setReviews([])
             setReviewsWarning(
               `Per-review endpoint unavailable (${reviewsRes.status}). Showing summary-based analysis only.`,
@@ -193,6 +212,7 @@ function ReviewsPageInner() {
             setReviews(reviewsJson.reviews || [])
           }
         } catch {
+          if (cancelled) return
           setReviews([])
           setReviewsWarning('Could not load individual reviews. Showing summary-based analysis only.')
         }

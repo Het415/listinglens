@@ -298,15 +298,18 @@ def chat(request: ChatRequest):
 @app.get("/analyze/{asin}")
 def get_cached_analysis(asin: str):
     """
-    Returns cached analysis for an ASIN without rerunning pipeline.
-    Returns 404 if ASIN hasn't been analyzed yet.
+    Returns analysis for an ASIN.
+
+    Serves from the in-memory cache when warm. On a cold cache (fresh deploy,
+    process restart, or a second worker that didn't handle the POST) it falls
+    back to `run_full_pipeline`, which loads the pre-computed data from disk.
+    This avoids spurious 404s on Render's free tier (which spins the service
+    down on inactivity and loses the in-memory cache). Still 404s via the
+    pipeline's production guardrail if the ASIN has no pre-computed data.
     """
-    if asin not in app_state.get("cache", {}):
-        raise HTTPException(
-            status_code=404,
-            detail=f"ASIN {asin} not analyzed yet. Call POST /analyze first."
-        )
-    return app_state["cache"][asin]
+    if asin in app_state.get("cache", {}):
+        return app_state["cache"][asin]
+    return run_full_pipeline(asin)
 
 
 @app.get("/analyze/{asin}/reviews")

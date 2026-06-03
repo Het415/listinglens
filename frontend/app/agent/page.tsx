@@ -33,11 +33,13 @@ function AgentPageContent() {
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    // Reset first so a stale product name never persists across ASIN changes.
+    setProductName(asin)
     const cached = sessionStorage.getItem(`analysis_${asin}`)
     if (cached) {
       try {
         const data = JSON.parse(cached)
-        setProductName(data.product_name || asin)
+        if (data?.product_name) setProductName(data.product_name)
       } catch {}
     }
   }, [asin])

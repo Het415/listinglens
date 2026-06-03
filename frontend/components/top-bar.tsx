@@ -9,6 +9,8 @@ import { Download, ChevronRight, Moon, Sun } from 'lucide-react'
 
 import { DEMO_ASIN } from '@/lib/demo-config'
 
+const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+
 export function TopBar({
   onExport,
   isExporting,
@@ -27,11 +29,40 @@ export function TopBar({
     setMounted(true)
   }, [])
 
+  // Keep the breadcrumb name in lock-step with the ASIN. The TopBar lives in a
+  // persistent layout, so it does NOT remount when only the ?asin= query param
+  // changes — that means we must (a) reset the name on every ASIN change so a
+  // stale product never lingers, and (b) re-hydrate it from cache or network.
   useEffect(() => {
+    let cancelled = false
+    setProductName(asin) // reset first — never show the previous product's name
+
     const cached = sessionStorage.getItem(`analysis_${asin}`)
     if (cached) {
-      const data = JSON.parse(cached)
-      setProductName(data.product_name || asin)
+      try {
+        const data = JSON.parse(cached)
+        if (data?.product_name) setProductName(data.product_name)
+        return
+      } catch {
+        /* corrupt cache — fall through to network */
+      }
+    }
+
+    // Not in sessionStorage (deep link, or a product analyzed elsewhere):
+    // fetch just the name. Cheap — the backend serves this from cache/disk.
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_URL}/analyze/${asin}`)
+        if (!res.ok || cancelled) return
+        const data = await res.json()
+        if (!cancelled && data?.product_name) setProductName(data.product_name)
+      } catch {
+        /* keep the ASIN as a graceful fallback */
+      }
+    })()
+
+    return () => {
+      cancelled = true
     }
   }, [asin])
 
@@ -123,7 +154,15 @@ export function TopBar({
           ref={themeButtonRef}
           type="button"
           onClick={handleThemeToggle}
-          aria-label={effectiveTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+          aria-label={
+            // Until mounted, resolvedTheme is unknown — render a stable label on
+            // both server and first client paint to avoid a hydration mismatch.
+            !mounted
+              ? 'Toggle theme'
+              : effectiveTheme === 'dark'
+                ? 'Switch to light theme'
+                : 'Switch to dark theme'
+          }
           className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-border bg-background-card text-text-secondary hover:border-border-hover hover:text-text-primary transition-colors"
         >
           {!mounted ? (
