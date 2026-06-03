@@ -32,7 +32,49 @@ function DashboardPageContent() {
 
   useEffect(() => {
     setMounted(true)
+    let cancelled = false
+
+    const loadAnalysis = async () => {
+      setLoading(true)
+      setData(null)
+      try {
+        // try sessionStorage first — set by landing page
+        const cached = sessionStorage.getItem(`analysis_${asin}`)
+        if (cached) {
+          if (!cancelled) {
+            setData(JSON.parse(cached))
+            setLoading(false)
+          }
+          return
+        }
+
+        // fallback — fetch directly from API
+        const response = await fetch(`${API_URL}/analyze/${asin}`)
+        if (cancelled) return
+        if (!response.ok) {
+          // not cached in API yet — run analysis
+          const analyzeRes = await fetch(`${API_URL}/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url_or_asin: asin }),
+          })
+          if (cancelled) return
+          if (!analyzeRes.ok) throw new Error('Analysis failed')
+          const result = await analyzeRes.json()
+          if (!cancelled) setData(result)
+        } else {
+          const result = await response.json()
+          if (!cancelled) setData(result)
+        }
+      } catch (err) {
+        if (!cancelled) setError('Failed to load analysis. Make sure backend is running.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
     loadAnalysis()
+    return () => { cancelled = true }
   }, [asin])
 
   useEffect(() => {
@@ -52,40 +94,6 @@ function DashboardPageContent() {
       }
     })
   }, [data, setAnalysis, setOnExport, setIsExporting])
-
-  const loadAnalysis = async () => {
-    setLoading(true)
-    try {
-      // try sessionStorage first — set by landing page
-      const cached = sessionStorage.getItem(`analysis_${asin}`)
-      if (cached) {
-        setData(JSON.parse(cached))
-        setLoading(false)
-        return
-      }
-
-      // fallback — fetch directly from API
-      const response = await fetch(`${API_URL}/analyze/${asin}`)
-      if (!response.ok) {
-        // not cached in API yet — run analysis
-        const analyzeRes = await fetch(`${API_URL}/analyze`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url_or_asin: asin }),
-        })
-        if (!analyzeRes.ok) throw new Error('Analysis failed')
-        const result = await analyzeRes.json()
-        setData(result)
-      } else {
-        const result = await response.json()
-        setData(result)
-      }
-    } catch (err) {
-      setError('Failed to load analysis. Make sure backend is running.')
-    } finally {
-      setLoading(false)
-    }
-  }
 
   if (!mounted) return null
 

@@ -142,15 +142,10 @@ function ReviewsPageInner() {
   const isDemo = !asinParam
   const asinFromQuery = asinParam || DEMO_ASIN
   const [mounted, setMounted] = useState(false)
-  const [asin, setAsin] = useState('')
 
   useEffect(() => {
     setMounted(true)
   }, [])
-
-  useEffect(() => {
-    setAsin(asinFromQuery)
-  }, [asinFromQuery])
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -160,18 +155,19 @@ function ReviewsPageInner() {
 
   useEffect(() => {
     if (!mounted) return
-    if (!asin) return
 
     let cancelled = false
     const run = async () => {
       setLoading(true)
       setError(null)
       setReviewsWarning(null)
+      setAnalysis(null)
+      setReviews([])
       try {
-        const analyzeRes = await fetch(`${API_URL}/analyze/${asin}`)
+        const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`)
 
         if (!analyzeRes.ok) {
-          throw new Error(`Analysis not found for ASIN ${asin}`)
+          throw new Error(`Analysis not found for ASIN ${asinFromQuery}`)
         }
 
         const analyzeJson = (await analyzeRes.json()) as AnalyzeResponse
@@ -181,7 +177,7 @@ function ReviewsPageInner() {
 
         // Reviews endpoint may not exist on older deployments.
         try {
-          const reviewsRes = await fetch(`${API_URL}/analyze/${asin}/reviews`)
+          const reviewsRes = await fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`)
           if (!reviewsRes.ok) {
             setReviews([])
             setReviewsWarning(
@@ -216,7 +212,7 @@ function ReviewsPageInner() {
     return () => {
       cancelled = true
     }
-  }, [asin, mounted])
+  }, [asinFromQuery, mounted])
 
   const summary = analysis?.summary
   const features = analysis?.features
@@ -342,13 +338,13 @@ function ReviewsPageInner() {
   return (
     <div className="min-h-screen space-y-6 bg-background p-4 text-foreground md:p-6">
       <div className="flex items-center gap-4">
-        <Link href="/dashboard" className="text-muted-foreground hover:text-foreground">
+        <Link href={asinParam ? `/dashboard?asin=${encodeURIComponent(asinParam)}` : '/dashboard'} className="text-muted-foreground hover:text-foreground">
           <ArrowLeft className="h-5 w-5" />
         </Link>
         <div>
           <h1 className="text-2xl font-medium text-foreground">Review Analysis</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {asin ? `ASIN ${asin}` : 'Select an ASIN to analyze reviews'}
+            {asinFromQuery ? `ASIN ${asinFromQuery}` : 'Select an ASIN to analyze reviews'}
           </p>
         </div>
       </div>

@@ -1,8 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { Logo } from './logo'
 import {
   LayoutDashboard,
@@ -20,12 +19,8 @@ const navItems = [
 
 function useAsinHrefs() {
   const pathname = usePathname()
-  const [currentAsin, setCurrentAsin] = useState<string | null>(null)
-
-  useEffect(() => {
-    const sp = new URLSearchParams(window.location.search)
-    setCurrentAsin(sp.get('asin'))
-  }, [pathname])
+  const searchParams = useSearchParams()
+  const currentAsin = searchParams.get('asin')
 
   const withAsin = (base: string) =>
     currentAsin ? `${base}?asin=${encodeURIComponent(currentAsin)}` : base
