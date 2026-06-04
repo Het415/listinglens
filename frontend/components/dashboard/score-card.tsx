@@ -7,7 +7,7 @@ interface ScoreCardProps {
   title: string
   value: number
   suffix?: string
-  color?: 'blue' | 'amber' | 'teal' | 'default'
+  color?: 'blue' | 'amber' | 'teal' | 'red' | 'default'
   progress?: number
   badge?: string
   stars?: number
@@ -35,7 +35,16 @@ export function ScoreCard({
     blue: 'text-accent-blue',
     amber: 'text-accent-amber',
     teal: 'text-accent-teal',
+    red: 'text-accent-red',
     default: 'text-text-primary'
+  }
+
+  const barColorClasses = {
+    blue: 'bg-accent-blue',
+    amber: 'bg-accent-amber',
+    teal: 'bg-accent-teal',
+    red: 'bg-accent-red',
+    default: 'bg-accent-amber'
   }
 
   const subtextColorClasses = {
@@ -87,8 +96,8 @@ export function ScoreCard({
 
       {progress !== undefined && (
         <div className="h-1.5 bg-border rounded-full overflow-hidden mb-3">
-          <div 
-            className={`h-full ${color === 'blue' ? 'bg-accent-blue' : color === 'teal' ? 'bg-accent-teal' : 'bg-accent-amber'} rounded-full transition-all duration-800 ease-out`}
+          <div
+            className={`h-full ${barColorClasses[color]} rounded-full transition-all duration-800 ease-out`}
             style={{ width: `${progressWidth}%` }}
           />
         </div>

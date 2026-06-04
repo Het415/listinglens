@@ -166,8 +166,8 @@ function DashboardPageContent() {
           title="Negative Reviews"
           value={pctNegative}
           suffix="%"
-          color="teal"
-          progress={100 - pctNegative}
+          color="red"
+          progress={pctNegative}
           subtext={`${pctPositive}% are positive`}
           subtextColor={pctNegative > 40 ? 'red' : 'green'}
           delay={4}
