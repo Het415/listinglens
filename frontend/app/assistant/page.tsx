@@ -5,17 +5,15 @@ import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
-import { readSSE } from '@/components/assistant/sse'
+import {
+  useAssistant,
+  submitAssistant,
+  clearAssistant,
+  type Mode,
+} from '@/components/assistant/assistantStore'
 import { DEMO_ASIN } from '@/lib/demo-config'
-import type {
-  Recommendation,
-  TraceStep,
-  ChatMessage,
-} from '@/components/assistant/types'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
-type Mode = 'quick' | 'copilot'
 
 const SAMPLE_QUERIES: Record<Mode, { label: string; icon: string }[]> = {
   quick: [
@@ -83,11 +81,6 @@ function ModeToggle({
   )
 }
 
-// sessionStorage key for the chat history. Per-ASIN so different products
-// don't share conversations; per-tab so it survives sidebar navigation but
-// doesn't pile up forever in localStorage.
-const historyKey = (asin: string) => `assistant_history_${asin}`
-
 function AssistantPageContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -102,14 +95,11 @@ function AssistantPageContent() {
 
   const [productName, setProductName] = useState(asin)
   const [mode, setMode] = useState<Mode>(prefillMode ?? 'quick')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [trace, setTrace] = useState<TraceStep[]>([])
+  // messages / trace / loading live in a module-scoped store keyed by ASIN, so
+  // an in-flight run survives navigating away from this page and is still here
+  // (streaming or finished) when the user comes back. See assistantStore.ts.
+  const { messages, trace, loading } = useAssistant(asin)
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
-  // `hydrated` flips after the initial sessionStorage read so the persist
-  // effect doesn't immediately overwrite stored history with the empty
-  // default during first render.
-  const [hydrated, setHydrated] = useState(false)
   // Mobile trace dropdown is controlled — closed by default, auto-opens
   // while streaming so users see progress, user can close again any time.
   const [traceOpen, setTraceOpen] = useState(false)
@@ -133,39 +123,9 @@ function AssistantPageContent() {
     }
   }, [asin])
 
-  // Hydrate messages from sessionStorage when ASIN changes (or on mount).
-  // Switching ASIN swaps to that product's history.
-  useEffect(() => {
-    setHydrated(false)
-    try {
-      const raw = sessionStorage.getItem(historyKey(asin))
-      setMessages(raw ? (JSON.parse(raw) as ChatMessage[]) : [])
-    } catch {
-      setMessages([])
-    }
-    setTrace([])
-    setHydrated(true)
-  }, [asin])
-
-  // Persist messages whenever they change. Skipped until hydration finishes
-  // so we don't clobber stored history with [].
-  useEffect(() => {
-    if (!hydrated) return
-    try {
-      if (messages.length === 0) {
-        sessionStorage.removeItem(historyKey(asin))
-      } else {
-        sessionStorage.setItem(historyKey(asin), JSON.stringify(messages))
-      }
-    } catch {
-      // sessionStorage may throw in private-mode browsers; ignore.
-    }
-  }, [messages, asin, hydrated])
-
   const clearChat = useCallback(() => {
-    setMessages([])
-    setTrace([])
-  }, [])
+    clearAssistant(asin)
+  }, [asin])
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -210,144 +170,33 @@ function AssistantPageContent() {
     [trace],
   )
 
-  const submit = async (query: string, overrideMode?: Mode) => {
-    if (!query.trim() || loading) return
-    // Auto-submit from a deep-link calls `setMode(prefillMode)` and `submit(...)`
-    // back-to-back. setState is async and submit's closure still has the old
-    // mode, so without this override the fetch body would send the wrong mode.
-    const submitMode = overrideMode ?? mode
-    setInput('')
-    setLoading(true)
-    setTrace([])
-    setMessages((prev) => [...prev, { role: 'user', content: query }])
-
-    try {
-      const res = await fetch(`${API_URL}/assistant/query`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ asin, query, mode: submitMode }),
-      })
-      if (!res.ok) {
-        throw new Error(`${res.status} ${res.statusText}`)
-      }
-
-      let recommendation: Recommendation | null = null
-      let quickAnswer: { content: string; sources: any[] } | null = null
-      let errored: string | null = null
-
-      for await (const { event, data } of readSSE(res)) {
-        const now = Date.now()
-        switch (event) {
-          case 'kind':
-            // backend echoes the chosen mode — no UI action needed, the
-            // frontend already knows it.
-            break
-          case 'started':
-            if (data?.product_name) setProductName(data.product_name)
-            break
-          case 'node_started':
-            setTrace((p) => [
-              ...p,
-              { kind: 'node_started', node: data.node, label: data.label, ts: now },
-            ])
-            break
-          case 'plan_ready':
-            setTrace((p) => [
-              ...p,
-              { kind: 'plan_ready', query_type: data.query_type, plan: data.plan, ts: now },
-            ])
-            break
-          case 'tool_call':
-            setTrace((p) => [
-              ...p,
-              { kind: 'tool_call', tool: data.tool, args: data.args || {}, ts: now },
-            ])
-            break
-          case 'tool_result':
-            setTrace((p) => [
-              ...p,
-              {
-                kind: 'tool_result',
-                tool: data.tool,
-                preview: data.result_preview || '',
-                ts: now,
-              },
-            ])
-            break
-          case 'executor_thought':
-            setTrace((p) => [
-              ...p,
-              { kind: 'executor_thought', content: data.content, ts: now },
-            ])
-            break
-          case 'replan':
-            setTrace((p) => [...p, { kind: 'replan', reason: data.reason, ts: now }])
-            break
-          case 'recommendation':
-            recommendation = data as Recommendation
-            break
-          case 'answer':
-            quickAnswer = {
-              content: data?.content ?? '',
-              sources: data?.sources ?? [],
-            }
-            break
-          case 'error':
-            errored = data?.message || 'Unknown error'
-            setTrace((p) => [...p, { kind: 'error', message: errored!, ts: now }])
-            break
-          case 'done':
-            setTrace((p) => [...p, { kind: 'done', ts: now }])
-            break
-          case 'node_completed':
-            // implicit
-            break
-        }
-      }
-
-      setMessages((prev) => {
-        if (errored) return [...prev, { role: 'assistant', error: errored }]
-        if (recommendation) return [...prev, { role: 'assistant', recommendation }]
-        if (quickAnswer)
-          return [
-            ...prev,
-            {
-              role: 'assistant',
-              content: quickAnswer.content,
-              sources: quickAnswer.sources,
-            },
-          ]
-        return [
-          ...prev,
-          { role: 'assistant', error: 'Assistant finished without a result' },
-        ]
-      })
-    } catch (e: any) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          error: e?.message || 'Network failure — is the backend running?',
-        },
-      ])
-    } finally {
-      setLoading(false)
-    }
-  }
+  // Thin wrapper around the store. The actual fetch + SSE loop runs in module
+  // scope (assistantStore.ts) so it isn't bound to this component's lifecycle —
+  // navigating away no longer cancels it, and the answer is persisted on return.
+  const submit = useCallback(
+    (query: string, overrideMode?: Mode) => {
+      const trimmed = query.trim()
+      if (!trimmed || loading) return
+      setInput('')
+      // Pass the mode explicitly: deep-link auto-submit sets mode and submits
+      // back-to-back, and setState hasn't flushed yet inside this closure.
+      submitAssistant(asin, trimmed, overrideMode ?? mode, API_URL)
+    },
+    [asin, mode, loading],
+  )
 
   // Auto-submit support for dashboard deep-links: /assistant?asin=…&q=…&mode=copilot.
-  // Fires once per unique `q` value, after sessionStorage hydration finishes,
-  // so the new turn is appended to (not racing with) any existing history.
+  // Fires once per unique `q` value. The store appends to whatever history is
+  // already loaded for this ASIN, so there's no hydration race to wait on.
   // After submit we strip `q`/`mode` from the URL so back-button doesn't replay.
   useEffect(() => {
-    if (!hydrated || !prefillQuery || loading) return
+    if (!prefillQuery || loading) return
     if (lastAutoSubmittedRef.current === prefillQuery) return
 
     if (prefillMode && prefillMode !== mode) {
       setMode(prefillMode)
     }
     lastAutoSubmittedRef.current = prefillQuery
-    // Pass prefillMode explicitly — setMode above hasn't flushed yet.
     submit(prefillQuery, prefillMode ?? mode)
 
     const params = new URLSearchParams(searchParams.toString())
@@ -356,7 +205,7 @@ function AssistantPageContent() {
     const cleaned = params.toString()
     router.replace(cleaned ? `${pathname}?${cleaned}` : pathname, { scroll: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hydrated, prefillQuery, prefillMode])
+  }, [prefillQuery, prefillMode])
 
   const samples = SAMPLE_QUERIES[mode]
 
