@@ -6,10 +6,9 @@ __pycache__/
 .DS_Store
 data/raw/raw/raw/
 data/raw/raw/processed/
-.ipynb_checkpoints/frontend/node_modules/
+.ipynb_checkpoints/
 frontend/.next/
 frontend/.env.local
-frontend/.next/
 frontend/node_modules/
 
 .agents/
