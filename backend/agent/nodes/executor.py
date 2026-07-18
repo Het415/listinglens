@@ -19,7 +19,13 @@ from ..schemas import AgentState
 
 
 def _model() -> str:
-    return os.getenv("AGENT_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+    # The executor makes several short "which tool next?" calls per question,
+    # so it runs on its own smaller/faster model (and its own Groq daily
+    # bucket) to keep the 70B AGENT_MODEL budget free for the planner and
+    # synthesizer. Still Llama-family, so the JSON tool_calls tuning below
+    # stays valid. Independent default — does NOT fall back to AGENT_MODEL,
+    # so the bucket split holds even when only AGENT_MODEL is configured.
+    return os.getenv("EXECUTOR_MODEL", "llama-3.1-8b-instant")
 
 
 def make_executor_node(tools):

@@ -216,7 +216,7 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         "",
         f"- **Variant:** `{variant}`",
         f"- **Queries:** {summary['n_queries']} ({summary['n_success']} success, {summary['n_errors']} errors)",
-        f"- **Agent model:** `{os.getenv('AGENT_MODEL', 'meta-llama/llama-4-scout-17b-16e-instruct')}`",
+        f"- **Agent model:** `{os.getenv('AGENT_MODEL', 'llama-3.3-70b-versatile')}`",
         f"- **Judge model:** `{_judge_label()}`",
         "",
         "## Summary",

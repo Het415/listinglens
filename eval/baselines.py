@@ -32,7 +32,7 @@ from backend.mcp_server.tools._loader import supported_asins
 
 
 def _model() -> str:
-    return os.getenv("AGENT_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+    return os.getenv("AGENT_MODEL", "llama-3.3-70b-versatile")
 
 
 # ── no_tool baseline ──────────────────────────────────────────────────────────

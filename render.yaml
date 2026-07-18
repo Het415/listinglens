@@ -27,10 +27,15 @@ services:
       - key: LANGSMITH_PROJECT
         value: "listinglens-copilot"
       # AGENT_MODEL pins the model used by the multi-node agent. Defaults
-      # to Llama 4 Scout on Groq which is reliable for tool-calling.
+      # to Llama 3.3 70B on Groq which is reliable for tool-calling.
       # Override only if Groq deprecates the model.
       - key: AGENT_MODEL
-        value: "meta-llama/llama-4-scout-17b-16e-instruct"
+        value: "llama-3.3-70b-versatile"
+      # Executor uses a smaller/faster model on its own Groq daily bucket so
+      # its multi-step tool-selection calls don't drain the planner/synthesizer
+      # (AGENT_MODEL) budget — keeps demos clear of daily rate-limit errors.
+      - key: EXECUTOR_MODEL
+        value: "llama-3.1-8b-instant"
       # Free-tier instance can't afford the post-boot preload sweep; keep
       # the lifespan minimal and let the frontend /warmup ping load the
       # demo ASIN on demand. Flip to "1" if you move to a paid plan with
