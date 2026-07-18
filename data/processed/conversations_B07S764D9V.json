@@ -1,0 +1,408 @@
+{
+  "asin": "B07S764D9V",
+  "n_conversations": 10,
+  "intent_distribution": {
+    "Account & Access": 7,
+    "Delivery": 1,
+    "Invoice & Billing": 1,
+    "Contact / Human Agent": 1
+  },
+  "resolution_rate": 0.2,
+  "escalation_rate": 0.0,
+  "avg_turns": 7.6,
+  "avg_sentiment_delta": 1.2869,
+  "avg_sentiment_trajectory": {
+    "start": -0.7591,
+    "middle": -0.1644,
+    "end": 0.4608
+  },
+  "topics": [
+    {
+      "topic_id": 1,
+      "label": "wired earbuds, wired, panasonic ergofit",
+      "keywords": [
+        "wired earbuds",
+        "wired",
+        "panasonic ergofit",
+        "ergofit",
+        "ergofit wired",
+        "panasonic",
+        "earbuds",
+        "hi"
+      ],
+      "size": 9,
+      "share": 0.9
+    },
+    {
+      "topic_id": 0,
+      "label": "error message, earbuds month, paired",
+      "keywords": [
+        "error message",
+        "earbuds month",
+        "paired",
+        "paired device",
+        "panasonic earbuds",
+        "month great",
+        "month",
+        "device error"
+      ],
+      "size": 1,
+      "share": 0.1
+    }
+  ],
+  "sample_conversations": [
+    {
+      "conversation_id": "B07S764D9V-conv-000",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.5045,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Sound Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.8783,
+      "sentiment_end": 0.7542,
+      "sentiment_delta": 1.6325,
+      "sentiment_trajectory": [
+        -0.8783,
+        -0.7135,
+        0.489,
+        0.7542
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-001",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.5753,
+      "intent_source": "model",
+      "intent_seed": "INVOICE",
+      "theme_seed": "Value for Money",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 10,
+      "sentiment_start": -0.6356,
+      "sentiment_end": 0.321,
+      "sentiment_delta": 0.9566,
+      "sentiment_trajectory": [
+        -0.6356,
+        -0.7578,
+        -0.839,
+        0.5317,
+        0.321
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-002",
+      "channel": "email",
+      "intent": "Delivery",
+      "intent_category": "DELIVERY",
+      "intent_confidence": 0.2187,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Comfort & Fit",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.9361,
+      "sentiment_end": 0.9838,
+      "sentiment_delta": 1.9199,
+      "sentiment_trajectory": [
+        -0.9361,
+        0.1659,
+        -0.098,
+        0.9838
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-004",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.4907,
+      "intent_source": "model",
+      "intent_seed": "ACCOUNT",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.772,
+      "sentiment_end": 0.976,
+      "sentiment_delta": 1.748,
+      "sentiment_trajectory": [
+        -0.772,
+        -0.9382,
+        -0.7611,
+        0.976
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-006",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.4581,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 6,
+      "sentiment_start": -0.9372,
+      "sentiment_end": -0.6439,
+      "sentiment_delta": 0.2933,
+      "sentiment_trajectory": [
+        -0.9372,
+        -0.8849,
+        -0.6439
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-007",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.2968,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.9311,
+      "sentiment_end": 0.9658,
+      "sentiment_delta": 1.8969,
+      "sentiment_trajectory": [
+        -0.9311,
+        -0.8766,
+        0.062,
+        0.9658
+      ]
+    }
+  ],
+  "conversations": [
+    {
+      "conversation_id": "B07S764D9V-conv-000",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.5045,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Sound Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.8783,
+      "sentiment_end": 0.7542,
+      "sentiment_delta": 1.6325,
+      "sentiment_trajectory": [
+        -0.8783,
+        -0.7135,
+        0.489,
+        0.7542
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-001",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.5753,
+      "intent_source": "model",
+      "intent_seed": "INVOICE",
+      "theme_seed": "Value for Money",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 10,
+      "sentiment_start": -0.6356,
+      "sentiment_end": 0.321,
+      "sentiment_delta": 0.9566,
+      "sentiment_trajectory": [
+        -0.6356,
+        -0.7578,
+        -0.839,
+        0.5317,
+        0.321
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-002",
+      "channel": "email",
+      "intent": "Delivery",
+      "intent_category": "DELIVERY",
+      "intent_confidence": 0.2187,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Comfort & Fit",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.9361,
+      "sentiment_end": 0.9838,
+      "sentiment_delta": 1.9199,
+      "sentiment_trajectory": [
+        -0.9361,
+        0.1659,
+        -0.098,
+        0.9838
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-004",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.4907,
+      "intent_source": "model",
+      "intent_seed": "ACCOUNT",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.772,
+      "sentiment_end": 0.976,
+      "sentiment_delta": 1.748,
+      "sentiment_trajectory": [
+        -0.772,
+        -0.9382,
+        -0.7611,
+        0.976
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-006",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.4581,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 6,
+      "sentiment_start": -0.9372,
+      "sentiment_end": -0.6439,
+      "sentiment_delta": 0.2933,
+      "sentiment_trajectory": [
+        -0.9372,
+        -0.8849,
+        -0.6439
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-007",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.2968,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.9311,
+      "sentiment_end": 0.9658,
+      "sentiment_delta": 1.8969,
+      "sentiment_trajectory": [
+        -0.9311,
+        -0.8766,
+        0.062,
+        0.9658
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-008",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.5624,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Setup & Installation",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.8841,
+      "sentiment_end": 0.953,
+      "sentiment_delta": 1.8371,
+      "sentiment_trajectory": [
+        -0.8841,
+        -0.7491,
+        -0.9095,
+        0.953
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-009",
+      "channel": "phone",
+      "intent": "Invoice & Billing",
+      "intent_category": "INVOICE",
+      "intent_confidence": 0.2343,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Connectivity",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 6,
+      "sentiment_start": -0.7117,
+      "sentiment_end": 0.2481,
+      "sentiment_delta": 0.9598,
+      "sentiment_trajectory": [
+        -0.7117,
+        0.2261,
+        0.2481
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-010",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.2006,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Comfort & Fit",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 9,
+      "sentiment_start": -0.9214,
+      "sentiment_end": 0.9213,
+      "sentiment_delta": 1.8427,
+      "sentiment_trajectory": [
+        -0.9214,
+        -0.7747,
+        -0.91,
+        0.8336,
+        0.9213
+      ]
+    },
+    {
+      "conversation_id": "B07S764D9V-conv-011",
+      "channel": "phone",
+      "intent": "Contact / Human Agent",
+      "intent_category": "CONTACT",
+      "intent_confidence": 0.3381,
+      "intent_source": "model",
+      "intent_seed": "SHIPPING",
+      "theme_seed": "Features & Usability",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 6,
+      "sentiment_start": -0.6529,
+      "sentiment_end": -0.8711,
+      "sentiment_delta": -0.2182,
+      "sentiment_trajectory": [
+        -0.6529,
+        0.2869,
+        -0.8711
+      ]
+    }
+  ]
+}

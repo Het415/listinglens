@@ -20,6 +20,11 @@ scikit-learn>=1.5,<1.9
 scipy>=1.11,<2
 xgboost>=2.0,<4
 
+# Analytical SQL warehouse. backend/mcp_server/tools/_loader.py reads from
+# data/processed/listinglens.duckdb when present and falls back to the source
+# files otherwise, so this is a safe runtime dependency.
+duckdb>=1.0,<2
+
 # RAG — pin HF stack so pip does not downgrade transformers
 faiss-cpu>=1.8,<2
 sentence-transformers==2.7.0

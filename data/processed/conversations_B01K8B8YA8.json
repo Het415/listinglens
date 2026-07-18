@@ -1,0 +1,456 @@
+{
+  "asin": "B01K8B8YA8",
+  "n_conversations": 12,
+  "intent_distribution": {
+    "Account & Access": 8,
+    "Refund": 2,
+    "Delivery": 1,
+    "Order Management": 1
+  },
+  "resolution_rate": 0.1667,
+  "escalation_rate": 0.1667,
+  "avg_turns": 7.92,
+  "avg_sentiment_delta": 1.5399,
+  "avg_sentiment_trajectory": {
+    "start": -0.7416,
+    "middle": -0.0915,
+    "end": 0.7284
+  },
+  "topics": [
+    {
+      "topic_id": 0,
+      "label": "dot, echo, echo dot",
+      "keywords": [
+        "dot",
+        "echo",
+        "echo dot",
+        "2nd",
+        "2nd generation",
+        "generation",
+        "dot 2nd",
+        "battery"
+      ],
+      "size": 9,
+      "share": 0.75
+    },
+    {
+      "topic_id": 1,
+      "label": "won, fi, wi",
+      "keywords": [
+        "won",
+        "fi",
+        "wi",
+        "wi fi",
+        "keeps",
+        "just",
+        "echo dot",
+        "echo"
+      ],
+      "size": 3,
+      "share": 0.25
+    }
+  ],
+  "sample_conversations": [
+    {
+      "conversation_id": "B01K8B8YA8-conv-000",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3829,
+      "intent_source": "model",
+      "intent_seed": "DELIVERY",
+      "theme_seed": "Sound Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.7533,
+      "sentiment_end": 0.7001,
+      "sentiment_delta": 1.4534,
+      "sentiment_trajectory": [
+        -0.7533,
+        -0.8691,
+        -0.6336,
+        0.7001
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-001",
+      "channel": "phone",
+      "intent": "Delivery",
+      "intent_category": "DELIVERY",
+      "intent_confidence": 0.2223,
+      "intent_source": "model",
+      "intent_seed": "CONTACT",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.9431,
+      "sentiment_end": 0.9751,
+      "sentiment_delta": 1.9182,
+      "sentiment_trajectory": [
+        -0.9431,
+        -0.3641,
+        -0.7753,
+        0.9751
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-002",
+      "channel": "phone",
+      "intent": "Order Management",
+      "intent_category": "ORDER",
+      "intent_confidence": 0.2059,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Battery Life",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.1866,
+      "sentiment_end": -0.2552,
+      "sentiment_delta": -0.0686,
+      "sentiment_trajectory": [
+        -0.1866,
+        0.1119,
+        -0.8888,
+        -0.2552
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-003",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.2463,
+      "intent_source": "model",
+      "intent_seed": "PAYMENT",
+      "theme_seed": "Connectivity",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.8322,
+      "sentiment_end": 0.9162,
+      "sentiment_delta": 1.7484,
+      "sentiment_trajectory": [
+        -0.8322,
+        -0.7256,
+        -0.7693,
+        0.9162
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-004",
+      "channel": "chat",
+      "intent": "Refund",
+      "intent_category": "REFUND",
+      "intent_confidence": 0.6279,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": true,
+      "n_turns": 7,
+      "sentiment_start": -0.924,
+      "sentiment_end": 0.3993,
+      "sentiment_delta": 1.3233,
+      "sentiment_trajectory": [
+        -0.924,
+        -0.9291,
+        -0.8812,
+        0.3993
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-005",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3746,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Value for Money",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 10,
+      "sentiment_start": -0.9182,
+      "sentiment_end": 0.3522,
+      "sentiment_delta": 1.2704,
+      "sentiment_trajectory": [
+        -0.9182,
+        -0.8999,
+        -0.4059,
+        0.9691,
+        0.3522
+      ]
+    }
+  ],
+  "conversations": [
+    {
+      "conversation_id": "B01K8B8YA8-conv-000",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3829,
+      "intent_source": "model",
+      "intent_seed": "DELIVERY",
+      "theme_seed": "Sound Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.7533,
+      "sentiment_end": 0.7001,
+      "sentiment_delta": 1.4534,
+      "sentiment_trajectory": [
+        -0.7533,
+        -0.8691,
+        -0.6336,
+        0.7001
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-001",
+      "channel": "phone",
+      "intent": "Delivery",
+      "intent_category": "DELIVERY",
+      "intent_confidence": 0.2223,
+      "intent_source": "model",
+      "intent_seed": "CONTACT",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.9431,
+      "sentiment_end": 0.9751,
+      "sentiment_delta": 1.9182,
+      "sentiment_trajectory": [
+        -0.9431,
+        -0.3641,
+        -0.7753,
+        0.9751
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-002",
+      "channel": "phone",
+      "intent": "Order Management",
+      "intent_category": "ORDER",
+      "intent_confidence": 0.2059,
+      "intent_source": "model",
+      "intent_seed": "FEEDBACK",
+      "theme_seed": "Battery Life",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.1866,
+      "sentiment_end": -0.2552,
+      "sentiment_delta": -0.0686,
+      "sentiment_trajectory": [
+        -0.1866,
+        0.1119,
+        -0.8888,
+        -0.2552
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-003",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.2463,
+      "intent_source": "model",
+      "intent_seed": "PAYMENT",
+      "theme_seed": "Connectivity",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.8322,
+      "sentiment_end": 0.9162,
+      "sentiment_delta": 1.7484,
+      "sentiment_trajectory": [
+        -0.8322,
+        -0.7256,
+        -0.7693,
+        0.9162
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-004",
+      "channel": "chat",
+      "intent": "Refund",
+      "intent_category": "REFUND",
+      "intent_confidence": 0.6279,
+      "intent_source": "model",
+      "intent_seed": "CANCEL",
+      "theme_seed": "Build Quality",
+      "resolved": false,
+      "escalated": true,
+      "n_turns": 7,
+      "sentiment_start": -0.924,
+      "sentiment_end": 0.3993,
+      "sentiment_delta": 1.3233,
+      "sentiment_trajectory": [
+        -0.924,
+        -0.9291,
+        -0.8812,
+        0.3993
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-005",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3746,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Value for Money",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 10,
+      "sentiment_start": -0.9182,
+      "sentiment_end": 0.3522,
+      "sentiment_delta": 1.2704,
+      "sentiment_trajectory": [
+        -0.9182,
+        -0.8999,
+        -0.4059,
+        0.9691,
+        0.3522
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-006",
+      "channel": "phone",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3985,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Setup & Installation",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 10,
+      "sentiment_start": -0.8448,
+      "sentiment_end": 0.9561,
+      "sentiment_delta": 1.8009,
+      "sentiment_trajectory": [
+        -0.8448,
+        -0.8469,
+        0.2051,
+        -0.7153,
+        0.9561
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-007",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.7029,
+      "intent_source": "model",
+      "intent_seed": "CONTACT",
+      "theme_seed": "Setup & Installation",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.8246,
+      "sentiment_end": 0.94,
+      "sentiment_delta": 1.7646,
+      "sentiment_trajectory": [
+        -0.8246,
+        -0.8519,
+        0.9351,
+        0.94
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-008",
+      "channel": "email",
+      "intent": "Refund",
+      "intent_category": "REFUND",
+      "intent_confidence": 0.4268,
+      "intent_source": "model",
+      "intent_seed": "REFUND",
+      "theme_seed": "Setup & Installation",
+      "resolved": false,
+      "escalated": true,
+      "n_turns": 8,
+      "sentiment_start": -0.8574,
+      "sentiment_end": 0.8829,
+      "sentiment_delta": 1.7403,
+      "sentiment_trajectory": [
+        -0.8574,
+        -0.9046,
+        0.5828,
+        0.8829
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-009",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.8532,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Comfort & Fit",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.8673,
+      "sentiment_end": 0.9744,
+      "sentiment_delta": 1.8417,
+      "sentiment_trajectory": [
+        -0.8673,
+        -0.6351,
+        0.9259,
+        0.9744
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-010",
+      "channel": "chat",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.3546,
+      "intent_source": "model",
+      "intent_seed": "ORDER",
+      "theme_seed": "Customer Service",
+      "resolved": true,
+      "escalated": false,
+      "n_turns": 7,
+      "sentiment_start": -0.8816,
+      "sentiment_end": 0.9783,
+      "sentiment_delta": 1.8599,
+      "sentiment_trajectory": [
+        -0.8816,
+        -0.4559,
+        0.8098,
+        0.9783
+      ]
+    },
+    {
+      "conversation_id": "B01K8B8YA8-conv-011",
+      "channel": "email",
+      "intent": "Account & Access",
+      "intent_category": "ACCOUNT",
+      "intent_confidence": 0.4461,
+      "intent_source": "model",
+      "intent_seed": "REFUND",
+      "theme_seed": "Battery Life",
+      "resolved": false,
+      "escalated": false,
+      "n_turns": 8,
+      "sentiment_start": -0.9039,
+      "sentiment_end": 0.9219,
+      "sentiment_delta": 1.8258,
+      "sentiment_trajectory": [
+        -0.9039,
+        -0.6909,
+        -0.64,
+        0.9219
+      ]
+    }
+  ]
+}

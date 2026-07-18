@@ -9,12 +9,16 @@ import {
   MessageSquareText,
   GitCompare,
   Sparkles,
+  MessagesSquare,
+  FileText,
 } from 'lucide-react'
 
 const navItems = [
   { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/dashboard/reviews', label: 'Review Analysis', icon: MessageSquareText },
+  { href: '/dashboard/conversations', label: 'Conversations', icon: MessagesSquare },
   { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
+  { href: '/dashboard/brief', label: 'Executive Brief', icon: FileText },
   { href: '/assistant', label: 'AI Assistant', icon: Sparkles },
 ]
 
@@ -22,30 +26,14 @@ function useAsinHrefs() {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   const currentAsin = searchParams.get('asin')
-
-  const withAsin = (base: string) =>
-    currentAsin ? `${base}?asin=${encodeURIComponent(currentAsin)}` : base
-
-  return {
-    pathname,
-    compareHref: withAsin('/dashboard/compare'),
-    reviewsHref: withAsin('/dashboard/reviews'),
-    assistantHref: withAsin('/assistant'),
-  }
+  return { pathname, currentAsin }
 }
 
-function resolveHref(
-  itemHref: string,
-  hrefs: {
-    compareHref: string
-    reviewsHref: string
-    assistantHref: string
-  },
-) {
-  if (itemHref === '/dashboard/compare') return hrefs.compareHref
-  if (itemHref === '/dashboard/reviews') return hrefs.reviewsHref
-  if (itemHref === '/assistant') return hrefs.assistantHref
-  return itemHref
+// Carry the selected ASIN across navigation for every ASIN-scoped route.
+function resolveHref(itemHref: string, currentAsin: string | null) {
+  if (!currentAsin) return itemHref
+  if (itemHref === '/dashboard') return itemHref // dashboard root reads its own default
+  return `${itemHref}?asin=${encodeURIComponent(currentAsin)}`
 }
 
 // useSearchParams() forces a Suspense boundary or the whole page bails out of
@@ -60,7 +48,7 @@ export function Sidebar() {
 }
 
 function SidebarInner() {
-  const { pathname, ...hrefs } = useAsinHrefs()
+  const { pathname, currentAsin } = useAsinHrefs()
 
   return (
     <aside className="hidden md:flex w-[220px] flex-col bg-background border-r border-border-subtle h-screen sticky top-0">
@@ -73,13 +61,15 @@ function SidebarInner() {
       <nav className="flex-1 py-4">
         <ul className="space-y-1">
           {navItems.map((item) => {
-            const href = resolveHref(item.href, hrefs)
+            const href = resolveHref(item.href, currentAsin)
             const isActive =
               pathname === item.href ||
               (item.href === '/dashboard' &&
                 pathname.startsWith('/dashboard') &&
                 pathname !== '/dashboard/reviews' &&
-                pathname !== '/dashboard/compare')
+                pathname !== '/dashboard/conversations' &&
+                pathname !== '/dashboard/compare' &&
+                pathname !== '/dashboard/brief')
             const Icon = item.icon
 
             return (
@@ -116,7 +106,7 @@ export function MobileNav() {
 }
 
 function MobileNavInner() {
-  const { pathname, ...hrefs } = useAsinHrefs()
+  const { pathname, currentAsin } = useAsinHrefs()
 
   const mobileItems = navItems.slice(0, 5)
 
@@ -124,7 +114,7 @@ function MobileNavInner() {
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background-secondary border-t border-border-subtle z-50">
       <ul className="flex justify-around py-2">
         {mobileItems.map((item) => {
-          const href = resolveHref(item.href, hrefs)
+          const href = resolveHref(item.href, currentAsin)
           const isActive =
             pathname === item.href ||
             (item.href === '/dashboard' && pathname.startsWith('/dashboard'))

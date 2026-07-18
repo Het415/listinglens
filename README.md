@@ -25,6 +25,17 @@ ListingLens Copilot does. Ask it a question, and the agent:
 
 The whole reasoning trace is visible live in the UI, so you can see *why* the agent reached its conclusion — not just *what* it concluded.
 
+### Conversational customer-care analytics
+
+Beyond single-turn reviews, ListingLens analyzes multi-turn **support conversations** — the same NLP that a contact-center / reservations team runs on call transcripts and chat logs:
+
+- **Intent classification** — a scikit-learn model (TF-IDF word+char n-grams → LogisticRegression) trained on the real [Bitext](https://huggingface.co/datasets/bitext/Bitext-customer-support-llm-chatbot-training-dataset) support dataset, with a Groq **LLM fallback** for low-confidence / out-of-distribution messages. Try it live on the Conversations page. Training report: [`eval/intent_report.md`](eval/intent_report.md).
+- **Sentiment trajectory** — per-turn sentiment across a conversation, so you can see whether an interaction *recovered* (good service) or *escalated*.
+- **Topic modeling** — embeddings-based (MiniLM → KMeans → c-TF-IDF), a model-based upgrade over keyword matching.
+- **Executive Brief** — an LLM-synthesized, exec-ready one-pager that fuses review signals + return risk + conversation analytics into quantified findings and prioritized actions, exportable to PDF.
+
+All of it is queryable as **SQL** via an embedded **DuckDB** warehouse (`scripts/build_duckdb.py`); see [`notebooks/eda.ipynb`](notebooks/eda.ipynb) and [`docs/sql_examples.sql`](docs/sql_examples.sql).
+
 ---
 
 ## Try it

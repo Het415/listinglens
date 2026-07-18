@@ -142,6 +142,12 @@ class WarmupRequest(BaseModel):
     asin: str | None = None
 
 
+class IntentClassifyRequest(BaseModel):
+    text: str
+    # When true, low-confidence sklearn guesses defer to the Groq LLM fallback.
+    allow_llm: bool = True
+
+
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
 def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
@@ -360,6 +366,59 @@ def get_cached_reviews(asin: str):
         "total_reviews": len(reviews),
         "reviews": reviews,
     }
+
+
+@app.get("/conversations/{asin}")
+def get_conversation_analytics(asin: str):
+    """Precomputed support-conversation analytics for an ASIN.
+
+    Intent distribution, resolution/escalation rates, average sentiment
+    trajectory, model-based topics, and sample conversations. Produced offline
+    by scripts/precompute_conversations.py and served from disk.
+    """
+    from backend.mcp_server.tools._loader import asin_conversation_summary, supported_asins
+    try:
+        summary = asin_conversation_summary(asin)
+    except FileNotFoundError:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No conversation analytics for ASIN {asin}.",
+        )
+    # Surface the product name so the UI can show product-aware examples.
+    summary["product_name"] = supported_asins().get(asin, asin)
+    return summary
+
+
+@app.post("/intent/classify")
+def classify_intent(request: IntentClassifyRequest):
+    """Live single-message intent classification (trained model + LLM fallback).
+
+    Powers the interactive 'try the classifier' box on the conversations view.
+    """
+    from src.intent_classifier import predict_intent
+    text = (request.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text must not be empty")
+    return predict_intent(text, allow_llm=request.allow_llm)
+
+
+@app.get("/brief/{asin}")
+def get_executive_brief(asin: str):
+    """LLM-generated executive brief for an ASIN (cached in-memory).
+
+    Synthesizes review summary + return-risk + conversation analytics into a
+    quantified, decision-oriented one-pager.
+    """
+    cache = app_state.setdefault("brief_cache", {})
+    if asin in cache:
+        return cache[asin]
+    from backend.brief.generate import generate_brief
+    try:
+        result = generate_brief(asin)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"No data for ASIN {asin}.")
+    cache[asin] = result
+    return result
 
 
 @app.post("/agent/query")

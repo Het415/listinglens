@@ -9,3 +9,8 @@ pytest>=8.0,<9
 pytest-asyncio>=0.23,<1
 httpx>=0.27,<1          # FastAPI TestClient transitive
 fakeredis>=2.21,<3      # in-process Redis for cache tests
+
+# Intent-model training + EDA (scripts/train_intent_model.py, notebooks/eda.ipynb).
+# Not needed to serve the app — kept out of prod requirements.txt.
+matplotlib>=3.7,<4
+jupyter>=1.0            # to run notebooks/eda.ipynb locally

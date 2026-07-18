@@ -9,7 +9,14 @@ data/raw/raw/processed/
 .ipynb_checkpoints/
 frontend/.next/
 frontend/.env.local
+frontend/.env*.local
 frontend/node_modules/
+
+# DuckDB analytical warehouse — rebuildable from the source files via
+# `python -m scripts.build_duckdb`. Kept out of git to avoid binary bloat and
+# stale-data risk (the loader falls back to the authoritative files when absent).
+data/processed/*.duckdb
+data/processed/*.duckdb.wal
 
 .agents/
 .deepeval/
