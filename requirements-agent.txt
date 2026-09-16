@@ -1,25 +1,25 @@
-# ListingLens Copilot — agent-specific dependencies.
+# ListingLens Copilot — eval-only extras.
 #
-# These extend the main requirements.txt with what the agent layer needs.
-# Kept separate so the existing Render deployment isn't forced to install
-# the agent stack until the /agent endpoint is wired up (Stage 5).
+# These layer on top of requirements.txt; they are not a standalone set.
+# Everything the app needs at runtime — including the agent layer
+# (langgraph, mcp, instructor) — lives in requirements.txt and is installed
+# by the Render build. This file holds only what the offline evaluation
+# harness needs, which is why it stays out of the production install.
 #
-# Install locally with:
-#   uv venv .venv
-#   source .venv/bin/activate
-#   uv pip install -r requirements.txt -r requirements-agent.txt
+# Do not re-add runtime pins here. Duplicating a pin across both files is
+# how the two environments drifted apart last time: requirements.txt gets
+# bumped, this file doesn't, and Render ends up resolving something the
+# eval job never saw.
 #
-# All version pins were validated to NOT downgrade the existing langchain v1
-# ecosystem (see plan file for the dry-run output).
-
-# Agent orchestration (LangGraph v1, released alongside LangChain v1)
-langgraph>=1.0,<2
-
-# Model Context Protocol — exposes tools as a stdio server
-mcp>=1.0
-
-# Structured outputs for the Synthesizer node
-instructor>=1.7
+# Used by:
+#   - .github/workflows/eval-on-pr.yml (smoke eval on PRs)
+#   - local eval runs:
+#       uv venv .venv
+#       source .venv/bin/activate
+#       uv pip install -r requirements.txt -r requirements-agent.txt
+#
+# Both pins were validated to NOT downgrade the langchain v1 ecosystem
+# pinned in requirements.txt.
 
 # Evaluation harness (DeepEval handles LLM-as-judge primitives)
 deepeval>=2.0

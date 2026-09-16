@@ -398,8 +398,9 @@ The Planner, Executor, Synthesizer prompts only need the *tool descriptions* upd
 ```
 Repo root
 ├── app.py                                       # FastAPI: all endpoints (v1 + v2)
-├── render.yaml                                  # Deploy config; agent deps in requirements-agent.txt
-├── requirements.txt + requirements-agent.txt    # Split so v2 deps don't bloat v1 deploys until needed
+├── render.yaml                                  # Deploy config; single install step from requirements.txt
+├── requirements.txt                             # All runtime deps, agent layer included
+├── requirements-agent.txt                       # Eval-only extras (deepeval, langsmith); not deployed
 │
 ├── src/                          # v1 — untouched, agent tools wrap these
 │   ├── ingest.py                 # 12 SUPPORTED_ASINS catalog
