@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
-import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight } from 'lucide-react'
+import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight, Sparkles } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 
@@ -98,7 +98,7 @@ export default function LandingPage() {
         return
       }
 
-      setLoadingStep(2) // "Scoring images..."
+      setLoadingStep(2) // "Building knowledge base..."
       const data = await response.json()
       
       setLoadingStep(3) // "Generating insights..."
@@ -150,8 +150,8 @@ export default function LandingPage() {
                 Know exactly why your product fails.
               </h1>
               <p className="text-base md:text-lg text-text-secondary max-w-xl leading-relaxed">
-                Paste any Amazon product URL. Get multimodal AI analysis of your listing quality, 
-                return risk, and every customer complaint — in under 30 seconds.
+                Paste any Amazon product URL. Get an AI analysis of review sentiment,
+                return risk, and every customer complaint — with an agent that cites its sources.
               </p>
             </div>
 
@@ -248,7 +248,7 @@ export default function LandingPage() {
               </div>
               <div className="flex items-center gap-2">
                 <Cpu className="w-4 h-4 text-accent-blue" />
-                <span>Vision + NLP + LLM</span>
+                <span>NLP + XGBoost + LLM agent</span>
               </div>
               <div className="flex items-center gap-2">
                 <Shield className="w-4 h-4 text-accent-teal" />
@@ -259,9 +259,9 @@ export default function LandingPage() {
             {/* Feature Cards */}
             <div className="grid sm:grid-cols-3 gap-4 pt-4">
               <FeatureCard
-                icon={<Eye className="w-6 h-6 text-accent-blue" />}
-                title="Visual Quality Score"
-                description="CLIP model analyzes your product images for lighting, composition, and presentation quality against category benchmarks"
+                icon={<Sparkles className="w-6 h-6 text-accent-blue" />}
+                title="Agentic Copilot"
+                description="Ask a question in plain English. The agent plans which of its five tools to call, runs them, and returns a decision with every claim cited back to a review"
                 delay="stagger-1"
               />
               <FeatureCard

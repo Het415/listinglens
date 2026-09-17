@@ -27,8 +27,8 @@ const instrumentSerif = Instrument_Serif({
 })
 
 export const metadata: Metadata = {
-  title: 'ListingLens - Multimodal Product Intelligence Platform',
-  description: 'AI-powered analysis for Amazon sellers. Understand why products fail, predict return risk, and optimize listings with multimodal AI.',
+  title: 'ListingLens - Agentic Product Intelligence Platform',
+  description: 'AI-powered analysis for Amazon sellers. Understand why products fail, predict return risk, and optimize listings with an agent that cites its evidence.',
   keywords: ['Amazon', 'seller tools', 'product analysis', 'AI', 'return prediction', 'listing optimization'],
   icons: {
     icon: '/favicon.svg',
