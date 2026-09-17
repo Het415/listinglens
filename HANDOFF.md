@@ -30,9 +30,10 @@ What changed, all deployed and live at `1d388b75`:
 - **Eval baseline re-established**: first judged 30-query run since May. Error rate
   33.3% → 3.3%, decision accuracy 40% → 60%, all four judge dimensions up.
 
-**Next pickup is the instructor retry fix below — fully diagnosed, ready to implement.**
-The pre-existing feature queue (item #8, Competitor Compare) is untouched and still valid
-if you'd rather do product work.
+**Next pickup: the DEMO-READINESS PLAN below.** The goal is a project that demos live
+with no lag and nothing visibly unfinished, so it is ordered by demo impact. **P0 is the
+big one** — the warmup cron does not actually work, so the service is asleep when someone
+clicks the link (measured 32-81s cold starts). Everything else is smaller.
 
 ⚠️ **Your Render builds are not failing.** 2 failures in 59 deploys, both 2026-04-21.
 `deactivated` in Render's history means *superseded by a newer deploy*, not failed — a
@@ -59,7 +60,7 @@ session; don't re-derive it.
 - **`.env`** at repo root has `GROQ_API_KEY` and `HUGGINGFACE_API_KEY` set (eval reads these via `load_dotenv(override=True)` to outrace Claude Code's parent-shell key shadowing).
   - ⚠️ **`ANTHROPIC_API_KEY` is NOT in `.env`** — verified 2026-09-17. This file previously claimed it was. Consequence: the LLM-as-judge cannot run. `eval/run_eval.py` preflights the key and exits 1 with instructions, so judged runs fail fast rather than scoring zeros — but it means **no eval has been judged since 2026-05-18**. The 2026-09-15 post-fix run was `--no-judge`; its header claimed a judge model because the report advertised one unconditionally (since fixed). Add the key to `.env` before quoting any judge metric.
 - **Frontend:** `frontend/` — Next.js 16, React 19, Tailwind v4. `node_modules` may be sparse in some environments; run `npm install` if needed.
-- **Frontend env (production):** Vercel must have `NEXT_PUBLIC_API_URL=https://listinglens-api.onrender.com`. The `frontend/.env.example` and `frontend/.env.local` files in the repo are stale (point at a deprecated Railway URL) — do NOT trust them.
+- **Frontend env (production):** Vercel must have `NEXT_PUBLIC_API_URL=https://listinglens-api.onrender.com`. ~~`frontend/.env.example` and `frontend/.env.local` point at a deprecated Railway URL — do NOT trust them.~~ **Corrected 2026-09-17:** both now read `https://listinglens-api.onrender.com`. The warning was itself stale.
 
 ---
 
@@ -150,14 +151,115 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | open |
 | 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open |
 | 7 | Planner prompt tuning to fix launch-query over-confidence | open — judge scores now exist (2026-09-17) |
-| **10** | **Make `tool_use_failed` retryable (instructor predicate)** | **next pickup — diagnosed** |
-| 11 | Retrieval ranking: `evidence_relevance` is the weakest judge dimension (0.545) | open |
+| **12** | **Cold start: warmup cron doesn't actually run (~4h, not 10min)** | **P0 — do first** |
+| 10 | Make `tool_use_failed` retryable (instructor predicate) | P1 — diagnosed |
+| 13 | Delete/hide `/dashboard/visual` "coming soon" placeholder | P1 |
+| 11 | Retrieval ranking: `evidence_relevance` is the weakest judge dimension (0.545) | P3 |
 | 8 | Auto-populate Competitor Compare from `competitor_search`  | open (alternative pickup) |
 | 9 | Record the Loom demo (originally Stage 6) | open |
 
 ---
 
-## ★ Next pickup — make `tool_use_failed` retryable
+## ★ DEMO-READINESS PLAN — do these, in this order
+
+Goal: the project is **showable live in an interview with no lag and nothing visibly
+unfinished**. Ordered by demo impact, not by feature value. P0 alone is most of the win.
+
+### P0 — this is what kills a live demo
+
+**1. The service is asleep when your interviewer clicks the link.** (~15 min of work)
+
+`.github/workflows/warmup.yml` is configured `cron: '*/10 * * * *'`, but GitHub throttles
+scheduled workflows on free accounts and **actually runs it every ~4 hours** — measured
+gaps 2026-09-14→16: 212, 241, 322, 294, 137, 163, 187, 293, 326, 299, 141 min (median
+241). Render free tier sleeps after ~15 min idle, so the instance is down almost always.
+Measured cold starts on `/health` today: **32.7s and 81.3s**.
+
+The repo *looks* like it warms every 10 minutes. It does not. Do not trust the cron.
+
+Fix, cheapest first:
+- **External pinger** (cron-job.org / UptimeRobot / Better Uptime — all have free tiers):
+  `POST https://listinglens-api.onrender.com/warmup` with `{"asin":"B08XPWDSWW"}` every
+  5 minutes. External crons actually fire on schedule. This also pre-loads the demo ASIN's
+  FAISS index and MiniLM, so the *first* `/assistant/query` is fast too — the existing
+  workflow already posts the right payload, it just never runs.
+- Keep the GH cron as a backstop; harmless.
+- If you want certainty for a scheduled interview, Render **Starter ($7/mo) removes
+  spin-down entirely**. Worth one month's spend around interview season.
+
+**Rehearsal rule:** hit the site 2–3 minutes before any demo regardless. Verify with
+`curl -s -o /dev/null -w '%{time_total}s\n' https://listinglens-api.onrender.com/health`
+— under 1s means warm, 30s+ means it just woke up.
+
+### P1 — visible discrepancies an interviewer will land on
+
+**2. Delete or hide `/dashboard/visual`.** 19 lines rendering "Visual quality scoring
+coming soon...". A dead nav item is the fastest way to invite "so what's unfinished?".
+Remove the route and its nav entry (queue item #3). ~10 min.
+
+**3. Fix the `tool_use_failed` failure — 3.3% of queries error.** One in 30 agent runs
+dies visibly. Full diagnosis in the next section: instructor's retry predicate excludes
+`BadRequestError`, so `max_retries` (already 2) never engages. Recommended fix is adding
+the signature to `resilient_call` in `src/llm_config.py` so it fails over to the next
+model. ~30 min including a `--limit 8 --no-judge` verification run.
+
+### P2 — polish, do if time remains
+
+**4. Unify loading states** across `/dashboard/*` (queue #5) — currently spinner vs
+skeleton vs a third style. Agent runs take **p50 33s, p95 48s** (7/30 queries over 45s),
+so the loading experience *is* the experience for half a minute. The SSE stream already
+emits `node_started` / `tool_call` / `tool_result`; make sure every surface renders that
+progress rather than an indefinite spinner. This converts "it's laggy" into "it's showing
+me its reasoning", which is the whole pitch of the project.
+
+**5. Mobile pass on `/dashboard/*`** (queue #6). `/assistant` was done; the dashboard was
+not. Interviewers do open things on phones.
+
+### P3 — substance, for the questions they'll actually ask
+
+**6. `evidence_relevance` is your weakest judge dimension at 0.545** — consistent across
+runs (0.60 on a 3-query smoke, 0.545 over 30). With completeness 0.876 and
+anti-hallucination 0.811, the pattern is thorough, non-fabricated answers citing
+weakly-relevant evidence. That is retrieval ranking, not generation: look at
+`FILTERED_FETCH_K`, chunk size (300 chars is small), and the rating-filter path in
+`src/rag_chatbot.py`. This is the most defensible "here's what I'd improve next" answer
+you can give, because it is measured.
+
+**7. Planner over-confidence on launch queries** (queue #7) — judge scores now exist, so
+this is unblocked. Decision accuracy is 60%; trajectory recall (0.750) is lower than
+precision (0.865), meaning the agent calls fewer tools than the gold set expects.
+
+### Deliberately NOT before an interview
+
+- **Competitor Compare auto-populate** (#8). New surface area plus an unresolved honesty
+  problem — the mock competitor ASINs aren't in the analyzed catalog, so the UI would have
+  to visibly distinguish synthetic cards. High risk of introducing a fresh discrepancy.
+- **Loom demo** (#9). Record it *after* P0–P1, or you will re-record it.
+
+### Interview talking points, since the work is already done
+
+Lead with what is measured, not what is built:
+
+- **Reliability engineering**: Groq decommissioned an entire model family and took
+  production down. Response was per-stage fallback chains (`resilient_call`) plus a
+  preflight (`scripts/doctor.py`) that validates every pin against the live catalog.
+  Measured outcome: eval error rate 33.3% → 3.3%; 34 rate-limit failovers absorbed in one
+  30-query run with zero lost queries.
+- **Profiling over guessing**: the RAG path used 651MiB and was OOM-killed under a 512MB
+  cap. Profiling showed ~490MiB was *framework import overhead* (torch 212MiB,
+  sentence-transformers 276MiB) against an 87MiB model. Replacing it with onnxruntime cut
+  it to 380MiB and the image from 3.59GB to 2.48GB — while proving vector compatibility
+  at cosine 1.000000 against the committed indexes, so nothing had to be re-indexed.
+- **Knowing what "verified" means**: the embedding swap was validated by reconstructing
+  stored vectors from the FAISS index and re-embedding the source text, not by eyeballing
+  search results — because plausible-looking results are exactly what silent embedding
+  drift produces. `tests/test_onnx_embeddings.py` makes that a CI gate.
+- **Honest evaluation**: the eval had been reporting a judge model on runs where judging
+  never ran. Fixed the report, and the current numbers are a real judged baseline.
+
+---
+
+## Detail — make `tool_use_failed` retryable (P1 item 3)
 
 **Status: diagnosed, not implemented.** This was in progress when the session ended.
 
@@ -674,20 +776,27 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 
 ## How to start the next chat
 
-> Read `HANDOFF.md` in the repo root. Last session was infrastructure: production was
-> down from a Groq decommission and the local env had drifted from production — both
-> fixed, plus Python 3.13 alignment, embeddings moved off torch, and the eval judge
-> working again. Everything is committed, pushed and live at `1d388b75`.
+> Read `HANDOFF.md` in the repo root. Last session was infrastructure: production was down
+> from a Groq decommission of the entire Llama family, and the local environment had
+> drifted from what production installed. Both fixed, plus Python 3.13 alignment,
+> embeddings moved off torch, and the eval judge working for the first time since May.
+> Everything is committed, pushed and live.
 >
-> **Next pickup is the instructor `tool_use_failed` retry fix** — see the "Next pickup"
-> section; it's fully diagnosed down to the library line, with two implementation options
-> and a cheap repro. If you'd rather do product work, the feature queue (item #8,
-> Competitor Compare auto-populate) is untouched and still valid.
+> **Start with the "★ DEMO-READINESS PLAN" section.** The goal is a project that demos
+> live in an interview with no lag and nothing visibly unfinished, and the plan is ordered
+> by demo impact.
 >
-> Before anything LLM-related, run `python -m scripts.doctor` — it validates every model
-> pin and fallback chain against Groq's live catalog. Before quoting any eval number,
-> check `.env` has `ANTHROPIC_API_KEY` (it does now) or the judge silently doesn't run.
-> To check what is deployed, ask the Render API, not `/health` — that field lags by a
-> deploy (documented in the `health()` docstring).
+> **P0 is the one that matters**: `warmup.yml` claims `cron: '*/10 * * * *'` but GitHub
+> throttles it to roughly every 4 hours (measured), Render free tier sleeps after 15 min,
+> and cold starts measured 32-81s. An external pinger hitting `POST /warmup` every 5
+> minutes fixes it in about 15 minutes of work. Nothing else on the list comes close in
+> impact-per-effort.
+>
+> Standing rules, learned the hard way this session:
+> - Before anything LLM-related, run `python -m scripts.doctor`.
+> - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY` — without it the
+>   judge silently does not run, and reports used to advertise a judge anyway.
+> - To check what is deployed, ask the Render API, not `/health` — that field lags a
+>   deploy. And `deactivated` in Render's history means *superseded*, not failed.
 
 *End of handoff.*
