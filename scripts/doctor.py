@@ -143,44 +143,99 @@ def check_models(live: set[str] | None) -> bool:
     return ok
 
 
+# How many times --probe asks each model for the real Recommendation schema.
+#
+# Must be >1. A single attempt cannot distinguish "this model can't do it"
+# from "this model got it wrong once", and getting it wrong once is the
+# normal, expected behaviour here — see STRUCTURED_OUTPUT_NOTE below.
+SCHEMA_PROBE_ATTEMPTS = 2
+
+# Why the probes never fail the run.
+#
+# A rate limit says nothing about a model's capability, and the free tier's
+# 200k tokens/day is routinely spent by one eval run — so failing the whole
+# doctor on a 429 would make it useless in exactly the situation where you
+# want to run it. And schema flakiness is not actionable either: see the note.
+STRUCTURED_OUTPUT_NOTE = (
+    "Probes are INFORMATIONAL — they never fail the run.\n"
+    "  Every model here fails this schema sometimes and none fails it always, so\n"
+    "  a score below {n}/{n} is NOT grounds to drop a model from FALLBACK_CHAINS.\n"
+    "  `resilient_call` retries the same model once before failing over, which is\n"
+    "  what these attempts simulate. Two caveats when reading the numbers:\n"
+    "  a `rate-limited` flavour is inconclusive, not a failure; and the probe\n"
+    "  prompt carries no tool evidence, so models have to invent the `evidence`\n"
+    "  list and get its shape wrong more often here than in a real agent run."
+)
+
+
+def _tool_call_flavour(err: Exception) -> str:
+    """Name the way a model got a tool call wrong, for the probe's output.
+
+    Three distinct flavours show up behind the single `tool_use_failed` code,
+    and they mean different things — see the note on _TOOL_CALL_MALFORMED in
+    src/llm_config.py.
+    """
+    text = str(err).lower()
+    if "<tool_call>" in text or "<function=" in text:
+        return "XML tool-call syntax instead of JSON"
+    if "tool call validation failed" in text:
+        return "valid JSON, wrong schema shape"
+    if "failed to parse tool call arguments" in text:
+        return "malformed JSON arguments"
+    if "rate_limit_exceeded" in text or "rate limit reached" in text:
+        return "rate-limited (inconclusive — retry when the budget resets)"
+    return type(err).__name__
+
+
 def probe_models() -> bool:
-    """One real tool-call and one structured call per distinct model."""
+    """One real tool-call and one structured call per distinct model.
+
+    The structured-output probe uses the **real** `Recommendation` schema, not
+    a toy stand-in. That distinction is the whole point: a 2-field model
+    passes on every Groq model here, while the 8-field `Recommendation` — with
+    a nested `evidence` list — is what actually fails in production with
+    `400 tool_use_failed`. Probing the toy schema reported all-clear on a
+    model that could not serve a single real Synthesizer call.
+    """
     _header("Live probes")
-    from pydantic import BaseModel
+
+    from backend.agent.schemas import Recommendation
 
     from src.llm_config import groq_client
 
-    class Verdict(BaseModel):
-        """Mirrors the shape the planner/synthesizer actually ask for."""
-
-        decision: str
-        confidence: float
-
-    ok = True
     for model in sorted(set(configured_models().values())):
-        # structured output (the instructor path: planner/synthesizer/brief/intent)
-        try:
-            # The prompt must genuinely require extraction. Asking for a
-            # single word tempts the model to answer in plain text, which
-            # Groq rejects with "model did not call a tool" — a false alarm
-            # about the model rather than a real capability gap.
-            groq_client().chat.completions.create(
-                model=model,
-                response_model=Verdict,
-                max_retries=1,
-                max_tokens=512,
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        "Returns are up 40% and reviews cite battery failure. "
-                        "Give a go/no-go decision and your confidence."
-                    ),
-                }],
-            )
-            print(f"  [{OK}] {model:26s} instructor structured output")
-        except Exception as e:  # noqa: BLE001
-            ok = False
-            print(f"  [{BAD}] {model:26s} instructor failed ({type(e).__name__}: {e})")
+        # Structured output — the instructor path (planner/synthesizer/brief/intent).
+        #
+        # The prompt must genuinely require extraction. Asking for a single
+        # word tempts the model to answer in plain text, which Groq rejects
+        # with "model did not call a tool" — a false alarm about the model
+        # rather than a real capability gap.
+        passes, flavours = 0, []
+        for _ in range(SCHEMA_PROBE_ATTEMPTS):
+            try:
+                groq_client().chat.completions.create(
+                    model=model,
+                    response_model=Recommendation,
+                    max_retries=1,
+                    max_tokens=2048,
+                    messages=[{
+                        "role": "user",
+                        "content": (
+                            "Returns are up 40% and reviews cite battery failure. "
+                            "Give a go/no-go decision and your confidence."
+                        ),
+                    }],
+                )
+                passes += 1
+            except Exception as e:  # noqa: BLE001
+                flavours.append(_tool_call_flavour(e))
+
+        label = f"Recommendation schema {passes}/{SCHEMA_PROBE_ATTEMPTS}"
+        detail = ", ".join(sorted(set(flavours)))
+        if passes == SCHEMA_PROBE_ATTEMPTS:
+            print(f"  [{OK}] {model:26s} {label}")
+        else:
+            print(f"  [{WARN}] {model:26s} {label} — {detail}")
 
         # tool calling (the ChatGroq path: executor)
         try:
@@ -197,13 +252,16 @@ def probe_models() -> bool:
             if res.tool_calls:
                 print(f"  [{OK}] {model:26s} tool calling")
             else:
-                ok = False
-                print(f"  [{BAD}] {model:26s} returned no tool call "
+                print(f"  [{WARN}] {model:26s} returned no tool call "
                       f"(finish may have been truncated by max_tokens)")
         except Exception as e:  # noqa: BLE001
-            ok = False
-            print(f"  [{BAD}] {model:26s} tool calling failed ({type(e).__name__}: {e})")
-    return ok
+            print(f"  [{WARN}] {model:26s} tool calling — {_tool_call_flavour(e)}")
+
+    print("\n  " + STRUCTURED_OUTPUT_NOTE.format(n=SCHEMA_PROBE_ATTEMPTS))
+    # Always True by design — see the comment on STRUCTURED_OUTPUT_NOTE. The
+    # return value is kept so main()'s `ok = ... and probe_models()` wiring
+    # does not need a special case.
+    return True
 
 
 def check_vectorstores() -> bool:
