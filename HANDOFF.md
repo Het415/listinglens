@@ -1,4 +1,4 @@
-# ListingLens — Session Handoff (2026-05-18, Cursor / Opus 4.7)
+# ListingLens — Session Handoff (2026-09-17, Claude Code / Opus 5)
 
 > Pickup context for the next chat. Self-contained — you don't need to read any other handoff doc to continue.
 
@@ -6,9 +6,38 @@
 
 ## TL;DR
 
-ListingLens is a deployed agentic Amazon-review analysis platform with three frontend surfaces (`/dashboard`, `/dashboard/reviews`, `/assistant`) and a FastAPI backend on Render. **This session migrated the canonical URL to a custom domain, fixed a silently-broken eval judge, and shipped two queued UX features (dashboard-card → assistant deep-links, demo-mode banner).** Everything is deployed and live.
+ListingLens is a deployed agentic Amazon-review analysis platform with three frontend
+surfaces (`/dashboard`, `/dashboard/reviews`, `/assistant`) and a FastAPI backend on
+Render. **This session was infrastructure, not features.** Production had been down —
+Groq decommissioned the entire Llama family — and the local environment had silently
+drifted away from what production installed.
 
-**The next pickup is queued item #8: auto-populate Competitor Compare from `competitor_search`.** Concrete starting points are at the bottom of this doc — there's a non-trivial design decision to surface to the user before coding (mock competitor ASINs aren't in the analyzed catalog, so naive pre-fill of the existing Compare slots won't work).
+What changed, all deployed and live at `1d388b75`:
+
+- **Production Copilot fixed.** Groq model config centralised in `src/llm_config.py`
+  with per-stage fallback chains; `scripts/doctor.py` preflights against Groq's live
+  catalog. Every Copilot query was 404-ing; now serves grounded answers in ~22s.
+- **Runtime aligned on Python 3.13** across `.python-version`, Dockerfile, both
+  workflows. `pip install -r requirements.txt` works on macOS for the first time (the
+  old `torch==2.1.0+cpu` pin was unsatisfiable there).
+- **Embeddings moved off torch to onnxruntime.** RAG memory 651MiB → 380MiB, image
+  3.59GB → 2.48GB, all 12 FAISS indexes reproducing at cosine 1.000000 (no re-indexing).
+  Under a hard 512MB cap the old build was OOM-killed on the first query.
+- **Two long-standing mysteries closed.** The test suite's phantom failures were
+  `deepeval` loading `.env` before `conftest.py` via its pytest plugin entry point
+  (gotcha #13). The SIGSEGV logged for months as unreproducible is FAISS-then-XGBoost in
+  one process (gotcha #11) — `OMP_NUM_THREADS=1` fixes it, `KMP_DUPLICATE_LIB_OK` does not.
+- **Eval baseline re-established**: first judged 30-query run since May. Error rate
+  33.3% → 3.3%, decision accuracy 40% → 60%, all four judge dimensions up.
+
+**Next pickup is the instructor retry fix below — fully diagnosed, ready to implement.**
+The pre-existing feature queue (item #8, Competitor Compare) is untouched and still valid
+if you'd rather do product work.
+
+⚠️ **Your Render builds are not failing.** 2 failures in 59 deploys, both 2026-04-21.
+`deactivated` in Render's history means *superseded by a newer deploy*, not failed — a
+healthy history is one `live` and many `deactivated`. This confused a whole debugging
+session; don't re-derive it.
 
 ---
 
@@ -45,7 +74,10 @@ git show origin/docs/session-handoff:HANDOFF.md
 
 ---
 
-## What this session shipped (commit-by-commit, most recent first)
+## Historical — what the 2026-05-18 session shipped
+
+> Kept for provenance. For the 2026-09-17 session see the TL;DR, the three dated
+> sections lower down, and the commit log at the bottom.
 
 ### `3fb44b43` — `feat(onboarding): demo-mode banner + extract DEMO_ASIN constant`
 
@@ -82,7 +114,11 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 
 ---
 
-## Eval state — what's measured, what's stale
+## Historical — eval state as of 2026-05-18
+
+> ⚠️ Superseded. The current numbers are in "Eval baseline re-established
+> (2026-09-17)" below, which supersedes every figure in this section — the agent
+> models changed completely (Llama family → gpt-oss/qwen) in between.
 
 **Most recent full 30-query agent run:** `eval/reports/2026-05-17-full-resume.md`
 - **30/30 success, 0 errors** (Stage 4 had 10% errors from Groq quota hits)
@@ -113,13 +149,67 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 4 | Surface real backend error messages on dashboard fetch failures | open |
 | 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | open |
 | 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open |
-| 7 | Planner prompt tuning to fix launch-query over-confidence | open (waiting for fresh judge scores) |
-| **8** | **Auto-populate Competitor Compare from `competitor_search`** | **next pickup** |
+| 7 | Planner prompt tuning to fix launch-query over-confidence | open — judge scores now exist (2026-09-17) |
+| **10** | **Make `tool_use_failed` retryable (instructor predicate)** | **next pickup — diagnosed** |
+| 11 | Retrieval ranking: `evidence_relevance` is the weakest judge dimension (0.545) | open |
+| 8 | Auto-populate Competitor Compare from `competitor_search`  | open (alternative pickup) |
 | 9 | Record the Loom demo (originally Stage 6) | open |
 
 ---
 
-## ★ Next pickup — Item #8: Competitor Compare auto-populate
+## ★ Next pickup — make `tool_use_failed` retryable
+
+**Status: diagnosed, not implemented.** This was in progress when the session ended.
+
+**Symptom.** The full judged eval's one failure (`returns_005`, and one near-miss on
+`launch_001`) is Groq returning `400 tool_use_failed` — `gpt-oss-120b` emitting malformed
+JSON for the `Recommendation` tool call, typically escaped quotes inside an already-quoted
+string (`"snippet": \"No specific 4-star reviews...\"`). Instructor logs
+`Max retries exceeded. Total attempts: 1` and gives up.
+
+**The obvious diagnosis is wrong.** `max_retries` is *already* set at every call site
+(2 in `synthesizer.py:59`, `planner.py:57`, `brief/generate.py:102`, `eval/baselines.py:65`;
+1 in `executor.py:117`, `intent_classifier.py:122`, `rag_chatbot.py:184`). Bumping it
+changes nothing.
+
+**Actual cause** — instructor's retry *predicate*, in
+`.venv/.../instructor/v2/core/retry.py:279-281`:
+
+```python
+_RETRYABLE_PARSE_ERRORS = (ValidationError, json.JSONDecodeError,
+                           AsyncValidationError, ResponseParsingError)
+max_retries_instance = Retrying(
+    stop=stop_after_attempt(max(max_retries, 0) + 1),
+    retry=retry_if_exception_type(_RETRYABLE_PARSE_ERRORS),
+    reraise=True,
+)
+```
+
+A Groq `400 tool_use_failed` is a `BadRequestError`, which is **not** in that tuple, so
+tenacity never retries it — one attempt, then raise. Instructor only retries when the
+model returns parseable JSON that fails the schema, not when the provider rejects the
+tool call outright.
+
+**Two viable fixes; the second fits the existing architecture better.**
+
+1. Pass a custom `Retrying` instance as `max_retries` whose predicate also matches
+   `tool_use_failed`. Must match on the error *code*, not `BadRequestError` broadly —
+   retrying a genuinely malformed request three times is pointless.
+2. Add the signature to `resilient_call` in `src/llm_config.py`, alongside the existing
+   `_MODEL_GONE` and `_RATE_LIMITED` tuples. The malformed-JSON quirk is model-specific,
+   so failing over to the next model in the chain is a real fix rather than a coin-flip
+   retry — and it's one change that benefits every stage. Note `resilient_call` currently
+   moves straight to the next model; a same-model retry first would likely also succeed,
+   since the failure is stochastic.
+
+Signatures to match: `tool_use_failed` and `Failed to parse tool call arguments`.
+
+Verify with `python -m eval.run_eval --limit 8 --no-judge` (launch_001 and returns_005
+are the reproducers; ~5 min, no judge cost).
+
+---
+
+## Alternative pickup (product work) — Item #8: Competitor Compare auto-populate
 
 **Goal:** when the user is viewing a dashboard for ASIN X, give them a one-click path to "compare X against its top competitors" using the existing `competitor_search` MCP tool.
 
@@ -563,17 +653,41 @@ curl https://listinglens-api.onrender.com/health
 ## Commit log since previous handoff
 
 ```
-3fb44b43 feat(onboarding): demo-mode banner + extract DEMO_ASIN constant
-2d8dde33 feat(dashboard): wire Topic Analysis + Quality Breakdown cards into /assistant
-85597427 fix(eval): bump default judge to Haiku 4.5
-f86cf12b chore(domain): point hardcoded URLs at listinglens.hetprajapati.me
-6921050c Merge pull request #5 from Het415/fix/cors-custom-domain   ← end of prior handoff
+1d388b75 docs(health): warn that /health's commit field lags the actual deploy
+de26bbc8 docs(env): document the optional Render deploy-diagnostic vars
+60bf64a1 feat(health): report the deployed commit so a failed build is detectable
+f2e0443b fix(eval): stop the OpenMP segfault and persist results as they are produced
+8122b7ed fix(eval): require deepeval 4 so the configured judge can actually run
+d9a3ffd4 fix(eval): stop reporting a judge that never ran, and declare the judge SDK
+9ac01c9f chore(deps): make requirements-agent.txt eval-only
+aae66f5f test: pin ENV_MODE unconditionally so the suite cannot run in dev mode
+4761f967 Merge Python 3.13 runtime alignment and ONNX embeddings
+7682f04a fix(llm): centralize Groq model config and survive the Llama decommission
+a1e8d4b2 fix(deps): align runtime on Python 3.13 and move embeddings off torch
+e5e0440e feat: conversational customer-care analytics...   ← end of prior handoff
 ```
+
+All pushed; CI green on every push (the repo's first successful Actions runs). `main` is
+in sync with `origin/main` and `1d388b75` is live on Render.
 
 ---
 
 ## How to start the next chat
 
-> Read `HANDOFF.md` in the repo root. We just finished items #1 (dashboard → assistant deep-links) and #2 (demo-mode banner) from the queue. The next pickup is **item #8: Competitor Compare auto-populate**. The "Next pickup" section spells out the design constraint (mock competitor ASINs aren't in the analyzed catalog) and gives three options — Option B is the recommended starting point. Surface the design choice to me before coding. The eval re-run for clean judge scores can happen any time after 8 PM EDT (Groq quota reset); don't wait for it to start #8.
+> Read `HANDOFF.md` in the repo root. Last session was infrastructure: production was
+> down from a Groq decommission and the local env had drifted from production — both
+> fixed, plus Python 3.13 alignment, embeddings moved off torch, and the eval judge
+> working again. Everything is committed, pushed and live at `1d388b75`.
+>
+> **Next pickup is the instructor `tool_use_failed` retry fix** — see the "Next pickup"
+> section; it's fully diagnosed down to the library line, with two implementation options
+> and a cheap repro. If you'd rather do product work, the feature queue (item #8,
+> Competitor Compare auto-populate) is untouched and still valid.
+>
+> Before anything LLM-related, run `python -m scripts.doctor` — it validates every model
+> pin and fallback chain against Groq's live catalog. Before quoting any eval number,
+> check `.env` has `ANTHROPIC_API_KEY` (it does now) or the judge silently doesn't run.
+> To check what is deployed, ask the Render API, not `/health` — that field lags by a
+> deploy (documented in the `health()` docstring).
 
 *End of handoff.*
