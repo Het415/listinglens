@@ -1,10 +1,26 @@
 name: Keep backend warm
 
+# ⚠️ THIS WORKFLOW IS A BACKSTOP, NOT THE WARMUP MECHANISM. ⚠️
+#
 # Free-tier hosts (Railway / Render free) spin the API down after ~15 min idle,
-# and the first request after spin-up pays 30-60s for Python + FAISS + LangGraph
-# to come back. This cron hits POST /warmup every 10 minutes with the demo ASIN
-# so the FAISS index and compiled agent graph stay hot for recruiters dropping
-# in unannounced.
+# and the first request after spin-up pays 30-80s for Python + FAISS + LangGraph
+# to come back. This cron hits POST /warmup with the demo ASIN so the FAISS
+# index and compiled agent graph stay hot for recruiters dropping in
+# unannounced.
+#
+# It does not run often enough to achieve that on its own. The schedule below
+# asks for every 10 minutes; GitHub throttles scheduled workflows on free
+# accounts and *actually* runs it roughly every 4 hours. Measured gaps between
+# real runs, 2026-09-14 → 2026-09-16, in minutes:
+#
+#   212, 241, 322, 294, 137, 163, 187, 293, 326, 299, 141   (median 241)
+#
+# Against a 15-minute spin-down that means the instance is asleep almost
+# always. Do not read the cron expression as a guarantee — that mistake is
+# what made the demo slow for months. The real pingers are an external cron
+# and a local launchd agent; see docs/WARMUP.md. This file stays because an
+# occasional extra ping is harmless and it still works as a manual
+# workflow_dispatch smoke test of /warmup.
 #
 # Override the target by setting a repo variable `BACKEND_URL` under
 # Settings → Secrets and variables → Actions → Variables. No secret needed —
@@ -12,8 +28,7 @@ name: Keep backend warm
 
 on:
   schedule:
-    # Every 10 minutes. Render/Railway spin down after ~15 min idle, so this
-    # gives one safety margin retry before the next spin-down window.
+    # Requested every 10 minutes; expect ~every 4 hours. See the note above.
     - cron: '*/10 * * * *'
   workflow_dispatch:
 
