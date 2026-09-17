@@ -30,10 +30,34 @@ What changed, all deployed and live at `1d388b75`:
 - **Eval baseline re-established**: first judged 30-query run since May. Error rate
   33.3% → 3.3%, decision accuracy 40% → 60%, all four judge dimensions up.
 
-**Next pickup: the DEMO-READINESS PLAN below.** The goal is a project that demos live
-with no lag and nothing visibly unfinished, so it is ordered by demo impact. **P0 is the
-big one** — the warmup cron does not actually work, so the service is asleep when someone
-clicks the link (measured 32-81s cold starts). Everything else is smaller.
+### Update — later on 2026-09-17 (second session)
+
+Worked the DEMO-READINESS PLAN below. **P0 and P1 are done except for one manual step
+that needs you**, and two things were found along the way that were not on the list.
+
+- **P0, warmup — half done.** `/warmup` verified end-to-end; a launchd agent now pings
+  it every 5 min while this Mac is awake; `scripts/predemo_check.sh` is a one-command
+  demo preflight. ⚠️ **You still need to create the cron-job.org job** (~2 min,
+  field-by-field config in `docs/WARMUP.md`) — an account on a third-party service had
+  to be created, which could not be done for you. Until then the service still sleeps
+  whenever your Mac is off.
+- **P1, `/dashboard/visual` — done**, and the bigger version of the same problem with
+  it: the **landing page advertised a CLIP-based "Visual Quality Score" that does not
+  exist anywhere in the backend** (`grep -ri clip app.py backend src` → nothing), in
+  four places including the page title. Deleting the placeholder route alone would have
+  left all four claims standing. Replaced with what is actually built.
+- **P1, `tool_use_failed` — fixed and unit-tested (8 tests), NOT yet verified
+  end-to-end.** The Groq daily token budget (200k/model/day) was exhausted before the
+  verification run finished. One command to run after it resets; see
+  "Detail — `tool_use_failed`".
+- **Found: `pytest` segfaulted on macOS** without `OMP_NUM_THREADS=1` — the same OpenMP
+  bug as gotcha #11, but the existing fix did not cover the test suite. Pinned in
+  `tests/conftest.py`; suite is 27 tests in ~4s, 3/3 clean.
+- **Found and REVERTED: a fallback-chain reorder.** Worth reading before you touch
+  `FALLBACK_CHAINS` — the evidence for it looked solid and was backwards. Details in
+  "Measured per-model reliability".
+- **Corrected: `.env` DOES have `ANTHROPIC_API_KEY`** (the note below said it did not),
+  and Groq's binding rate limit is TPD, not TPM (gotcha #2).
 
 ⚠️ **Your Render builds are not failing.** 2 failures in 59 deploys, both 2026-04-21.
 `deactivated` in Render's history means *superseded by a newer deploy*, not failed — a
@@ -58,7 +82,9 @@ session; don't re-derive it.
 - **Python venv:** `.venv/` at repo root, Python 3.13. Has `langgraph`, `mcp`, `instructor`, `anthropic`, `xgboost`, `faiss`, `onnxruntime` installed (all needed for the eval to run end-to-end). Note the existing `.venv` still carries torch/sentence-transformers from before the ONNX migration — harmless, but a rebuild drops ~2GB.
   - ⚠️ The existing `.venv` is **not** a clean venv: its `bin/python` is a symlink to `/opt/anaconda3/bin/python`, and `pyvenv.cfg` still records a creation path of `/Users/hetprajapati/listinglens/.venv` (the repo has since moved under `github/`). That is how local drifted away from production in the first place. Prefer rebuilding it as a real, project-owned 3.13 environment — see "Useful local commands".
 - **`.env`** at repo root has `GROQ_API_KEY` and `HUGGINGFACE_API_KEY` set (eval reads these via `load_dotenv(override=True)` to outrace Claude Code's parent-shell key shadowing).
-  - ⚠️ **`ANTHROPIC_API_KEY` is NOT in `.env`** — verified 2026-09-17. This file previously claimed it was. Consequence: the LLM-as-judge cannot run. `eval/run_eval.py` preflights the key and exits 1 with instructions, so judged runs fail fast rather than scoring zeros — but it means **no eval has been judged since 2026-05-18**. The 2026-09-15 post-fix run was `--no-judge`; its header claimed a judge model because the report advertised one unconditionally (since fixed). Add the key to `.env` before quoting any judge metric.
+  - ✅ **`ANTHROPIC_API_KEY` IS in `.env`** — corrected 2026-09-17 (later the same day; the paragraph this replaces said it was absent). The judge can run. Two things to know:
+    - The line had a **stray space after the `=`** (`ANTHROPIC_API_KEY= sk-ant-…`). `python-dotenv` strips it so every Python path worked, but `source .env` in zsh parsed it as an empty assignment followed by a command, printing the whole secret into the terminal as `command not found`. Fixed. **Don't `source .env`** — `scripts/predemo_check.sh` has an `env_get` helper that `sed`s out one value instead.
+    - `eval/run_eval.py` preflights the key and exits 1 with instructions, so a judged run fails fast rather than silently scoring zeros.
 - **Frontend:** `frontend/` — Next.js 16, React 19, Tailwind v4. `node_modules` may be sparse in some environments; run `npm install` if needed.
 - **Frontend env (production):** Vercel must have `NEXT_PUBLIC_API_URL=https://listinglens-api.onrender.com`. ~~`frontend/.env.example` and `frontend/.env.local` point at a deprecated Railway URL — do NOT trust them.~~ **Corrected 2026-09-17:** both now read `https://listinglens-api.onrender.com`. The warning was itself stale.
 
@@ -146,14 +172,16 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 |---|---|---|
 | 1 | Wire dashboard cards → `/assistant` | ✅ done (`2d8dde33`) |
 | 2 | Onboarding banner for first-time sellers | ✅ done (`3fb44b43`) |
-| 3 | Delete or build out `/dashboard/visual` placeholder | open |
+| 3 | Delete or build out `/dashboard/visual` placeholder | ✅ done — same item as #13 below (it was double-listed) |
 | 4 | Surface real backend error messages on dashboard fetch failures | open |
 | 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | open |
 | 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open |
 | 7 | Planner prompt tuning to fix launch-query over-confidence | open — judge scores now exist (2026-09-17) |
-| **12** | **Cold start: warmup cron doesn't actually run (~4h, not 10min)** | **P0 — do first** |
-| 10 | Make `tool_use_failed` retryable (instructor predicate) | P1 — diagnosed |
-| 13 | Delete/hide `/dashboard/visual` "coming soon" placeholder | P1 |
+| **12** | **Cold start: warmup cron doesn't actually run (~4h, not 10min)** | ⚠️ half done — local launchd pinger installed; **YOU still need to create the cron-job.org job**, see `docs/WARMUP.md` |
+| 10 | Make `tool_use_failed` retryable (instructor predicate) | ✅ done — `resilient_call` now retries same-model once then fails over; 8 unit tests in `tests/test_llm_config.py` |
+| 13 | Delete/hide `/dashboard/visual` "coming soon" placeholder | ✅ done — route deleted; also removed the landing page's unimplemented CLIP/"multimodal" claims |
+| 14 | `pytest` segfaults on macOS without `OMP_NUM_THREADS=1` | ✅ done — pinned in `tests/conftest.py` |
+| 15 | Agent fallback chain ends on `qwen/qwen3.8-27b`, whose OTPM limit is 1000 output tokens/min — too small for a Synthesizer `Recommendation` | open — see "Detail" below |
 | 11 | Retrieval ranking: `evidence_relevance` is the weakest judge dimension (0.545) | P3 |
 | 8 | Auto-populate Competitor Compare from `competitor_search`  | open (alternative pickup) |
 | 9 | Record the Loom demo (originally Stage 6) | open |
@@ -165,43 +193,79 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 Goal: the project is **showable live in an interview with no lag and nothing visibly
 unfinished**. Ordered by demo impact, not by feature value. P0 alone is most of the win.
 
-### P0 — this is what kills a live demo
+### P0 — this is what kills a live demo  ⚠️ HALF DONE — ONE MANUAL STEP LEFT
 
-**1. The service is asleep when your interviewer clicks the link.** (~15 min of work)
+**1. The service is asleep when your interviewer clicks the link.**
 
 `.github/workflows/warmup.yml` is configured `cron: '*/10 * * * *'`, but GitHub throttles
 scheduled workflows on free accounts and **actually runs it every ~4 hours** — measured
 gaps 2026-09-14→16: 212, 241, 322, 294, 137, 163, 187, 293, 326, 299, 141 min (median
 241). Render free tier sleeps after ~15 min idle, so the instance is down almost always.
-Measured cold starts on `/health` today: **32.7s and 81.3s**.
+Measured cold starts on `/health`: **32.7s and 81.3s**.
 
 The repo *looks* like it warms every 10 minutes. It does not. Do not trust the cron.
+`warmup.yml`'s header comment now says so in large letters, so nobody re-derives it.
 
-Fix, cheapest first:
-- **External pinger** (cron-job.org / UptimeRobot / Better Uptime — all have free tiers):
-  `POST https://listinglens-api.onrender.com/warmup` with `{"asin":"B08XPWDSWW"}` every
-  5 minutes. External crons actually fire on schedule. This also pre-loads the demo ASIN's
-  FAISS index and MiniLM, so the *first* `/assistant/query` is fast too — the existing
-  workflow already posts the right payload, it just never runs.
-- Keep the GH cron as a backstop; harmless.
-- If you want certainty for a scheduled interview, Render **Starter ($7/mo) removes
-  spin-down entirely**. Worth one month's spend around interview season.
+**What is done (2026-09-17):**
 
-**Rehearsal rule:** hit the site 2–3 minutes before any demo regardless. Verify with
-`curl -s -o /dev/null -w '%{time_total}s\n' https://listinglens-api.onrender.com/health`
-— under 1s means warm, 30s+ means it just woke up.
+- `/warmup` verified end-to-end: returns in 0.2s, and `/health`'s `cached_asins` shows
+  the demo ASIN within 10s. The endpoint was never the problem; nothing was calling it.
+- **Local pinger installed.** `scripts/warmup_ping.sh` + a launchd agent at
+  `~/Library/LaunchAgents/com.listinglens.warmup.plist`, `StartInterval 300`,
+  `RunAtLoad`. Logs one bounded line per ping to
+  `~/Library/Logs/listinglens-warmup.log`, tagged `warm` / `COLD-START` /
+  `UNREACHABLE`. Verified loaded, exit 0. This covers the window that matters most —
+  a live demo happens while your Mac is awake.
+- **`scripts/predemo_check.sh`** — run it 2-3 min before any demo. Checks backend
+  latency, hydrates the demo ASIN if cold, compares the *live* commit (via the Render
+  API, not `/health`) against local HEAD, warns on a dirty tree, checks the frontend,
+  and confirms the launchd agent is loaded. Exit 0 = demo-ready.
 
-### P1 — visible discrepancies an interviewer will land on
+**What YOU still have to do — ~2 minutes, and it is the 24/7 half:**
 
-**2. Delete or hide `/dashboard/visual`.** 19 lines rendering "Visual quality scoring
-coming soon...". A dead nav item is the fastest way to invite "so what's unfinished?".
-Remove the route and its nav entry (queue item #3). ~10 min.
+Create the external cron job. An account had to be created on a third-party service, so
+it could not be done for you. Field-by-field config is in **`docs/WARMUP.md`** — sign in
+at cron-job.org, `POST https://listinglens-api.onrender.com/warmup`, body
+`{"asin":"B08XPWDSWW"}`, every 5 minutes, 120s timeout. Prefer cron-job.org over
+UptimeRobot: UptimeRobot's free tier only sends GETs, so the body is dropped and you get
+process-alive-only warming rather than a preloaded FAISS index.
 
-**3. Fix the `tool_use_failed` failure — 3.3% of queries error.** One in 30 agent runs
-dies visibly. Full diagnosis in the next section: instructor's retry predicate excludes
-`BadRequestError`, so `max_retries` (already 2) never engages. Recommended fix is adding
-the signature to `resilient_call` in `src/llm_config.py` so it fails over to the next
-model. ~30 min including a `--limit 8 --no-judge` verification run.
+Without it, the service still sleeps whenever your Mac is off — so a link an interviewer
+opens the next morning is cold.
+
+If you want certainty for a scheduled interview, Render **Starter ($7/mo) removes
+spin-down entirely** and makes all of the above unnecessary. Worth one month's spend
+around interview season.
+
+**Rehearsal rule:** run `scripts/predemo_check.sh` before any demo regardless.
+
+### P1 — visible discrepancies an interviewer will land on  ✅ DONE
+
+**2. `/dashboard/visual`** — deleted. The route is gone (`npm run build` confirms it is
+no longer in the route table; the path now 404s). It had no sidebar entry to remove —
+the prior handoff assumed one existed, and it did not.
+
+**The bigger find, in the same category:** the **landing page advertised a feature that
+does not exist anywhere in the backend.** `grep -ri clip app.py backend src` returns
+nothing, yet `/` showed a feature card reading *"Visual Quality Score — CLIP model
+analyzes your product images…"*, a trust badge reading *"Vision + NLP + LLM"*, a
+headline promising *"multimodal AI analysis of your listing quality"*, and a page title
+of *"Multimodal Product Intelligence Platform"*. Deleting the placeholder route alone
+would have left all four claims standing — and an interviewer who reads the landing page
+asks to see the visual score. Replaced with what is actually built:
+
+- feature card → **"Agentic Copilot"** (plans across five real tools, cites evidence)
+- trust badge → **"NLP + XGBoost + LLM agent"**
+- headline subcopy → review sentiment / return risk / complaints, "an agent that cites
+  its sources"
+- `layout.tsx` title → **"Agentic Product Intelligence Platform"**
+
+Also fixed a stale comment in `page.tsx` (`setLoadingStep(2) // "Scoring images..."`
+when `loadingSteps[2]` is `'Building knowledge base...'`).
+
+Swept the rest of the frontend for `coming soon` / `not implemented` / `TODO` — clean.
+
+**3. `tool_use_failed`** — fixed in `src/llm_config.py`. Details in the next section.
 
 ### P2 — polish, do if time remains
 
@@ -259,57 +323,129 @@ Lead with what is measured, not what is built:
 
 ---
 
-## Detail — make `tool_use_failed` retryable (P1 item 3)
+## Detail — `tool_use_failed` (P1 item 3)
 
-**Status: diagnosed, not implemented.** This was in progress when the session ended.
+**Status: fixed and unit-tested. End-to-end verification is BLOCKED on the Groq daily
+token budget — one command to run when it resets, see "Finish the verification" below.**
 
-**Symptom.** The full judged eval's one failure (`returns_005`, and one near-miss on
-`launch_001`) is Groq returning `400 tool_use_failed` — `gpt-oss-120b` emitting malformed
-JSON for the `Recommendation` tool call, typically escaped quotes inside an already-quoted
-string (`"snippet": \"No specific 4-star reviews...\"`). Instructor logs
-`Max retries exceeded. Total attempts: 1` and gives up.
+### What the fix is
 
-**The obvious diagnosis is wrong.** `max_retries` is *already* set at every call site
-(2 in `synthesizer.py:59`, `planner.py:57`, `brief/generate.py:102`, `eval/baselines.py:65`;
-1 in `executor.py:117`, `intent_classifier.py:122`, `rag_chatbot.py:184`). Bumping it
-changes nothing.
-
-**Actual cause** — instructor's retry *predicate*, in
-`.venv/.../instructor/v2/core/retry.py:279-281`:
+`src/llm_config.py`. `_failover_reason` now recognises a third class of error alongside
+`_MODEL_GONE` and `_RATE_LIMITED`:
 
 ```python
-_RETRYABLE_PARSE_ERRORS = (ValidationError, json.JSONDecodeError,
-                           AsyncValidationError, ResponseParsingError)
-max_retries_instance = Retrying(
-    stop=stop_after_attempt(max(max_retries, 0) + 1),
-    retry=retry_if_exception_type(_RETRYABLE_PARSE_ERRORS),
-    reraise=True,
+_TOOL_CALL_MALFORMED = (
+    "tool_use_failed",
+    "failed to parse tool call arguments",
+    "tool call validation failed",
 )
 ```
 
-A Groq `400 tool_use_failed` is a `BadRequestError`, which is **not** in that tuple, so
-tenacity never retries it — one attempt, then raise. Instructor only retries when the
-model returns parseable JSON that fails the schema, not when the provider rejects the
-tool call outright.
+and `resilient_call` **retries the same model once** before advancing the chain
+(`_SAME_MODEL_RETRIES`), because this failure is stochastic. Decommissioning and rate
+limits still advance immediately — retrying a 404 is pointless.
 
-**Two viable fixes; the second fits the existing architecture better.**
+Worst case is bounded: `len(chain)` attempts plus one extra per model, so 6 calls for a
+3-model chain, and only on a path that previously failed outright.
 
-1. Pass a custom `Retrying` instance as `max_retries` whose predicate also matches
-   `tool_use_failed`. Must match on the error *code*, not `BadRequestError` broadly —
-   retrying a genuinely malformed request three times is pointless.
-2. Add the signature to `resilient_call` in `src/llm_config.py`, alongside the existing
-   `_MODEL_GONE` and `_RATE_LIMITED` tuples. The malformed-JSON quirk is model-specific,
-   so failing over to the next model in the chain is a real fix rather than a coin-flip
-   retry — and it's one change that benefits every stage. Note `resilient_call` currently
-   moves straight to the next model; a same-model retry first would likely also succeed,
-   since the failure is stochastic.
+The prior handoff's diagnosis was right about the cause and is confirmed: instructor's
+`max_retries` (already 2 everywhere) never engages, because its predicate is
+`retry_if_exception_type((ValidationError, json.JSONDecodeError, AsyncValidationError,
+ResponseParsingError))` and a `tool_use_failed` 400 is a `BadRequestError`. Hence
+`Max retries exceeded. Total attempts: 1` in the logs.
 
-Signatures to match: `tool_use_failed` and `Failed to parse tool call arguments`.
+`backend/agent/nodes/executor.py` needed one companion change. That node already had its
+own per-model malformed-tool-call retry (`TOOL_CALL_RETRIES = 3`) and degrades to a
+content-only message so the graph can still reach the Synthesizer. Its
+`_MalformedToolCalls` exception embeds the original Groq text, so it would now match the
+new signature and get retried all over again on every model — 3 models x 3 attempts
+instead of 3. It therefore carries `llm_no_failover = True`, which `_failover_reason`
+checks first. That is a general opt-out, not a special case for one class.
 
-Verify with `python -m eval.run_eval --limit 8 --no-judge` (launch_001 and returns_005
-are the reproducers; ~5 min, no judge cost).
+**Tests:** `tests/test_llm_config.py`, 8 tests, no network or API key — `resilient_call`
+is driven with fake callables. They cover: first-model success; 404 and 429 advancing
+immediately; malformed-tool-call retrying the SAME model first; falling over after one
+same-model retry; the bounded worst case (`2 x len(chain)` then reraise); an unrelated
+error (401) propagating after exactly one attempt; and the `llm_no_failover` opt-out.
 
----
+### ⚠️ Measured per-model reliability — read this before touching FALLBACK_CHAINS
+
+A chain reorder was **attempted and reverted** during this session. Recording it so
+nobody repeats it:
+
+The reasoning was: gold query `launch_005` failed with qwen emitting XML-style tool-call
+syntax (`<tool_call><function=Recommendation><parameter=confidence>`) rather than JSON,
+2/2 on back-to-back attempts — so drop qwen from the agent chain in favour of
+`openai/gpt-oss-safeguard-20b`, which the executor already falls over to successfully.
+
+**That was wrong.** A direct A/B against the *real* `Recommendation` schema showed the
+opposite:
+
+| model | 2-field toy schema | real `Recommendation` |
+|---|---|---|
+| `qwen/qwen3.8-27b` | OK | **OK** |
+| `openai/gpt-oss-safeguard-20b` | OK | **FAIL** — `tool_use_failed` |
+| `openai/gpt-oss-120b` (agent primary) | OK | **FAIL** on both probe attempts |
+
+So the "replacement" was worse than the incumbent, and the *primary* model fails this
+schema intermittently too. Three distinct flavours hide behind the one
+`tool_use_failed` code:
+
+1. almost-valid JSON — escaped quotes inside an already-quoted string
+2. valid JSON, wrong shape — `evidence` objects with `source`/`description` instead of
+   the schema's `snippet`/`relevance`
+3. a different tool-call syntax entirely (the XML above)
+
+**Every model fails this schema sometimes; none fails it always.** That is exactly why
+the same-model retry is the right fix and why dropping any single model is not. The
+reverted commit would have made things worse while looking like a fix.
+
+**The generalisable lesson, and the reason the toy-vs-real table above matters:**
+`scripts/doctor.py --probe` was asserting structured output against a 2-field `Verdict`
+model. Every Groq model passes that. It is the 8-field `Recommendation`, with its nested
+`evidence` list, that actually fails in production — so the probe was reporting all-clear
+on models that could not serve a single real Synthesizer call. `--probe` now exercises
+the **real** `Recommendation` schema, `SCHEMA_PROBE_ATTEMPTS = 2` times per model, and
+names which flavour it hit.
+
+Both probes are now **informational and never fail the run**: a rate limit says nothing
+about capability, and the free tier's daily budget is routinely spent by one eval run, so
+failing `doctor` on a 429 would make it useless in exactly the situation where you want
+to run it. Schema flakiness is not actionable either — the output says so, in the report.
+
+### Finish the verification
+
+`python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix` was started and
+**abandoned at 7/15**, because it stopped measuring the fix and started measuring the
+rate limiter. Results: 3 passed, then `launch_004`, `006` and `007` all died on 429s and
+`launch_005` on a genuine `tool_use_failed`.
+
+The cause was **TPD, not TPM**: `Limit 200000, Used 198974` on `gpt-oss-120b` and
+`Used 199863` on `gpt-oss-20b`. Note gotcha #2 below omitted the 200k tokens/day cap;
+it is the binding constraint, not the 8000 TPM one. Requests-per-day was never close
+(957-993 of 1000 remaining).
+
+So: **the fix is verified at the unit level, not end-to-end.** When the daily budget
+resets (UTC midnight = 8 PM EDT):
+
+```bash
+python -m scripts.doctor --probe          # confirm the buckets actually refilled
+python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix
+```
+
+`--limit 15`, not the prior handoff's `--limit 8`: `returns_005` — the one reproducer
+from the baseline judged run — is gold index **15**, so `--limit 8` never reaches it.
+`launch_001` is index 1.
+
+What success looks like: no `tool_use_failed` in the errors, and
+`[llm_config] agent: … is emitting malformed tool calls; retrying the same model`
+appearing in stdout where a query previously died. That line was captured this session
+(single-query repro of `launch_005`), so the mechanism is confirmed to fire in the real
+agent — it simply could not rescue that particular query, since all attempts landed on
+flavour 3.
+
+Do not pipe the run through `tail` — it buffers, and the `[llm_config]` lines are the
+evidence. Redirect to a file instead.
 
 ## Alternative pickup (product work) — Item #8: Competitor Compare auto-populate
 
@@ -375,7 +511,9 @@ So naively pre-filling the existing `ProductSlot` inputs with competitor ASINs a
 ## Critical gotchas (carry-over from earlier handoff, still apply)
 
 1. **`ANTHROPIC_API_KEY` + `ANTHROPIC_BASE_URL` shadowing.** Claude Code's parent shell exports its own keys that override `.env`. Any script that hits Anthropic needs `load_dotenv(override=True)` AND `os.environ.pop('ANTHROPIC_BASE_URL', None)`. Already wired into `eval/run_eval.py`. Cursor's shell doesn't have this issue but the eval guard is harmless to keep.
-2. **Groq free-tier limits are now 8000 TPM / 1000 RPD PER MODEL**, not a single org-wide 500k TPD pool (the older note below reflects the previous scheme). Per-model buckets are why the stage split in [src/llm_config.py](src/llm_config.py) works: the planner, executor and review_qa paths draw on three independent limits. `python -m scripts.doctor` prints the bucket map and warns when two concurrent stages share one.
+2. **Groq free-tier limits are PER MODEL: 8000 TPM / 200,000 TPD / 1000 RPD**, not a single org-wide pool (the older note below reflects the previous scheme). Per-model buckets are why the stage split in [src/llm_config.py](src/llm_config.py) works: the planner, executor and review_qa paths draw on three independent limits. `python -m scripts.doctor` prints the bucket map and warns when two concurrent stages share one.
+   - ⚠️ **Corrected 2026-09-17: the binding constraint is TPD (200k/model/day), which this note previously omitted.** TPM recovers in a minute and is mostly invisible; TPD does not, and **one 30-query eval run comes close to exhausting it.** Two runs in a day means the second one measures the rate limiter, not your change — errors show up as `Rate limit reached ... on tokens per day (TPD): Limit 200000, Used 199863`. RPD is never the problem (a 15-query run used ~40 of 1000). Budget your eval runs: **one full judged run per model per day.** Resets at UTC midnight = 8 PM EDT.
+   - A single Copilot query costs ~4-8 calls across 2-3 models, so it is not cheap against a 200k/day cap. `--limit N` is the throttle.
 3. **`min-h-screen` on layouts causes page-level scroll** when content is taller than viewport. Use `h-screen overflow-hidden` instead. Affects `/agent/layout.tsx`, `/chat/layout.tsx`, `/assistant/layout.tsx`.
 4. **Groq decommissioned the entire Llama family (Sept 2026).** Both `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` now 404 with `model_not_found`, which broke every LLM path — and looked like "retrieval is broken" because the RAG chain 404s *after* retrieval succeeds. All model IDs now live in [src/llm_config.py](src/llm_config.py). Run `python -m scripts.doctor` to validate every pin against Groq's live catalog; it exits non-zero and names the env var to change.
 5. **`/agent/query/mock` always streams the same canned TOZO returns scenario** regardless of input — by design, a development fixture. Live endpoint is `/agent/query`. The new `/assistant` page always calls live `/assistant/query`.
@@ -410,6 +548,18 @@ So naively pre-filling the existing `ProductSlot` inputs with competitor ASINs a
 
     Minimal repro, if it ever needs re-testing: load a vectorstore, run three
     `similarity_search` calls, then `predict_return_risk` — crashes without the env var.
+
+    ⚠️ **Addendum 2026-09-17: `pytest` was hitting this too, and the fix above did not
+    cover it.** `app.py`'s `os.environ.setdefault` runs when conftest *imports* app,
+    which is too late if a test module or a pytest plugin has already pulled in faiss.
+    So bare `pytest` segfaulted mid-run on macOS — while CI stayed green, because the
+    manylinux wheels link one shared libgomp instead of bundling `.dylibs`. That is why
+    the handoff could claim a passing suite and a local run could still die.
+    Now pinned at the top of `tests/conftest.py` as well (assigned, not `setdefault` —
+    an inherited higher value would reintroduce the crash). Verified 3/3 clean runs with
+    `env -u OMP_NUM_THREADS python -m pytest`. Suite is **27 tests in ~4s** (the old
+    "13 tests in ~2s" figure predates both `test_onnx_embeddings.py` and
+    `test_llm_config.py`).
 12. ✅ **RESOLVED (verified 2026-09-17) — Groq removed the entire Llama family.**
     A fix now exists in the **main checkout, uncommitted**: new `src/llm_config.py`
     (single source of truth, per-stage fallback chains, `resilient_call` failing over on
@@ -692,8 +842,10 @@ just expect the primary executor bucket to be exhausted for most of any full run
 **The one failure** was `returns_005`: `tool_use_failed` — `gpt-oss-120b` emitted
 malformed JSON for the `Recommendation` tool call and `InstructorRetryException` gave up.
 Both such incidents this session logged `Total attempts: 1`, so **instructor retries are
-not actually retrying**; setting `max_retries` on the client in `src/llm_config.py`
-would likely have saved this query. Cheapest available reliability win.
+not actually retrying**. ✅ **Fixed later the same day** — but note the guess in the
+original sentence here ("setting `max_retries` would likely have saved this query") was
+wrong twice over: `max_retries` was already 2 at every call site, and the failure is not
+one instructor's predicate retries at all. See "Detail — `tool_use_failed`" above.
 
 Results now persist incrementally (`_write_jsonl` after every query and every judge
 result), so a crash or rate-limit wall no longer discards a 20-minute paid run — which is
@@ -717,6 +869,27 @@ uv pip install -r requirements.txt -r requirements-dev.txt
 
 # Confirm the environment is internally consistent
 uv pip check
+
+# Preflight before ANY LLM work (standing rule)
+python -m scripts.doctor
+# ...and --probe to exercise the real Recommendation schema per model. Probes are
+# informational: they never fail the run, and a `rate-limited` flavour means
+# "inconclusive", not "broken".
+python -m scripts.doctor --probe
+
+# Before ANY live demo — backend latency, demo-ASIN hydration, live-vs-local
+# commit (via the Render API), frontend, and the launchd warmup agent.
+# Exit 0 = demo-ready.
+scripts/predemo_check.sh
+
+# Warmup pinger: one ping now, and the log the launchd agent writes
+scripts/warmup_ping.sh
+tail -5 ~/Library/Logs/listinglens-warmup.log
+launchctl print "gui/$(id -u)/com.listinglens.warmup"
+
+# Tests. `env -u OMP_NUM_THREADS` proves conftest's OpenMP pin is doing its job
+# (without the pin this segfaults on macOS — gotcha #11).
+env -u OMP_NUM_THREADS python -m pytest -q
 
 # Local backend
 uvicorn app:app --host 127.0.0.1 --port 8000 --log-level warning
@@ -782,20 +955,33 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 > embeddings moved off torch, and the eval judge working for the first time since May.
 > Everything is committed, pushed and live.
 >
-> **Start with the "★ DEMO-READINESS PLAN" section.** The goal is a project that demos
-> live in an interview with no lag and nothing visibly unfinished, and the plan is ordered
-> by demo impact.
+> **Start with "Update — later on 2026-09-17" in the TL;DR.** P0 and P1 of the
+> DEMO-READINESS PLAN are done; P2 and P3 are not.
 >
-> **P0 is the one that matters**: `warmup.yml` claims `cron: '*/10 * * * *'` but GitHub
-> throttles it to roughly every 4 hours (measured), Render free tier sleeps after 15 min,
-> and cold starts measured 32-81s. An external pinger hitting `POST /warmup` every 5
-> minutes fixes it in about 15 minutes of work. Nothing else on the list comes close in
-> impact-per-effort.
+> **Two things are waiting on a human, and neither is code:**
+> 1. Create the cron-job.org warmup job — ~2 min, config in `docs/WARMUP.md`. Until
+>    then the backend sleeps whenever the Mac is off and an interviewer opening the link
+>    cold waits 30-80s.
+> 2. After 8 PM EDT (UTC midnight), when Groq's daily token budget resets, finish the
+>    `tool_use_failed` verification:
+>    `python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix`
+>    (redirect to a file, don't pipe through `tail` — it buffers away the evidence).
+>
+> Then P2 (unify loading states, mobile pass) and P3 (`evidence_relevance` = 0.545,
+> planner over-confidence) are the remaining plan items.
 >
 > Standing rules, learned the hard way this session:
 > - Before anything LLM-related, run `python -m scripts.doctor`.
 > - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY` — without it the
->   judge silently does not run, and reports used to advertise a judge anyway.
+>   judge silently does not run, and reports used to advertise a judge anyway. (It IS
+>   there as of 2026-09-17.)
+> - **Budget one full eval run per day.** Groq's binding limit is 200k tokens per model
+>   per day; a 30-query run nearly exhausts it, and the second run of a day measures the
+>   rate limiter rather than your change. Check with `python -m scripts.doctor --probe`.
+> - **Don't reorder `FALLBACK_CHAINS` from one observed failure.** Tried this session on
+>   what looked like clear evidence; the A/B showed the replacement was worse than the
+>   incumbent and the primary model was flakier than both.
+> - Run `scripts/predemo_check.sh` before any demo.
 > - To check what is deployed, ask the Render API, not `/health` — that field lags a
 >   deploy. And `deactivated` in Render's history means *superseded*, not failed.
 
