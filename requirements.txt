@@ -6,7 +6,13 @@
 # API
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
-python-dotenv==1.0.1
+# Floor, not an exact pin: deepeval>=4 requires python-dotenv>=1.1.1, and
+# deepeval 4 is required because its pricing table is the only one that knows
+# claude-haiku-4-5 — the judge model eval/judges.py defaults to. On deepeval
+# 2.9.3 the judge API call succeeds and then crashes in calculate_cost with
+# KeyError: 'input', because model_pricing.get(name, model_pricing) falls back
+# to the whole table for an unknown model. Nothing here needs 1.0.1 exactly.
+python-dotenv>=1.1.1,<2
 pydantic>=2.10,<3
 
 # Data & ingest
