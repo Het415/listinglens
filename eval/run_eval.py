@@ -39,6 +39,22 @@ load_dotenv(override=True)
 # falls back to its default (api.anthropic.com) regardless of shell state.
 os.environ.pop("ANTHROPIC_BASE_URL", None)
 
+# Pin OpenMP to one thread before faiss / xgboost / sklearn load.
+#
+# Each of those wheels bundles its own OpenMP runtime (faiss/.dylibs/libomp.dylib,
+# sklearn/.dylibs/libomp.dylib, plus xgboost's). Running FAISS similarity_search
+# and then XGBoost in the same process segfaults on macOS — SIGSEGV, exit 139,
+# no diagnostic message at all. It is fully deterministic: 3/3 crashes without
+# this, 5/5 clean with it. The trigger in the eval was returns_001, the first
+# gold query to call predict_return_risk after earlier queries had exercised
+# review_qa; the whole run died at 11/30.
+#
+# Note KMP_DUPLICATE_LIB_OK=TRUE does NOT fix this (still 139) despite being the
+# usual advice for duplicate-OpenMP problems. Limiting the thread count does.
+# Single-threaded costs nothing here: IndexFlatL2 over a few thousand vectors is
+# microseconds, and the XGBoost model is tiny.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 from backend.agent.graph import run_agent  # noqa: E402
 from eval.baselines import run_baseline  # noqa: E402
 from eval.trajectory_eval import aggregate_trajectory, trajectory_metrics  # noqa: E402
@@ -147,8 +163,16 @@ def _per_query_result(gold: dict, out: dict | None, err: Exception | None, laten
     return base
 
 
-def _judge_all(per_query: list[dict], gold_by_id: dict) -> None:
-    """Run LLM-as-judge on each per-query result that succeeded. Mutates in place."""
+def _judge_all(
+    per_query: list[dict], gold_by_id: dict, jsonl_path: Path | None = None
+) -> None:
+    """Run LLM-as-judge on each per-query result that succeeded. Mutates in place.
+
+    `jsonl_path` makes the pass crash-safe: judging 30 queries is ~120 API calls,
+    and a rate-limit wall or segfault partway through used to discard every score
+    already paid for. Flushing after each query means a re-run can be reasoned
+    about from what landed.
+    """
     print(f"\n[judges] running 4-dimension LLM-as-judge on {len(per_query)} queries...")
     from eval.judges import judge_recommendation
     from backend.agent.schemas import AgentOutput
@@ -169,6 +193,8 @@ def _judge_all(per_query: list[dict], gold_by_id: dict) -> None:
               f"ev={scores['evidence_relevance']['score']} "
               f"hal={scores['anti_hallucination']['score']} "
               f"comp={scores['completeness']['score']}")
+        if jsonl_path is not None:
+            _write_jsonl(per_query, jsonl_path)
 
 
 def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
@@ -324,6 +350,11 @@ def main() -> int:
     gold_by_id = {g["id"]: g for g in gold}
     print(f"  -> {len(gold)} queries")
 
+    # Resolved before the loop so results can be flushed as they are produced.
+    date_str = date.today().isoformat()
+    jsonl_path = REPORTS_DIR / f"{date_str}-{tag}.jsonl"
+    md_path = REPORTS_DIR / f"{date_str}-{tag}.md"
+
     print(f"\nRunning variant: {variant}")
     per_query: list[dict] = []
     for i, g in enumerate(gold, 1):
@@ -338,15 +369,15 @@ def main() -> int:
             n_tools = out["trace"]["n_tool_calls"]
             print(f"{actual} {match}  [{n_tools} tools, {latency:.1f}s]")
         per_query.append(_per_query_result(g, out, err, latency))
+        # Flush after every query. A full run is ~20 minutes of paid API calls;
+        # previously a crash at query 11 of 30 (see the OMP_NUM_THREADS note
+        # above) left no artefact at all and threw away ten completed queries.
+        _write_jsonl(per_query, jsonl_path)
 
     if with_judges:
-        _judge_all(per_query, gold_by_id)
+        _judge_all(per_query, gold_by_id, jsonl_path)
 
     summary = _summarize(per_query, variant, with_judges)
-
-    date_str = date.today().isoformat()
-    jsonl_path = REPORTS_DIR / f"{date_str}-{tag}.jsonl"
-    md_path = REPORTS_DIR / f"{date_str}-{tag}.md"
 
     _write_jsonl(per_query, jsonl_path)
     _write_report(summary, per_query, md_path, variant)

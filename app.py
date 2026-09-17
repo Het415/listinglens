@@ -9,6 +9,23 @@ from pydantic import BaseModel
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Pin OpenMP to one thread before faiss / xgboost / sklearn load.
+#
+# Each of those wheels bundles its own OpenMP runtime (faiss/.dylibs/libomp.dylib,
+# sklearn/.dylibs/libomp.dylib, plus xgboost's). Running FAISS similarity_search
+# and then XGBoost in the same process segfaults on macOS — SIGSEGV, exit 139,
+# no diagnostic message at all. It is fully deterministic: 3/3 crashes without
+# this, 5/5 clean with it. The trigger in the eval was returns_001, the first
+# gold query to call predict_return_risk after earlier queries had exercised
+# review_qa; the whole run died at 11/30.
+#
+# Note KMP_DUPLICATE_LIB_OK=TRUE does NOT fix this (still 139) despite being the
+# usual advice for duplicate-OpenMP problems. Limiting the thread count does.
+# Single-threaded costs nothing here: IndexFlatL2 over a few thousand vectors is
+# microseconds, and the XGBoost model is tiny.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 # Define it here (Top level)
 ENV_MODE = os.getenv("ENV_MODE", "production")
 # ── App State ──────────────────────────────────────────────────────────────────

@@ -192,8 +192,32 @@ So naively pre-filling the existing `ProductSlot` inputs with competitor ASINs a
 8. ~~**macOS dev:** `torch==2.1.0+cpu` is Linux-only, install plain `torch`.~~ **Moot — torch is no longer a dependency.** Embeddings run on onnxruntime (`src/onnx_embeddings.py`), so there is no torch pin, no `--extra-index-url`, and no platform-specific install step: `pip install -r requirements.txt` just works everywhere. `brew install libomp` for XGBoost still applies. New floor to know about: faiss-cpu >=1.13 ships `macosx_14_0_arm64` wheels only, so local dev needs macOS 14+.
 9. **Sync function calls inside async SSE generators block the event loop.** In `/assistant/query`, `await asyncio.to_thread(review_qa, ...)` for the quick path. `loop.run_in_executor` deadlocked on FAISS init — `asyncio.to_thread` works.
 10. **`.claude/worktrees/`** in repo root is internal Cursor / Claude Code worktree state. Always untracked. Don't `git add` it.
-11. **Sandbox + OpenMP — status: could not reproduce, cause still unproven.** Historically, importing `xgboost`/`faiss`/`torch` inside Cursor's default sandbox failed with `OMP Error #179: SHM2 failed`, and a local uvicorn died with SIGSEGV (exit 139) after one request. Re-tested on the aligned 3.13 stack (torch 2.6.0, faiss-cpu 1.15.0, xgboost 3.4.1): importing and *exercising* all three in one sandboxed process succeeded, with no `KMP_DUPLICATE_LIB_OK` escape hatch — in both a clean venv and the anaconda-symlinked `.venv`.
-    Do **not** read that as fixed, but the hazard did shrink. Dropping torch removed one of the three bundled OpenMP runtimes — `faiss/.dylibs/libomp.dylib` and `sklearn/.dylibs/libomp.dylib` remain (torch/lib/libomp.dylib is gone), and anaconda still adds `libomp.dylib` *and* `libiomp5.dylib` in `/opt/anaconda3/lib`. Duplicate-OpenMP crashes are load-order dependent, so they come and go. The dependency alignment plausibly helped by making the wheel set self-consistent, but nothing here proves causation. If it resurfaces, the first move is to stop using the anaconda-symlinked interpreter (see "Repo / local setup"), which is the only source of the *second* OpenMP vendor.
+11. ✅ **FIXED — OpenMP segfault (SIGSEGV, exit 139). Root cause proven 2026-09-17.**
+    Earlier notes had this as "could not reproduce, cause unproven" and blamed Cursor's
+    sandbox. Both were wrong. It reproduces anywhere, deterministically, and has nothing
+    to do with sandboxing.
+
+    **Trigger:** run FAISS `similarity_search` and *then* XGBoost in the same process.
+    `faiss/.dylibs/libomp.dylib`, `sklearn/.dylibs/libomp.dylib` and xgboost each bundle
+    their own OpenMP runtime; the second initialisation kills the process. The crash is
+    **silent** — no `OMP Error`, no traceback, just exit 139.
+
+    **How it showed up:** the full 30-query eval died at query 11/30 on `returns_001`,
+    the first gold query that calls `predict_return_risk`. Queries 1–10 only touched
+    review_qa, so they passed. Same mechanism as the historical "uvicorn died after one
+    request": any agent run that hits review_qa then predict_return_risk will do it.
+
+    **Fix:** `os.environ.setdefault("OMP_NUM_THREADS", "1")` at the top of `app.py` and
+    `eval/run_eval.py`, before faiss/xgboost/sklearn load. Deterministic either way —
+    5/5 clean with it, 3/3 crashes without.
+
+    ⚠️ **`KMP_DUPLICATE_LIB_OK=TRUE` does NOT fix this** (still exit 139), despite being
+    the standard advice for duplicate-OpenMP problems. Don't reach for it. Capping the
+    thread count is what works, and it costs nothing here: `IndexFlatL2` over a few
+    thousand vectors is microseconds and the XGBoost model is 126KB.
+
+    Minimal repro, if it ever needs re-testing: load a vectorstore, run three
+    `similarity_search` calls, then `predict_return_risk` — crashes without the env var.
 12. ✅ **RESOLVED (verified 2026-09-17) — Groq removed the entire Llama family.**
     A fix now exists in the **main checkout, uncommitted**: new `src/llm_config.py`
     (single source of truth, per-stage fallback chains, `resilient_call` failing over on
@@ -443,6 +467,45 @@ bound first.
 sentence-transformers'. It is six lines, pinned to a model revision, and covered by a test
 that fails loudly on drift — but it is a real maintenance surface, and a future MiniLM
 variant with different pooling would need `_encode` updated to match.
+
+---
+
+## Eval baseline re-established (2026-09-17)
+
+First judged 30-query run since 2026-05-18. Same gold set, so directly comparable:
+
+| run | n | err | dec.acc | j:dec | j:evid | j:hal | j:comp |
+|---|---|---|---|---|---|---|---|
+| llama-4-scout (May) | 30 | 10 | 40.0% | 0.405 | 0.450 | 0.730 | 0.785 |
+| gpt-oss-120b (2026-09-17) | 30 | **1** | **60.0%** | **0.572** | **0.545** | **0.811** | **0.876** |
+
+Error rate 33.3% → 3.3%; every judge dimension up. Trajectory F1 is the one regression,
+0.913 → 0.773 — but precision *rose* to 0.865 while recall fell to 0.750, i.e. the agent
+now calls fewer, more targeted tools and misses some the gold set expects. Read that as a
+gold-set/behaviour mismatch to investigate, not a straight quality loss.
+
+**`evidence_relevance` (0.545) is the weakest dimension and it is real** — 0.60 on a
+3-query smoke, 0.545 across all 30, lowest of the four in both this run and May's. With
+completeness at 0.876 and anti-hallucination at 0.811, the pattern is thorough,
+non-fabricated answers citing weakly-relevant evidence. That points at retrieval ranking
+(`FILTERED_FETCH_K`, chunking, the rating filter), not the model or the prompts. Best
+single lead for agent-quality work.
+
+**34 executor failovers** fired during the run — `openai/gpt-oss-20b` saturates its
+8000 TPM bucket almost immediately under back-to-back agent runs, and `resilient_call`
+moved to `openai/gpt-oss-safeguard-20b` each time. Zero queries lost to rate limits,
+versus the 429-driven failures that produced May's 33% error rate. The mechanism works;
+just expect the primary executor bucket to be exhausted for most of any full run.
+
+**The one failure** was `returns_005`: `tool_use_failed` — `gpt-oss-120b` emitted
+malformed JSON for the `Recommendation` tool call and `InstructorRetryException` gave up.
+Both such incidents this session logged `Total attempts: 1`, so **instructor retries are
+not actually retrying**; setting `max_retries` on the client in `src/llm_config.py`
+would likely have saved this query. Cheapest available reliability win.
+
+Results now persist incrementally (`_write_jsonl` after every query and every judge
+result), so a crash or rate-limit wall no longer discards a 20-minute paid run — which is
+exactly what happened on the first attempt at this eval.
 
 ---
 
