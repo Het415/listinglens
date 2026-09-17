@@ -86,6 +86,18 @@ REASONING_EFFORT = {
 # `tools` outright, and the whisper/orpheus/prompt-guard families are not
 # chat models). Fallbacks are ordered to land on a DIFFERENT rate bucket
 # where possible, so a 429 actually gets relief.
+#
+# ⚠️ Do NOT reorder this dict on the strength of one observed failure.
+# Attempted and reverted 2026-09-17: qwen returned XML-style tool-call syntax
+# for one long Synthesizer prompt, which looked like grounds to drop it from
+# the agent chain in favour of `openai/gpt-oss-safeguard-20b`. A direct A/B
+# against the *real* `Recommendation` schema then showed the opposite — qwen
+# produced valid JSON and safeguard-20b was the one that 400'd, emitting
+# `evidence` objects with `source`/`description` instead of the schema's
+# `snippet`/`relevance`. Every one of these models fails this schema
+# sometimes; none fails it always. `python -m scripts.doctor --probe`
+# exercises the real schema against every configured model — run it and read
+# the pass counts before editing this.
 FALLBACK_CHAINS = {
     "agent":    ["openai/gpt-oss-120b", "openai/gpt-oss-20b", "qwen/qwen3.8-27b"],
     "executor": ["openai/gpt-oss-20b", "openai/gpt-oss-safeguard-20b", "qwen/qwen3.8-27b"],
@@ -119,44 +131,118 @@ def model_chain(stage: str) -> list[str]:
 _MODEL_GONE = ("model_not_found", "does not exist or you do not have access")
 _RATE_LIMITED = ("rate_limit_exceeded", "rate limit reached", "request too large")
 
+# Groq rejects a tool call it cannot use with a 400 whose code is
+# `tool_use_failed`. It is a *generation* problem, not a bad request — the
+# model was asked for a valid schema and produced something else. Three
+# flavours observed on this repo's `Recommendation` schema:
+#
+#   1. Almost-valid JSON — escaped quotes inside an already-quoted string
+#      ("Failed to parse tool call arguments as JSON").
+#   2. Valid JSON, wrong shape — "Tool call validation failed: ... missing
+#      properties: 'snippet', 'relevance'".
+#   3. A different tool-call *syntax* entirely: `<tool_call><function=...>
+#      <parameter=...>` instead of JSON arguments.
+#
+# All three are stochastic on a given model/prompt pair, which is what makes
+# the same-model retry below worth it. Measured 3.3% of eval queries (1/30).
+# Whichever flavour it is, the agent run dies visibly.
+#
+# It is NOT caught by instructor's own `max_retries`, which is already 2 at
+# every call site. instructor's retry predicate is
+# `retry_if_exception_type((ValidationError, json.JSONDecodeError,
+# AsyncValidationError, ResponseParsingError))`, and a `tool_use_failed` 400
+# is a `BadRequestError` — so tenacity makes exactly one attempt and reraises
+# ("Max retries exceeded. Total attempts: 1" in the logs). instructor only
+# retries JSON that parses and then fails ITS validation; Groq validates
+# server-side and rejects first. Bumping max_retries does nothing.
+_TOOL_CALL_MALFORMED = (
+    "tool_use_failed",
+    "failed to parse tool call arguments",
+    "tool call validation failed",
+)
+
 
 def _failover_reason(err: Exception) -> str | None:
     """Return why `err` warrants trying the next model, or None to re-raise."""
+    # Opt-out for callers that run their own retry policy for a signature we
+    # also match — currently the executor node, which retries malformed tool
+    # calls per model and then degrades gracefully. Without this, its
+    # exhausted-retries error would match below and be retried all over again
+    # on every model in the chain.
+    if getattr(err, "llm_no_failover", False):
+        return None
     text = str(err).lower()
     if any(sig in text for sig in _MODEL_GONE):
         return "decommissioned"
     if any(sig in text for sig in _RATE_LIMITED):
         return "rate-limited"
+    if any(sig in text for sig in _TOOL_CALL_MALFORMED):
+        return "emitting malformed tool calls"
     return None
+
+
+# How many times to re-run the SAME model before advancing the chain.
+#
+# A malformed tool call is stochastic — the identical request often succeeds on
+# a second attempt — so one cheap same-model retry is the highest-value
+# recovery available, and it is strictly better than failing over, because no
+# model in the chain is reliably better at this schema. Decommissioning and
+# rate limits are not stochastic: retrying the same model there only adds
+# latency, so they advance at once.
+#
+# One retry, not three: every attempt spends the per-model token budget
+# (200k tokens/day, 8k/min on the free tier), and burning it here makes the
+# NEXT query likelier to 429. That cascade is real — it is what turned a
+# 15-query verification run into four rate-limit failures on 2026-09-17.
+_SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
 
 
 def resilient_call(stage: str, fn):
     """Run `fn(model_id)` against the stage's chain until one succeeds.
 
     `fn` takes a model id and performs the actual LLM call. On a decommissioned
-    or rate-limited model we move to the next candidate; any other exception
-    propagates untouched. If every model fails, the LAST exception is raised so
-    the caller sees a real provider error rather than a synthetic one.
+    or rate-limited model, or one that returned an unusable tool call, we move
+    to the next candidate; any other exception propagates untouched. If every
+    model fails, the LAST exception is raised so the caller sees a real
+    provider error rather than a synthetic one.
 
     This is what keeps a Groq deprecation from becoming an outage: the app
     silently degrades to the next model and logs loudly enough that
     `scripts/doctor.py` gets run.
+
+    Worst case is bounded by `len(chain)` attempts plus one extra per model for
+    a malformed tool call — 6 calls for a 3-model chain. That ceiling is only
+    reached on a path that would otherwise have failed outright.
     """
     chain = model_chain(stage)
     last: Exception | None = None
-    for i, model in enumerate(chain):
+    i = 0
+    retries_used = 0
+    while i < len(chain):
+        model = chain[i]
         try:
             return fn(model)
         except Exception as e:  # noqa: BLE001 — provider exception types vary
             reason = _failover_reason(e)
-            if reason is None or i == len(chain) - 1:
+            if reason is None:
                 raise
             last = e
+            if retries_used < _SAME_MODEL_RETRIES.get(reason, 0):
+                retries_used += 1
+                print(
+                    f"[llm_config] {stage}: {model} is {reason}; "
+                    f"retrying the same model (attempt {retries_used + 1})."
+                )
+                continue
+            if i == len(chain) - 1:
+                raise
             nxt = chain[i + 1]
             print(
                 f"[llm_config] {stage}: {model} is {reason}; "
                 f"falling back to {nxt}. Run `python -m scripts.doctor`."
             )
+            i += 1
+            retries_used = 0
     if last:
         raise last
     raise RuntimeError(f"no models configured for stage {stage!r}")

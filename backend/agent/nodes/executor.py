@@ -77,7 +77,18 @@ def _invoke_with_retry(bind_for, messages):
 
 
 class _MalformedToolCalls(RuntimeError):
-    """Every retry on a model produced unparseable tool-call JSON."""
+    """Every retry on a model produced unparseable tool-call JSON.
+
+    `llm_no_failover` tells `resilient_call` to re-raise instead of walking the
+    fallback chain. This class's message embeds the original Groq error, which
+    contains `tool_use_failed` — a signature `resilient_call` now fails over
+    for. Without the opt-out, exhausting TOOL_CALL_RETRIES here would hand the
+    error back for another full chain walk, so a single stuck executor turn
+    would cost 3 models x 3 attempts instead of 3, on a path whose whole point
+    is to degrade quickly and let the Synthesizer work with what it has.
+    """
+
+    llm_no_failover = True
 
 
 def make_executor_node(tools):
