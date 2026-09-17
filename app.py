@@ -31,6 +31,8 @@ os.environ.setdefault("OMP_NUM_THREADS", "1")
 # is not: when a build fails, Render keeps serving the previous release, so a
 # 200 with "status": "healthy" looks identical whether the new commit went live
 # or never built. Comparing this against `git rev-parse HEAD` is the check.
+# Known to lag at least one deploy — see the caveat in health() before
+# relying on this for anything.
 DEPLOYED_COMMIT = os.getenv("RENDER_GIT_COMMIT", "")[:12] or "unknown"
 
 # Define it here (Top level)
@@ -668,6 +670,25 @@ def health():
     `status` stays "healthy" regardless, per the test contract.
 
     `commit` is the deployed revision (RENDER_GIT_COMMIT), "unknown" off-Render.
+
+    ⚠️ Do NOT trust `commit` to tell you what is deployed. Observed 2026-09-17:
+    Render reported deploy dep-dalri90u01pc73fle5kg live at de26bbc8, the logs
+    confirmed a fresh uvicorn process started at 10:06:01 and served the very
+    requests being inspected — and this field still returned 60bf64a1, the
+    previous commit. So RENDER_GIT_COMMIT inside the running container lags by
+    at least one deploy. Not caching (each request appears in the logs), not a
+    dashboard override (the service sets only CORS_ALLOWED_ORIGINS, GROQ_API_KEY,
+    HF_TOKEN, HUGGINGFACE_API_KEY), and not unset (that would read "unknown").
+    Cause unproven — the build cache is the suspicion, nothing more.
+
+    To actually check what is deployed, ask Render, not this endpoint:
+
+        curl -s -H "Authorization: Bearer $RENDER_API_KEY" \
+          "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=1" \
+          | python3 -c "import json,sys;d=json.load(sys.stdin)[0]['deploy'];\
+                        print(d['status'], d['commit']['id'][:12])"
+
+    Note `deactivated` there means superseded by a newer deploy, not failed.
     """
     from src.llm_config import configured_models
 
