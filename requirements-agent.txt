@@ -18,11 +18,23 @@
 #       source .venv/bin/activate
 #       uv pip install -r requirements.txt -r requirements-agent.txt
 #
-# Both pins were validated to NOT downgrade the langchain v1 ecosystem
+# All pins were validated to NOT downgrade the langchain v1 ecosystem
 # pinned in requirements.txt.
 
 # Evaluation harness (DeepEval handles LLM-as-judge primitives)
 deepeval>=2.0
+
+# Judge SDK. eval/judges.py defaults to JUDGE_PROVIDER=anthropic and builds a
+# `deepeval.models.AnthropicModel`, which imports `anthropic` at call time.
+#
+# Declared explicitly rather than leaned on transitively: deepeval 2.x happens
+# to require anthropic>=0.49,<0.50, but deepeval 4.x drops it as a dependency
+# entirely. Relying on the transitive pull means a deepeval bump silently
+# removes the SDK and every judge call fails at runtime with an ImportError,
+# long after the install that caused it.
+#
+# Kept as a floor, not a ceiling, so it does not fight deepeval's own cap.
+anthropic>=0.49
 
 # Tracing / observability for LangGraph
 langsmith>=0.3

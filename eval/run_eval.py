@@ -69,6 +69,22 @@ def _judge_label() -> str:
     return os.getenv("JUDGE_MODEL_OPENAI", "gpt-4o-mini") + " (OpenAI)"
 
 
+def _judge_line(with_judges: bool) -> str:
+    """Report header text for the judge row.
+
+    Must distinguish "judged by X" from "not judged at all". The header used to
+    print _judge_label() unconditionally, so a `--no-judge` run still claimed
+    `Judge model: claude-haiku-4-5-20251001 (Anthropic)` — and since `variant`
+    defaults to "full" whenever no baseline is selected, the report looked like
+    a complete judged run. eval/reports/2026-09-15-postfix.md is exactly that:
+    a --no-judge run whose header names a judge, with no judge scores in the
+    accompanying .jsonl.
+    """
+    if not with_judges:
+        return "_not run_ (`--no-judge`) — no LLM-as-judge scores in this report"
+    return f"`{_judge_label()}`"
+
+
 def _percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
@@ -191,6 +207,11 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
         "decision_accuracy": round(decision_accuracy, 3),
         "trajectory": trajectory_aggs,
         "latency": latency_stats,
+        # Recorded so the report can say whether judging ran instead of
+        # advertising a judge model unconditionally. A --no-judge run used to
+        # print "Judge model: claude-haiku-4-5-..." in its header, which made
+        # unjudged reports read as judged ones.
+        "with_judges": with_judges,
         "judges": judge_aggs,
     }
 
@@ -220,7 +241,7 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         f"- **Agent model:** `{agent_model()}`",
         f"- **Executor model:** `{executor_model()}`",
         f"- **RAG model:** `{rag_model()}`",
-        f"- **Judge model:** `{_judge_label()}`",
+        f"- **Judge:** {_judge_line(summary.get('with_judges', True))}",
         "",
         "## Summary",
         "",
