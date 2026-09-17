@@ -26,6 +26,13 @@ load_dotenv()
 # microseconds, and the XGBoost model is tiny.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
+# Render injects RENDER_GIT_COMMIT into the service environment at build time.
+# Surfacing it makes a deploy verifiable from outside, which /health otherwise
+# is not: when a build fails, Render keeps serving the previous release, so a
+# 200 with "status": "healthy" looks identical whether the new commit went live
+# or never built. Comparing this against `git rev-parse HEAD` is the check.
+DEPLOYED_COMMIT = os.getenv("RENDER_GIT_COMMIT", "")[:12] or "unknown"
+
 # Define it here (Top level)
 ENV_MODE = os.getenv("ENV_MODE", "production")
 # ── App State ──────────────────────────────────────────────────────────────────
@@ -659,11 +666,14 @@ def health():
     container unhealthy. `models` reports what is *configured*, not whether
     those models are still live — validating that is `scripts/doctor.py`.
     `status` stays "healthy" regardless, per the test contract.
+
+    `commit` is the deployed revision (RENDER_GIT_COMMIT), "unknown" off-Render.
     """
     from src.llm_config import configured_models
 
     return {
         "status": "healthy",
+        "commit": DEPLOYED_COMMIT,
         "cached_asins": list(app_state.get("cache", {}).keys()),
         "supported_asins": len(app_state.get("supported_asins", {})),
         "models": configured_models(),
