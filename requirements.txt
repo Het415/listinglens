@@ -1,8 +1,8 @@
 # ── ListingLens backend (minimal direct deps) ───────────────────────────────
-# Smaller PyTorch CPU wheels on Linux/macOS (avoids huge CUDA metapackages).
---extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.1.0+cpu
-
+# Target runtime: CPython 3.13 (see .python-version / Dockerfile). Every pin
+# below is verified to resolve on linux-x86_64 (Render + Docker) and
+# macOS-arm64 (local dev) with the same versions.
+#
 # API
 fastapi==0.115.6
 uvicorn[standard]==0.32.1
@@ -10,7 +10,7 @@ python-dotenv==1.0.1
 pydantic>=2.10,<3
 
 # Data & ingest
-numpy>=1.26,<2.0
+numpy>=2.1,<3
 pandas>=2.2,<3.1
 requests>=2.32
 datasets>=2.21,<3
@@ -25,14 +25,32 @@ xgboost>=2.0,<4
 # files otherwise, so this is a safe runtime dependency.
 duckdb>=1.0,<2
 
-# RAG — pin HF stack so pip does not downgrade transformers
-faiss-cpu>=1.8,<2
-sentence-transformers==2.7.0
-transformers==4.44.2
+# RAG.
+#
+# No torch, transformers or sentence-transformers here — deliberately. The
+# only thing this app ever used them for was MiniLM embeddings, and that
+# import chain cost ~490MiB of RSS before reading a single weight, which is
+# what pushed the RAG path over a 512MB instance. src/onnx_embeddings.py runs
+# the same checkpoint through onnxruntime instead and produces identical
+# vectors (cosine 1.000000 against the committed FAISS indexes, asserted by
+# tests/test_onnx_embeddings.py). Measured in the production image:
+# 705MiB -> 380MiB, and the image drops ~1.1GB (3.59GB -> 2.48GB).
+#
+# If you ever reintroduce sentence-transformers, pin it as
+# `langchain-huggingface[full]` — the plain package declares no
+# sentence-transformers floor at all, so pip will silently pair it with a
+# 2.x install and report no conflict.
+#
+# faiss-cpu floor is 1.13 — the first release with cp313 wheels. Note this
+# raises the local-dev floor to macOS 14: faiss-cpu >=1.13 publishes
+# `macosx_14_0_arm64` wheels only. Linux (Render/Docker) is unaffected.
+faiss-cpu>=1.13,<2
+onnxruntime>=1.20,<2
+tokenizers>=0.20,<1
+huggingface-hub>=0.33,<2
 langchain==1.2.13
 langchain-core==1.2.21
 langchain-community==0.4.1
-langchain-huggingface==1.2.1
 langchain-groq==1.1.2
 langchain-text-splitters==1.1.1
 

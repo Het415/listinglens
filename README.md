@@ -3,7 +3,7 @@
 > An AI agent for Amazon sellers that plans its own research, calls the right tools, and returns a structured recommendation with cited evidence.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Online-black?style=for-the-badge)](https://listinglens.hetprajapati.me)
-[![Python](https://img.shields.io/badge/Python-3.11-green?style=for-the-badge&logo=python)](https://python.org)
+[![Python](https://img.shields.io/badge/Python-3.13-green?style=for-the-badge&logo=python)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/Agent-LangGraph%20v1-FF6F00?style=for-the-badge)](https://github.com/langchain-ai/langgraph)
@@ -172,7 +172,7 @@ python -m backend.agent.run --asin B08XPWDSWW "Why are returns spiking?" --prett
 
 **Agent layer:** [LangGraph](https://github.com/langchain-ai/langgraph) v1 as the state machine, [Groq](https://groq.com) running Llama 4 Scout for the LLM (fast, reliable structured output), [instructor](https://github.com/jxnl/instructor) + Pydantic v2 for type-safe outputs, [MCP](https://modelcontextprotocol.io) (Anthropic's tool protocol) as the tool interface.
 
-**Real-data tools:** FAISS for vector search over ~2,800 review chunks per product, sentence-transformers `all-MiniLM-L6-v2` for embeddings, XGBoost for return-risk classification, HuggingFace's RoBERTa for sentiment.
+**Real-data tools:** FAISS for vector search over ~2,800 review chunks per product, `all-MiniLM-L6-v2` (ONNX Runtime) for embeddings, XGBoost for return-risk classification, HuggingFace's RoBERTa for sentiment.
 
 **Eval:** custom trajectory-matching algorithm + DeepEval's `GEval` for LLM-as-judge scoring. Claude Haiku as judge (different family from Llama → no same-family bias). LangSmith for trace visualization.
 

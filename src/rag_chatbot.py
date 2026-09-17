@@ -1,26 +1,25 @@
 import os
 import json
 import time
-from functools import lru_cache
 import pandas as pd
 from dotenv import load_dotenv
 
 load_dotenv()
 
 
-@lru_cache(maxsize=1)
 def _get_embeddings():
-    """Process-wide singleton for the sentence-transformers embeddings model.
+    """Process-wide singleton for the MiniLM embeddings model.
 
-    Loading MiniLM costs ~3-5s and ~80MB of RAM. Reusing one instance across
-    every ASIN's vectorstore matters on a 512MB free-tier instance.
+    Backed by onnxruntime rather than sentence-transformers/torch: same
+    checkpoint, same vectors (verified to cosine 1.000000 against the committed
+    FAISS indexes), ~440MiB less RSS. That difference is the whole reason the
+    RAG path fits on a small instance — see src/onnx_embeddings.py for the
+    measurements. Reusing one instance across every ASIN's vectorstore still
+    matters; the singleton now lives in that module.
     """
-    from langchain_huggingface import HuggingFaceEmbeddings
+    from src.onnx_embeddings import get_embeddings
 
-    return HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-    )
+    return get_embeddings()
 
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 

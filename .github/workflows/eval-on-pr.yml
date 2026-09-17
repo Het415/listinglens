@@ -23,10 +23,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.11
+      - name: Set up Python 3.13
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.13'
 
       - name: Install OS deps for XGBoost (libomp)
         run: sudo apt-get update && sudo apt-get install -y libgomp1
@@ -34,12 +34,10 @@ jobs:
       - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
-          # Strip the macOS-incompatible torch pin; CI runs on Linux where the
-          # original +cpu wheel works, but installing from PyPI is simpler.
-          grep -v "^torch" requirements.txt | grep -v "^--extra-index-url" > /tmp/req.txt
-          pip install -r /tmp/req.txt -r requirements-agent.txt
-          # Linux can install the torch+cpu wheel directly:
-          pip install torch==2.1.0+cpu --extra-index-url https://download.pytorch.org/whl/cpu
+          # The old strip-and-reinstall dance for torch is gone: torch is no
+          # longer a dependency at all (embeddings run on onnxruntime), so
+          # requirements.txt installs cleanly on every platform as-is.
+          pip install --prefer-binary -r requirements.txt -r requirements-agent.txt
 
       - name: Run 5-query smoke eval (no judge — cost-free)
         env:

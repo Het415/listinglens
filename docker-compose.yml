@@ -14,12 +14,15 @@ services:
   api:
     build: .
     image: listinglens-api:dev
-    # Force x86_64 emulation. Required on Apple Silicon because
-    # requirements.txt pins torch==2.1.0+cpu, and the PyTorch CPU index
-    # only ships that wheel for linux/amd64 (arm64 +cpu wheels started
-    # at torch 2.6). Render production is x86_64 Linux, so this also
-    # gives us dev/prod parity. Rosetta makes this ~2x slower than a
-    # native arm64 build — acceptable for a dev container.
+    # Force x86_64 emulation. This is now purely a *parity* choice: Render
+    # production is x86_64 Linux and matching it keeps dev honest. The
+    # original hard reason — a torch `+cpu` wheel that only existed for
+    # linux/amd64 — is gone, because torch is no longer a dependency at all
+    # (embeddings run on onnxruntime; see src/onnx_embeddings.py). Every
+    # remaining pin has manylinux aarch64 wheels.
+    # Rosetta costs ~2x. Deleting this line gives you a native arm64 build
+    # for local iteration — just don't expect it to catch
+    # architecture-specific production bugs.
     platform: linux/amd64
     ports:
       - "8000:8000"
