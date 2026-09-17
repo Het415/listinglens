@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { ArrowRight, Info, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { SkeletonGrid } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -116,18 +117,18 @@ export function CompetitorMarketPanel({
         className={`bg-background-card border border-border rounded-xl p-5 ${staggerClass}`}
       >
         <PanelHeader showCompareCta={showCompareCta} compareHref={compareHref} />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
-          {[0, 1, 2].map((i) => (
-            <div
-              key={i}
-              className="bg-background border border-border rounded-lg p-4 space-y-3 animate-pulse"
-            >
-              <div className="h-4 w-3/4 bg-muted rounded" />
-              <div className="h-3 w-1/2 bg-muted rounded" />
-              <div className="h-3 w-full bg-muted rounded" />
-              <div className="h-3 w-5/6 bg-muted rounded" />
-            </div>
-          ))}
+        {/* Shares the dashboard's skeleton primitive rather than hand-rolling
+            another pulse block — this panel renders on /dashboard and
+            /dashboard/compare, so a third animation style would show up
+            directly alongside the unified one. No DashboardLoading wrapper
+            here: the panel keeps its own header while loading, so it already
+            says what is coming and does not need a caption. */}
+        <div className="mt-4">
+          <SkeletonGrid
+            count={3}
+            cols="grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+            height="h-28"
+          />
         </div>
       </section>
     )

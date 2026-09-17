@@ -9,6 +9,7 @@ import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
   /\/$/,
@@ -384,17 +385,13 @@ function ReviewsPageInner() {
       )}
 
       {loading && !error && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="animate-pulse rounded-xl border border-border bg-card p-5">
-                <div className="h-4 w-1/2 rounded bg-muted" />
-                <div className="mt-4 h-8 w-2/3 rounded bg-muted" />
-              </div>
-            ))}
-          </div>
-          <div className="h-28 animate-pulse rounded-xl border border-border bg-card p-5" />
-        </div>
+        <DashboardLoading
+          note="Loading review analysis"
+          slowNote="This route pulls every review for the ASIN, so the payload is large."
+        >
+          <SkeletonGrid count={4} />
+          <SkeletonPanel className="h-28" />
+        </DashboardLoading>
       )}
 
       {!loading && analysis && (
@@ -724,7 +721,7 @@ function StatCard({
 
 export default function ReviewsPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<RouteFallback />}>
       <ReviewsPageInner />
     </Suspense>
   )

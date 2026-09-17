@@ -6,6 +6,7 @@ import { Star } from 'lucide-react'
 
 import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-panel'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -318,18 +319,17 @@ function ComparePageContent() {
       )}
 
       {loading && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="bg-card border border-border rounded-xl p-5 space-y-3 animate-pulse">
-              <div className="h-5 w-2/3 bg-muted rounded" />
-              <div className="h-4 w-1/3 bg-muted rounded" />
-              <div className="h-3 w-full bg-muted rounded" />
-              <div className="h-3 w-5/6 bg-muted rounded" />
-              <div className="h-3 w-4/5 bg-muted rounded" />
-              <div className="h-3 w-2/3 bg-muted rounded" />
-            </div>
-          ))}
-        </div>
+        <DashboardLoading
+          note="Comparing products"
+          slowNote="Each product is analyzed separately, so this scales with the number of slots."
+        >
+          {/* One tall panel per compare slot, same 3-col grid as the results. */}
+          <SkeletonGrid
+            count={3}
+            cols="grid-cols-1 gap-4 lg:grid-cols-3"
+            height="h-56"
+          />
+        </DashboardLoading>
       )}
 
       {!loading && cards.length >= 2 && (
@@ -429,7 +429,7 @@ function MetricRow({
 
 export default function ComparePage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<RouteFallback />}>
       <ComparePageContent />
     </Suspense>
   )

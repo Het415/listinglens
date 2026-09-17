@@ -10,6 +10,7 @@ import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { exportBriefToPDF, type BriefResponse } from '@/lib/exportBrief'
 import { useDashboardExport } from '../dashboard-export-context'
+import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -108,15 +109,14 @@ function BriefInner() {
       )}
 
       {loading && !error && (
-        <div className="space-y-4">
-          <div className="h-24 animate-pulse rounded-xl border border-border bg-card" />
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-32 animate-pulse rounded-xl border border-border bg-card" />
-            ))}
-          </div>
-          <p className="text-center text-xs text-muted-foreground">Synthesizing brief with the LLM…</p>
-        </div>
+        <DashboardLoading
+          note="Synthesizing brief with the LLM"
+          slowNote="The brief is generated fresh on a cache miss, which takes ~15s. Reloads are instant."
+        >
+          {/* Headline block, then the KPI row — same grid as the real one. */}
+          <SkeletonPanel className="h-24" />
+          <SkeletonGrid count={4} />
+        </DashboardLoading>
       )}
 
       {!loading && brief && m && (
@@ -208,7 +208,7 @@ function BriefInner() {
 
 export default function BriefPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<RouteFallback />}>
       <BriefInner />
     </Suspense>
   )

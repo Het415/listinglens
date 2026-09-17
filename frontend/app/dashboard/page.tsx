@@ -9,6 +9,7 @@ import { PhraseClouds } from '@/components/dashboard/phrase-clouds'
 import { ReviewDistribution } from '@/components/dashboard/review-distribution'
 import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-panel'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
+import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 import { exportToPDF } from '@/lib/exportReport'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { useDashboardExport } from './dashboard-export-context'
@@ -98,11 +99,21 @@ function DashboardPageContent() {
   if (!mounted) return null
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <div className="text-center space-y-3">
-        <div className="animate-spin w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full mx-auto"/>
-        <p className="text-muted-foreground text-sm">Loading analysis for {asin}...</p>
-      </div>
+    <div className="p-4 md:p-6">
+      <DashboardLoading
+        note={`Loading analysis for ${asin}`}
+        slowNote="First load runs the review pipeline and warms the vector index — later loads are cached."
+      >
+        {/* Mirrors the real sections below: 4 score cards, the 7/5 split, and
+            the full-width sentiment panel. Same grid classes, so nothing
+            reflows when the data lands. */}
+        <SkeletonGrid count={4} />
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+          <SkeletonPanel className="h-72 lg:col-span-7" />
+          <SkeletonPanel className="h-72 lg:col-span-5" />
+        </div>
+        <SkeletonPanel className="h-56" />
+      </DashboardLoading>
     </div>
   )
 
@@ -217,7 +228,7 @@ function DashboardPageContent() {
 
 export default function DashboardPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<RouteFallback />}>
       <DashboardPageContent />
     </Suspense>
   )

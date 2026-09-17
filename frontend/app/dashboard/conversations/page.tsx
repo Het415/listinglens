@@ -18,6 +18,7 @@ import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/
 import { ScoreCard } from '@/components/dashboard/score-card'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
 
@@ -150,11 +151,9 @@ function ConversationsInner() {
       )}
 
       {loading && !error && (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="h-32 animate-pulse rounded-xl border border-border bg-card" />
-          ))}
-        </div>
+        <DashboardLoading note="Loading conversations">
+          <SkeletonGrid count={4} />
+        </DashboardLoading>
       )}
 
       {!loading && data && (
@@ -367,7 +366,7 @@ function LiveClassifier({ productName }: { productName?: string }) {
 
 export default function ConversationsPage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">Loading…</div>}>
+    <Suspense fallback={<RouteFallback />}>
       <ConversationsInner />
     </Suspense>
   )
