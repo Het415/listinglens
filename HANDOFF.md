@@ -181,7 +181,7 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 10 | Make `tool_use_failed` retryable (instructor predicate) | ✅ done — `resilient_call` now retries same-model once then fails over; 8 unit tests in `tests/test_llm_config.py` |
 | 13 | Delete/hide `/dashboard/visual` "coming soon" placeholder | ✅ done — route deleted; also removed the landing page's unimplemented CLIP/"multimodal" claims |
 | 14 | `pytest` segfaults on macOS without `OMP_NUM_THREADS=1` | ✅ done — pinned in `tests/conftest.py` |
-| 15 | Agent fallback chain ends on `qwen/qwen3.8-27b`, whose OTPM limit is 1000 output tokens/min — too small for a Synthesizer `Recommendation` | open — see "Detail" below |
+| 15 | ~~Agent fallback chain ends on `qwen/qwen3.8-27b`, whose OTPM limit is too small for a Synthesizer `Recommendation`~~ | ❌ **not a defect — investigated and closed.** This row recorded a wrong hypothesis before the A/B disproved it: qwen handles the real schema, the proposed replacement did not, and the 429s were the daily token cap. Do not act on it; see "Measured per-model reliability" |
 | 11 | Retrieval ranking: `evidence_relevance` is the weakest judge dimension (0.545) | P3 |
 | 8 | Auto-populate Competitor Compare from `competitor_search`  | open (alternative pickup) |
 | 9 | Record the Loom demo (originally Stage 6) | open |
