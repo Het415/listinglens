@@ -6,33 +6,32 @@ available) conversation analytics, then makes a single structured LLM call
 ExecutiveBrief. Also returns the raw KPI metrics so the UI can render tiles
 without re-deriving them.
 """
-import os
 from functools import lru_cache
 
 from dotenv import load_dotenv
+
+from src.llm_config import groq_client, reasoning_effort, resilient_call
 
 from .schemas import ExecutiveBrief
 
 load_dotenv()
 
 
-def _model() -> str:
-    # Narrative quality matters here — use the flagship agent model.
-    return os.getenv("AGENT_MODEL", "llama-3.3-70b-versatile")
-
-
 @lru_cache(maxsize=1)
 def _client():
-    import instructor
-    from groq import Groq
-    return instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    # Narrative quality matters here — runs on the flagship agent model.
+    return groq_client()
 
 
 BRIEF_SYSTEM_PROMPT = (
     "You are a senior analyst writing a one-page executive brief for a product "
     "leadership team. Be concise, quantified, and decision-oriented. Ground every "
     "claim in the metrics provided — do not invent numbers. Prioritize actions by "
-    "business impact. Write for a VP who has 60 seconds."
+    "business impact. Write for a VP who has 60 seconds.\n\n"
+    "Rank the actions honestly: assign priority per action based on business "
+    "impact and urgency, not uniformly. A list where everything is 'medium' "
+    "is useless to a reader deciding what to do first — mark the one or two "
+    "that matter most as 'high' and anything deferrable as 'low'."
 )
 
 
@@ -96,15 +95,16 @@ def generate_brief(asin: str, product_name: str | None = None) -> dict:
         _context_block(product_name, metrics)
         + "\n\nWrite the executive brief now."
     )
-    brief: ExecutiveBrief = _client().chat.completions.create(
-        model=_model(),
+    brief: ExecutiveBrief = resilient_call("agent", lambda model: _client().chat.completions.create(
+        model=model,
         response_model=ExecutiveBrief,
+        reasoning_effort=reasoning_effort("agent"),
         max_retries=2,
         messages=[
             {"role": "system", "content": BRIEF_SYSTEM_PROMPT},
             {"role": "user", "content": user_msg},
         ],
-    )
+    ))
     return {
         "asin": asin,
         "product_name": product_name,

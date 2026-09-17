@@ -278,12 +278,15 @@ def chat(request: ChatRequest):
     chain_key = f"chain_{request.asin}"
 
     if chain_key not in app_state:
+        from backend.mcp_server.tools._loader import asin_reviews_df
         from src.rag_chatbot import run_rag_pipeline
 
         # ensure analyze ran
         run_full_pipeline(request.asin)
 
-        df_enriched = pd.read_csv(f"data/processed/nlp_{request.asin}.csv").head(100)
+        # asin_reviews_df stratifies across ratings; a plain head(100) on the
+        # rating-sorted CSV would index only 1- and 2-star reviews.
+        df_enriched = asin_reviews_df(request.asin)
         rag = run_rag_pipeline(df_enriched, request.asin)
 
         app_state[chain_key] = rag["chain"]
@@ -632,11 +635,21 @@ def get_competitors(asin: str, max_results: int = 5):
 
 @app.get("/health")
 def health():
-    """Health check endpoint for Render deployment."""
+    """Health check endpoint for Render deployment.
+
+    Deliberately does NO network I/O: the Dockerfile HEALTHCHECK and
+    tests/test_api.py both hit this, and a Groq outage must not mark the
+    container unhealthy. `models` reports what is *configured*, not whether
+    those models are still live — validating that is `scripts/doctor.py`.
+    `status` stays "healthy" regardless, per the test contract.
+    """
+    from src.llm_config import configured_models
+
     return {
         "status": "healthy",
         "cached_asins": list(app_state.get("cache", {}).keys()),
         "supported_asins": len(app_state.get("supported_asins", {})),
+        "models": configured_models(),
     }
 
 
@@ -649,13 +662,18 @@ def _warm_asin_sync(asin: str) -> None:
     try:
         # Hydrate the in-memory NLP/risk cache and disk-cached FAISS index.
         run_full_pipeline(asin)
-        df_enriched = pd.read_csv(f"data/processed/nlp_{asin}.csv").head(100)
+        from backend.mcp_server.tools._loader import asin_reviews_df
+
+        df_enriched = asin_reviews_df(asin)
         from src.rag_chatbot import run_rag_pipeline
 
         rag = run_rag_pipeline(df_enriched, asin)
         app_state[f"chain_{asin}"] = rag["chain"]
     except Exception as e:
-        print(f"[warmup] chain warmup failed for {asin}: {e}")
+        # Best-effort by design, but name the failure — a decommissioned model
+        # used to make warmup look successful and resurface the 404 later,
+        # inside a user request.
+        print(f"[warmup] chain warmup failed for {asin} ({type(e).__name__}: {e})")
 
     try:
         from backend.agent.graph import build_graph

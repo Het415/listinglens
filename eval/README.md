@@ -26,7 +26,7 @@ You cannot unit-test an agent the way you test a function. Outputs are stochasti
 
 ### Axis 1 — Output quality (LLM-as-judge)
 
-A second LLM scores each agent response on a 0-5 rubric. To avoid same-family bias, the judge model is a *different model family* than the agent (agent: Groq Llama 3.3 70B; judge: GPT-4o-mini).
+A second LLM scores each agent response on a 0-5 rubric. To avoid same-family bias, the judge model is a *different model family* than the agent (agent: Groq `gpt-oss-120b`; judge: Anthropic `claude-haiku-4-5-20251001` by default). Set `JUDGE_PROVIDER=openai` to use `gpt-4o-mini` instead, or pass `--no-judge` to skip judging entirely.
 
 Four scored dimensions per query:
 - **Decision correctness** — does the agent's `decision` match the gold `expected_decision`?
@@ -66,7 +66,7 @@ The full agent must beat both baselines on a composite score. If it doesn't, the
 |---|---|---|
 | `gold_set.jsonl` | **Stage 0 ✅** | 30 hand-crafted queries with expected outputs |
 | `run_eval.py` | Stage 4 | Main eval runner — invokes agent on each gold query, records results |
-| `judges.py` | Stage 4 | DeepEval `GEval` LLM-as-judge metrics (GPT-4o-mini as judge) |
+| `judges.py` | Stage 4 | DeepEval `GEval` LLM-as-judge metrics (Claude Haiku 4.5 by default; `JUDGE_PROVIDER=openai` switches to GPT-4o-mini) |
 | `trajectory_eval.py` | Stage 4 | F1 + ordering bonus over actual vs expected tool sets |
 | `reports/` | Stage 4 | Generated Markdown reports per run, named `YYYY-MM-DD.md` |
 

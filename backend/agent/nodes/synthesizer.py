@@ -4,18 +4,12 @@ Single instructor + Groq call. Reads the message history (which contains
 the planner's bookkeeping, the executor's reasoning, and the tool results)
 and produces a `Recommendation` matching the Pydantic schema.
 """
-import os
-
-import instructor
-from groq import Groq
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+
+from src.llm_config import groq_client, reasoning_effort, resilient_call, thought_text
 
 from ..prompts import SYNTHESIZER_SYSTEM_PROMPT
 from ..schemas import AgentState, Recommendation
-
-
-def _model() -> str:
-    return os.getenv("AGENT_MODEL", "llama-3.3-70b-versatile")
 
 
 def _build_transcript(messages: list, query: str, query_type: str, plan: list[str]) -> str:
@@ -37,8 +31,9 @@ def _build_transcript(messages: list, query: str, query_type: str, plan: list[st
             if m.tool_calls:
                 for tc in m.tool_calls:
                     lines.append(f"EXECUTOR called: {tc['name']}({tc.get('args', {})})")
-            if m.content:
-                lines.append(f"EXECUTOR thought: {m.content}")
+            thought = thought_text(m)
+            if thought:
+                lines.append(f"EXECUTOR thought: {thought}")
         elif isinstance(m, ToolMessage):
             content = str(m.content)
             if len(content) > 1500:
@@ -49,7 +44,7 @@ def _build_transcript(messages: list, query: str, query_type: str, plan: list[st
 
 def synthesize_node(state: AgentState) -> dict:
     """Run instructor + Groq once to produce the Recommendation."""
-    client = instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    client = groq_client()
 
     transcript = _build_transcript(
         messages=state.get("messages", []),
@@ -58,10 +53,11 @@ def synthesize_node(state: AgentState) -> dict:
         plan=state.get("plan", []),  # remaining plan items
     )
 
-    recommendation: Recommendation = client.chat.completions.create(
-        model=_model(),
+    recommendation: Recommendation = resilient_call("agent", lambda model: client.chat.completions.create(
+        model=model,
         response_model=Recommendation,
         max_retries=2,
+        reasoning_effort=reasoning_effort("agent"),
         messages=[
             {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
             {
@@ -73,7 +69,7 @@ def synthesize_node(state: AgentState) -> dict:
                 ),
             },
         ],
-    )
+    ))
 
     # Surface a short Synthesizer marker into messages so the trace is legible
     synth_msg = AIMessage(

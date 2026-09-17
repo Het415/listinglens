@@ -7,7 +7,7 @@ from typing import Annotated, Literal, Optional
 
 from langchain_core.messages import AnyMessage
 from langgraph.graph.message import add_messages
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing_extensions import TypedDict
 
 
@@ -52,11 +52,44 @@ class Plan(BaseModel):
 # ── Final structured output ───────────────────────────────────────────────────
 
 class Evidence(BaseModel):
-    """A single piece of cited evidence backing the recommendation."""
+    """A single piece of cited evidence backing the recommendation.
 
-    tool: str = Field(..., description="Name of the tool that produced this evidence")
+    `tool` is deliberately NOT required on the wire, and a before-validator
+    accepts several spellings of it. Reason: Groq validates the model's
+    tool-call arguments against this JSON schema *server-side*, and the
+    gpt-oss models are inconsistent about this key — across three retries of
+    one query they emitted `tool_name`, `tool`, and `source` respectively.
+    A schema that demands any single spelling turns that into a hard 400
+    (`tool_use_failed`) which burns every retry and loses the whole
+    recommendation. Accepting all of them and normalizing is strictly more
+    robust than trying to out-prompt the model.
+
+    The Python attribute and the serialized JSON key stay `tool`, so
+    eval/judges.py, backend/agent/run.py and the frontend are unaffected.
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    tool: str = Field(
+        default="unknown",
+        description=(
+            "Name of the tool that produced this evidence. Use the key "
+            "'tool' exactly."
+        ),
+    )
     snippet: str = Field(..., description="Short verbatim or paraphrased excerpt from the tool's output")
     relevance: float = Field(..., ge=0.0, le=1.0, description="How relevant this evidence is to the question, 0-1")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_tool_aliases(cls, data):
+        """Map whichever spelling of the tool key the model used onto `tool`."""
+        if isinstance(data, dict) and not data.get("tool"):
+            for alt in ("tool_name", "source", "tool_used", "name"):
+                if data.get(alt):
+                    data = {**data, "tool": data[alt]}
+                    break
+        return data
 
 
 class Recommendation(BaseModel):

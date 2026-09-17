@@ -26,16 +26,31 @@ services:
         value: "false"
       - key: LANGSMITH_PROJECT
         value: "listinglens-copilot"
-      # AGENT_MODEL pins the model used by the multi-node agent. Defaults
-      # to Llama 3.3 70B on Groq which is reliable for tool-calling.
-      # Override only if Groq deprecates the model.
+      # ── Model pins ──────────────────────────────────────────────────────
+      # Groq rate-limits PER MODEL (8000 TPM each), so these four vars are a
+      # load-balancing decision as much as a quality one. Defaults live in
+      # src/llm_config.py; these pins exist so production never silently
+      # rides a code default. Run `python -m scripts.doctor` after any change
+      # — and note Groq has decommissioned models under this app three times,
+      # most recently the entire Llama family.
+      #
+      # Planner + synthesizer + brief. Flagship: quality-sensitive.
       - key: AGENT_MODEL
-        value: "llama-3.3-70b-versatile"
-      # Executor uses a smaller/faster model on its own Groq daily bucket so
-      # its multi-step tool-selection calls don't drain the planner/synthesizer
-      # (AGENT_MODEL) budget — keeps demos clear of daily rate-limit errors.
+        value: "openai/gpt-oss-120b"
+      # Executor's tool-selection loop — several short calls per question, so
+      # it gets its own bucket to keep the planner/synthesizer budget free.
       - key: EXECUTOR_MODEL
-        value: "llama-3.1-8b-instant"
+        value: "openai/gpt-oss-20b"
+      # review_qa RAG + /chat. MUST be a third bucket: the executor calls
+      # review_qa mid-run, so sharing would make one agent run rate-limit
+      # itself — the cause of the 429s in eval/reports/2026-07-18-full.md.
+      - key: GROQ_MODEL
+        value: "qwen/qwen3.8-27b"
+      # Intent-classification LLM fallback. Shares the executor bucket on
+      # purpose: it only fires below the sklearn confidence threshold and is
+      # never in the copilot request path.
+      - key: INTENT_LLM_MODEL
+        value: "openai/gpt-oss-20b"
       # Free-tier instance can't afford the post-boot preload sweep; keep
       # the lifespan minimal and let the frontend /warmup ping load the
       # demo ASIN on demand. Flip to "1" if you move to a paid plan with

@@ -66,11 +66,41 @@ def asin_summary(asin: str) -> dict:
         return json.load(f)["summary"]
 
 
+def stratified_reviews(df: pd.DataFrame, limit: int | None, by: str = "rating") -> pd.DataFrame:
+    """Take `limit` rows spread evenly across every value of `by`.
+
+    The source CSVs are sorted by rating, so a plain `.head(limit)` silently
+    returns only the lowest ratings — for the 250-row/5-rating catalog,
+    `head(100)` is 50x 1-star + 50x 2-star and *zero* 3/4/5-star rows. Any
+    vectorstore rebuilt from that view can never answer "what do 5-star
+    reviews say?", and every ungrounded answer skews negative.
+
+    Falls back to `.head(limit)` if the `by` column is missing.
+    """
+    if not limit or len(df) <= limit:
+        return df
+    if by not in df.columns:
+        return df.head(limit)
+
+    groups = df.groupby(by, sort=True)
+    per_group = max(1, limit // max(1, groups.ngroups))
+    sampled = groups.head(per_group)
+
+    # Integer division can leave the quota short; top up with the rows we
+    # have not already taken, preserving the original row order.
+    if len(sampled) < limit:
+        remainder = df.drop(index=sampled.index).head(limit - len(sampled))
+        sampled = pd.concat([sampled, remainder])
+
+    return sampled.sort_index().head(limit)
+
+
 def asin_reviews_df(asin: str, limit: int = 100) -> pd.DataFrame:
     """Returns the enriched reviews DataFrame for an ASIN.
 
     The app's /chat endpoint uses limit=100 by convention — matching that here
-    so the agent's RAG sees the same view as the existing chat tool.
+    so the agent's RAG sees the same view as the existing chat tool. The slice
+    is stratified across ratings, not a head() — see stratified_reviews.
     """
     if DB_PATH.exists():
         try:
@@ -78,14 +108,14 @@ def asin_reviews_df(asin: str, limit: int = 100) -> pd.DataFrame:
             con = duckdb.connect(str(DB_PATH), read_only=True)
             try:
                 # EXCLUDE(asin) so the frame matches the source CSV's columns.
+                # No SQL LIMIT: we need the full set to stratify, and one ASIN
+                # is a few hundred rows.
                 sql = "SELECT * EXCLUDE (asin) FROM reviews WHERE asin = ?"
-                if limit:
-                    sql += f" LIMIT {int(limit)}"
                 df = con.execute(sql, [asin]).df()
             finally:
                 con.close()
             if not df.empty:
-                return df
+                return stratified_reviews(df, limit)
         except Exception as e:  # noqa: BLE001
             print(f"[_loader] DuckDB reviews read failed ({type(e).__name__}: {e}); using file")
 
@@ -96,7 +126,7 @@ def asin_reviews_df(asin: str, limit: int = 100) -> pd.DataFrame:
             f"Expected: {path.relative_to(REPO_ROOT)}"
         )
     df = pd.read_csv(path)
-    return df.head(limit) if limit else df
+    return stratified_reviews(df, limit)
 
 
 def mock_market_data() -> dict:

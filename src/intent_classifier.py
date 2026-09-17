@@ -83,16 +83,10 @@ def _predict_sklearn(text: str) -> tuple[str, float] | None:
 
 # ── LLM fallback ─────────────────────────────────────────────────────────────
 
-def _intent_llm_model() -> str:
-    # Cheap/fast model on its own Groq bucket — classification is a light task.
-    return os.getenv("INTENT_LLM_MODEL", "llama-3.1-8b-instant")
-
-
 @lru_cache(maxsize=1)
 def _llm_client():
-    import instructor
-    from groq import Groq
-    return instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    from src.llm_config import groq_client
+    return groq_client()
 
 
 def _predict_llm(text: str) -> tuple[str, float] | None:
@@ -104,6 +98,8 @@ def _predict_llm(text: str) -> tuple[str, float] | None:
     from typing import Literal
 
     from pydantic import BaseModel, Field
+
+    from src.llm_config import reasoning_effort, resilient_call
 
     CategoryLiteral = Literal[tuple(CATEGORIES)]  # type: ignore[valid-type]
 
@@ -120,15 +116,16 @@ def _predict_llm(text: str) -> tuple[str, float] | None:
         + "\nReturn the category code (uppercase) and your confidence."
     )
     try:
-        guess: IntentGuess = _llm_client().chat.completions.create(
-            model=_intent_llm_model(),
+        guess: IntentGuess = resilient_call("intent", lambda model: _llm_client().chat.completions.create(
+            model=model,
             response_model=IntentGuess,
             max_retries=1,
+            reasoning_effort=reasoning_effort("intent"),
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": text},
             ],
-        )
+        ))
         return guess.category, float(guess.confidence)
     except Exception as e:  # noqa: BLE001 — fallback must never raise
         print(f"[intent] LLM fallback failed ({type(e).__name__}: {e})")

@@ -29,10 +29,7 @@ from backend.agent.schemas import (
 )
 from backend.mcp_server.tools import review_qa as review_qa_tool
 from backend.mcp_server.tools._loader import supported_asins
-
-
-def _model() -> str:
-    return os.getenv("AGENT_MODEL", "llama-3.3-70b-versatile")
+from src.llm_config import agent_model, executor_model, groq_client, reasoning_effort
 
 
 # ── no_tool baseline ──────────────────────────────────────────────────────────
@@ -49,18 +46,24 @@ def run_no_tool(asin: str, query: str) -> AgentOutput:
     catalog = supported_asins()
     product_name = catalog.get(asin, asin)
 
-    llm = ChatGroq(model=_model(), temperature=0.2, max_tokens=512)
+    llm = ChatGroq(
+        model=agent_model(),
+        temperature=0.2,
+        max_tokens=1024,
+        reasoning_effort=reasoning_effort("agent"),
+    )
     plain_response = llm.invoke([
         SystemMessage(content=NO_TOOL_PROMPT),
         HumanMessage(content=f"Product: {product_name} (ASIN: {asin})\nQuestion: {query}"),
     ])
 
     # Synthesize to the Recommendation shape directly via instructor.
-    client = instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    client = groq_client()
     recommendation = client.chat.completions.create(
-        model=_model(),
+        model=agent_model(),
         response_model=Recommendation,
         max_retries=2,
+        reasoning_effort=reasoning_effort("agent"),
         messages=[
             {"role": "system", "content": SYNTHESIZER_SYSTEM_PROMPT},
             {
@@ -119,7 +122,12 @@ def run_single_tool(asin: str, query: str) -> AgentOutput:
     product_name = catalog[asin]
 
     tools = _build_single_tool(asin)
-    llm = ChatGroq(model=_model(), temperature=0.1, max_tokens=1024)
+    llm = ChatGroq(
+        model=executor_model(),
+        temperature=0.1,
+        max_tokens=2048,
+        reasoning_effort=reasoning_effort("executor"),
+    )
     llm_with_tools = llm.bind_tools(tools, parallel_tool_calls=False)
 
     def agent_node(state: AgentState) -> dict:

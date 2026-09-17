@@ -3,18 +3,12 @@
 One LLM call via instructor + Groq, returning a structured Plan object.
 Falls back to a sensible default plan if the structured call fails.
 """
-import os
-
-import instructor
-from groq import Groq
 from langchain_core.messages import AIMessage
+
+from src.llm_config import groq_client, reasoning_effort, resilient_call
 
 from ..prompts import PLANNER_SYSTEM_PROMPT
 from ..schemas import AgentState, Plan
-
-
-def _model() -> str:
-    return os.getenv("AGENT_MODEL", "llama-3.3-70b-versatile")
 
 
 def _fallback_plan(query: str) -> Plan:
@@ -47,7 +41,7 @@ def _fallback_plan(query: str) -> Plan:
 
 def plan_node(state: AgentState) -> dict:
     """Classify the query and pick the initial tool sequence."""
-    client = instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    client = groq_client()
     product_name = state.get("product_name") or state["asin"]
 
     user_msg = (
@@ -57,15 +51,16 @@ def plan_node(state: AgentState) -> dict:
     )
 
     try:
-        plan: Plan = client.chat.completions.create(
-            model=_model(),
+        plan: Plan = resilient_call("agent", lambda model: client.chat.completions.create(
+            model=model,
             response_model=Plan,
             max_retries=2,
+            reasoning_effort=reasoning_effort("planner"),
             messages=[
                 {"role": "system", "content": PLANNER_SYSTEM_PROMPT},
                 {"role": "user", "content": user_msg},
             ],
-        )
+        ))
     except Exception as e:
         print(f"[planner] structured call failed ({type(e).__name__}: {e}); using fallback")
         plan = _fallback_plan(state["query"])

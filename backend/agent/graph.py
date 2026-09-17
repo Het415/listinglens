@@ -44,6 +44,8 @@ from ..mcp_server.tools import (
     trends as trends_tool,
 )
 from ..mcp_server.tools._loader import supported_asins
+from src.llm_config import thought_text
+
 from .nodes.executor import make_executor_node
 from .nodes.planner import plan_node
 from .nodes.synthesizer import synthesize_node
@@ -286,11 +288,16 @@ def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
                                 "args": tc.get("args", {}),
                             },
                         })
-                elif m.content:
-                    out.append({
-                        "event": "executor_thought",
-                        "data": {"content": str(m.content)[:600]},
-                    })
+                else:
+                    # Reasoning models leave `.content` empty and put their
+                    # rationale in additional_kwargs["reasoning_content"], so
+                    # reading .content alone renders a blank trace panel.
+                    thought = thought_text(m)
+                    if thought:
+                        out.append({
+                            "event": "executor_thought",
+                            "data": {"content": thought[:600]},
+                        })
         out.append({"event": "node_completed", "data": {"node": "executor"}})
 
     elif node_name == "tools":

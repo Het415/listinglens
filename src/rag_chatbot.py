@@ -25,9 +25,21 @@ def _get_embeddings():
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-# Keep model configurable so deprecations don't break runtime.
-# You can override in .env: GROQ_MODEL=...
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+# Vectorstore cache paths must be absolute. They used to be CWD-relative, so
+# launching uvicorn from anywhere but the repo root silently missed every
+# cached index and rebuilt it from scratch. Mirrors the pattern already used
+# in backend/mcp_server/tools/_loader.py.
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROCESSED_DIR = os.path.join(REPO_ROOT, "data", "processed")
+
+# FAISS pre-filters only `fetch_k` nearest neighbours and *then* applies a
+# metadata filter, keeping the first `k` survivors. At the default fetch_k=20
+# a rating-filtered query searches 20 chunks out of ~2900, so it returns
+# fewer than k docs and the ones it does return are not the best matches for
+# that rating. IndexFlatL2 over a few thousand vectors is exhaustive and
+# costs microseconds, so we scan wide whenever a filter is active.
+FILTERED_FETCH_K = 400
 
 # ── Vector Store Builder ───────────────────────────────────────────────────────
 
@@ -50,7 +62,7 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
     from langchain_core.documents import Document
     from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-    cache_path = f"data/processed/vectorstore_{asin}"
+    cache_path = os.path.join(PROCESSED_DIR, f"vectorstore_{asin}")
     index_file = os.path.join(cache_path, "index.faiss")
     pkl_file = os.path.join(cache_path, "index.pkl")
 
@@ -115,7 +127,7 @@ def build_vectorstore(df_enriched: pd.DataFrame, asin: str):
     vectorstore = FAISS.from_documents(documents, embeddings)
 
     # save to disk
-    os.makedirs("data/processed", exist_ok=True)
+    os.makedirs(PROCESSED_DIR, exist_ok=True)
     vectorstore.save_local(cache_path)
     print(f"Vectorstore saved to {cache_path}")
 
@@ -147,12 +159,34 @@ def build_rag_chain(vectorstore):
     from langchain_groq import ChatGroq
     from langchain_core.prompts import PromptTemplate
 
-    llm = ChatGroq(
-        model=GROQ_MODEL,
-        api_key=GROQ_API_KEY,
-        temperature=0.1,
-        max_tokens=512,
-    )
+    from src.llm_config import rag_model, reasoning_effort, resilient_call
+
+    # max_tokens is deliberately small. Groq enforces an *output* tokens per
+    # minute cap (OTPM) separately from the input TPM cap, and it rejects a
+    # request up front based on the output it *estimates* from max_tokens —
+    # not on what the model actually produces. GROQ_MODEL's default
+    # (qwen3.8-27b) has OTPM=1000, so max_tokens=1024 alone claims the whole
+    # minute's budget and every call 429s before it runs. The prompt asks for
+    # an answer "under 150 words" (~200 tokens), so 512 is ample.
+    #
+    # request_timeout caps the blocking wait. Without it, langchain retries a
+    # 429 with backoff and no deadline, which hangs the /chat request (and the
+    # uvicorn worker thread serving it) indefinitely rather than erroring.
+    _llms: dict = {}
+
+    def llm_for(model: str):
+        if model not in _llms:
+            _llms[model] = ChatGroq(
+                model=model,
+                api_key=GROQ_API_KEY,
+                temperature=0.1,
+                max_tokens=512,
+                request_timeout=60,
+                max_retries=1,
+            )
+        return _llms[model]
+
+    llm = llm_for(rag_model())
 
     prompt_template = """You are a product analytics assistant. 
 Use ONLY the following review excerpts. If you are filtering by a specific star rating, 
@@ -185,6 +219,8 @@ Answer (under 150 words):"""
             if rating_filter:
                 print(f"Applying Metadata Filter: rating == {rating_filter}")
                 search_kwargs["filter"] = {"rating": rating_filter}
+                # Widen the pre-filter sweep — see FILTERED_FETCH_K above.
+                search_kwargs["fetch_k"] = FILTERED_FETCH_K
 
             # 3. Retrieve
             try:
@@ -192,12 +228,30 @@ Answer (under 150 words):"""
             except Exception as e:
                 print(f"[RAG] similarity_search failed: {e}")
                 raise
-            
+
+            # Never prompt the model with empty context — it would answer from
+            # parametric memory and present it as grounded in reviews.
+            if not docs:
+                detail = (
+                    f" with a {rating_filter}-star rating" if rating_filter else ""
+                )
+                return {
+                    "answer": (
+                        f"I couldn't find any reviews{detail} matching that "
+                        f"question, so I have no review evidence to answer from."
+                    ),
+                    "context": [],
+                }
+
             context = "\n\n".join(doc.page_content for doc in docs)
             prompt_text = self.prompt.format(context=context, question=question)
             
             try:
-                answer = self.llm.invoke(prompt_text).content
+                # Fail over to the next model in the chain if this one has been
+                # decommissioned or is rate-limited, instead of 500ing.
+                answer = resilient_call(
+                    "rag", lambda model: llm_for(model).invoke(prompt_text).content
+                )
             except Exception as e:
                 print(f"[RAG] Groq generation failed: {e}")
                 raise
@@ -283,7 +337,9 @@ def run_rag_pipeline(df_enriched: pd.DataFrame, asin: str) -> dict:
     n_chunks = vectorstore.index.ntotal
 
     print(f"RAG pipeline ready — {n_chunks} chunks indexed")
-    print(f"Using model: {GROQ_MODEL}")
+    from src.llm_config import rag_model
+
+    print(f"Using model: {rag_model()}")
     print(f"Using API key set: {bool(GROQ_API_KEY)}")
 
     return {

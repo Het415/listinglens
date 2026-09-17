@@ -42,6 +42,7 @@ os.environ.pop("ANTHROPIC_BASE_URL", None)
 from backend.agent.graph import run_agent  # noqa: E402
 from eval.baselines import run_baseline  # noqa: E402
 from eval.trajectory_eval import aggregate_trajectory, trajectory_metrics  # noqa: E402
+from src.llm_config import agent_model, executor_model, rag_model  # noqa: E402
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 GOLD_DEFAULT = REPO_ROOT / "eval" / "gold_set.jsonl"
@@ -216,7 +217,9 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         "",
         f"- **Variant:** `{variant}`",
         f"- **Queries:** {summary['n_queries']} ({summary['n_success']} success, {summary['n_errors']} errors)",
-        f"- **Agent model:** `{os.getenv('AGENT_MODEL', 'llama-3.3-70b-versatile')}`",
+        f"- **Agent model:** `{agent_model()}`",
+        f"- **Executor model:** `{executor_model()}`",
+        f"- **RAG model:** `{rag_model()}`",
         f"- **Judge model:** `{_judge_label()}`",
         "",
         "## Summary",

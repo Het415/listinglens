@@ -7,7 +7,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI-009688?style=for-the-badge&logo=fastapi)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Frontend-Next.js%2016-black?style=for-the-badge&logo=next.js)](https://nextjs.org)
 [![LangGraph](https://img.shields.io/badge/Agent-LangGraph%20v1-FF6F00?style=for-the-badge)](https://github.com/langchain-ai/langgraph)
-[![Groq](https://img.shields.io/badge/LLM-Groq%20Llama%204-orange?style=for-the-badge)](https://groq.com)
+[![Groq](https://img.shields.io/badge/LLM-Groq%20gpt--oss-orange?style=for-the-badge)](https://groq.com)
 
 ![Copilot demo — agent picks tools, streams a trace, returns a structured recommendation](docs/copilot-demo.gif)
 
@@ -170,11 +170,11 @@ python -m backend.agent.run --asin B08XPWDSWW "Why are returns spiking?" --prett
 
 ## What's under the hood
 
-**Agent layer:** [LangGraph](https://github.com/langchain-ai/langgraph) v1 as the state machine, [Groq](https://groq.com) running Llama 4 Scout for the LLM (fast, reliable structured output), [instructor](https://github.com/jxnl/instructor) + Pydantic v2 for type-safe outputs, [MCP](https://modelcontextprotocol.io) (Anthropic's tool protocol) as the tool interface.
+**Agent layer:** [LangGraph](https://github.com/langchain-ai/langgraph) v1 as the state machine, [Groq](https://groq.com) running `gpt-oss-120b` for the planner/synthesizer and `gpt-oss-20b` for the executor loop, [instructor](https://github.com/jxnl/instructor) + Pydantic v2 for type-safe outputs, [MCP](https://modelcontextprotocol.io) (Anthropic's tool protocol) as the tool interface. Model IDs are centralized in [src/llm_config.py](src/llm_config.py), and each stage has an ordered **fallback chain** — Groq deprecates hosted models without notice, so a decommissioned or rate-limited model transparently fails over to the next live one instead of taking the app down. `python -m scripts.doctor` validates every pin and chain against Groq's live catalog.
 
-**Real-data tools:** FAISS for vector search over ~2,800 review chunks per product, sentence-transformers `all-MiniLM-L6-v2` for embeddings, XGBoost for return-risk classification, HuggingFace's RoBERTa for sentiment.
+**Real-data tools:** FAISS for vector search over ~2,800 review chunks per product, sentence-transformers `all-MiniLM-L6-v2` for embeddings (local, CPU — no embedding API), XGBoost for return-risk classification, HuggingFace's RoBERTa for sentiment.
 
-**Eval:** custom trajectory-matching algorithm + DeepEval's `GEval` for LLM-as-judge scoring. Claude Haiku as judge (different family from Llama → no same-family bias). LangSmith for trace visualization.
+**Eval:** custom trajectory-matching algorithm + DeepEval's `GEval` for LLM-as-judge scoring. Claude Haiku as judge (different model family from the agent → no same-family bias). LangSmith for trace visualization.
 
 **Infrastructure:** FastAPI + Uvicorn on Render (Python buildpack), Next.js 16 + Tailwind 4 + Radix on Vercel, Redis sidecar for caching expensive agent queries (840× speedup on repeats — see [docker-compose.yml](docker-compose.yml)).
 
@@ -186,13 +186,13 @@ python -m backend.agent.run --asin B08XPWDSWW "Why are returns spiking?" --prett
 
 The judgment section — deliberate omissions, not oversights.
 
-1. **Scale past 12 products.** Current setup preloads FAISS indexes at startup. Fine for ~50 products on the free tier; for ≥100, swap FAISS for a managed vector DB (Pinecone, Qdrant, or pgvector). The `review_qa` tool interface doesn't change — only what's underneath. Don't migrate before there's a reason.
+1. **Scale past 12 products.** FAISS indexes are memory-mapped from disk on first use (eager preload is opt-in via `PRELOAD_CACHE=1`). Fine for ~50 products on the free tier; for ≥100, swap FAISS for a managed vector DB (Pinecone, Qdrant, or pgvector). The `review_qa` tool interface doesn't change — only what's underneath. Don't migrate before there's a reason.
 
 2. **Multi-turn memory.** Today is single-query → single-recommendation. Adding LangGraph's SQLite checkpointer would let users follow up ("how does this change if I drop the price 10%?") without re-running the full research path.
 
 3. **Self-critique loop.** A Critic node between Synthesizer and END that evaluates *reasoning quality* (different from the existing confidence-based replan). Routes back with explicit "expand on X" feedback when reasoning is thin.
 
-4. **Fine-tuned planner.** After logging 300+ real queries with labels, fine-tune a small model (Llama 3.2 3B + LoRA) just for the planning step. Planning is a smaller, more constrained task than full agency — a natural candidate for supervised fine-tuning.
+4. **Fine-tuned planner.** After logging 300+ real queries with labels, fine-tune a small open-weights model with LoRA just for the planning step. Planning is a smaller, more constrained task than full agency — a natural candidate for supervised fine-tuning.
 
 5. **Domain pivot.** Same architecture, different tools: SEC filings + earnings transcripts + market data. One weekend to port. The Planner/Executor/Synthesizer stay; only the tool layer changes.
 

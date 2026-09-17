@@ -58,7 +58,7 @@ class AgentState(TypedDict, total=False):
 
 The simpler design is a single ReAct loop: one prompt that does *everything* (classify the query, decide which tools, react to results, synthesize the answer). I implemented this first in [Stage 2](#) and it worked. So why split into three nodes?
 
-**The single-node prompt has to do too much.** Llama 4 Scout — like any LLM — has a finite attention budget. A single prompt that contains "classify this query AND pick tools AND react to results AND output a structured Recommendation" forces the model to multi-task. Mistakes correlate: when the planning is bad, the execution is bad, and the synthesis paper-overs it.
+**The single-node prompt has to do too much.** Any LLM has a finite attention budget. A single prompt that contains "classify this query AND pick tools AND react to results AND output a structured Recommendation" forces the model to multi-task. Mistakes correlate: when the planning is bad, the execution is bad, and the synthesis paper-overs it.
 
 **Three smaller prompts beat one big one.** Each node has a focused, smaller system prompt. Failure modes are diagnosable:
 
@@ -130,7 +130,7 @@ Per-tool surface:
 | `price_history` | [price.py](backend/mcp_server/tools/price.py) | `asin: str` | `{daily_prices[90], min/max/avg, volatility, key_events}` | Deterministic synthesis from seed (sinusoidal + event injection); same ASIN → same curve |
 | `trend_signal` | [trends.py](backend/mcp_server/tools/trends.py) | `asin: str` (or `category`) | `{months[12], values[12], trend_direction, yoy_change_pct}` | Seed per category |
 
-When the LangGraph agent binds tools, it wraps each MCP tool in a per-ASIN closure ([graph.py:_build_tools_for_asin](backend/agent/graph.py)). The closure has the ASIN baked in, so the LLM never has to supply it — it just passes the semantic arg (`question` for review_qa, no args for the others). That dropped a class of failure modes where Llama Scout would send `"max_results": "5"` (string) instead of `5` (int).
+When the LangGraph agent binds tools, it wraps each MCP tool in a per-ASIN closure ([graph.py:_build_tools_for_asin](backend/agent/graph.py)). The closure has the ASIN baked in, so the LLM never has to supply it — it just passes the semantic arg (`question` for review_qa, no args for the others). That dropped a class of failure modes where the model would send `"max_results": "5"` (string) instead of `5` (int).
 
 ---
 
@@ -149,7 +149,7 @@ Three independent axes, all reported. Full report at [eval/reports/2026-05-16-fu
 | `anti_hallucination` | Are the agent's claims supported by the cited tool outputs? (Higher = less hallucination) |
 | `completeness` | Does the recommendation address all critical aspects: decision, reasoning, next actions, risks? |
 
-**Judge model: Claude Haiku 3** (Anthropic). Different model family than the Llama agent — explicitly to avoid the "model graded its own homework" bias. Easily swapped to OpenAI's `gpt-4o-mini` via `JUDGE_PROVIDER=openai`.
+**Judge model: Claude Haiku 4.5** (Anthropic, `claude-haiku-4-5-20251001` — see [eval/judges.py](eval/judges.py)). Different model family than the agent — explicitly to avoid the "model graded its own homework" bias. Easily swapped to OpenAI's `gpt-4o-mini` via `JUDGE_PROVIDER=openai`.
 
 ### Axis 2: trajectory correctness
 
@@ -241,18 +241,60 @@ This matters for two reasons:
 
 ## 7. Design tradeoffs called out
 
-### Llama 4 Scout vs Llama 3.3 70B
+### Model tiering and per-model rate buckets
 
-The spec recommended Llama 3.3 70B (and v1's `/chat` still uses it). The agent defaults to `meta-llama/llama-4-scout-17b-16e-instruct` instead because:
+Groq has decommissioned the models under this project three times — Llama 4 Scout, then `llama-3.3-70b-versatile` and `llama-3.1-8b-instant` when the entire Llama family was removed. Every model ID now lives in one place, [src/llm_config.py](src/llm_config.py), and `python -m scripts.doctor` validates each pin against Groq's live catalog. That turns the next deprecation from a nine-file scavenger hunt into a one-line change.
 
-- Llama 3.3 70B occasionally emits Llama-native `<function=name{...}</function>` XML syntax for tool calls. Groq's API parser rejects these with a 400.
-- Llama 4 Scout consistently emits the JSON `tool_calls` format that Groq expects.
+The tiering is a **load-balancing** decision, not only a quality one. Groq rate-limits per model (8000 TPM each), verified empirically: burning `gpt-oss-120b` down to 4992 remaining tokens left `gpt-oss-20b` untouched at 7923. So three hot paths get three independent buckets:
 
-Override via `AGENT_MODEL` env var. v1's `GROQ_MODEL` env var is independent — `/chat` keeps using whatever you set there.
+| Stage | Env var | Model | Why |
+|---|---|---|---|
+| Planner, Synthesizer, Brief | `AGENT_MODEL` | `openai/gpt-oss-120b` | 1–2 calls/run, quality-sensitive |
+| Executor loop | `EXECUTOR_MODEL` | `openai/gpt-oss-20b` | 3–6 short calls/run |
+| `review_qa` RAG + `/chat` | `GROQ_MODEL` | `qwen/qwen3.8-27b` | **must** be separate — the Executor calls `review_qa` mid-run, so a shared bucket makes one agent run rate-limit itself |
+
+That third row is the subtle one, and it was the cause of the 429s in `eval/reports/2026-07-18-full.md`.
+
+### Fallback chains — why a deprecation no longer causes an outage
+
+Pinning one model per stage means the app is always one Groq deprecation away from a total outage. That is precisely how it broke three times. So every stage now declares an **ordered chain** in `src/llm_config.py`, and `resilient_call()` walks it:
+
+| Stage | Chain |
+|---|---|
+| agent | `gpt-oss-120b` → `gpt-oss-20b` → `qwen3.8-27b` |
+| executor | `gpt-oss-20b` → `gpt-oss-safeguard-20b` → `qwen3.8-27b` |
+| rag | `qwen3.8-27b` → `gpt-oss-20b` → `gpt-oss-120b` |
+| intent | `gpt-oss-20b` → `qwen3.8-27b` → `gpt-oss-120b` |
+
+Failover triggers on exactly two conditions — model decommissioned (404 `model_not_found`) and rate-limited (429) — and on nothing else. A bad API key or a request *we* malformed propagates immediately rather than being retried against three models in a row and masking the real bug.
+
+Verified by pinning **every** stage to the dead `llama-3.3-70b-versatile` / `llama-3.1-8b-instant`: the agent still returned a complete recommendation in 9.5s, logging each failover and pointing at `scripts/doctor.py`.
+
+Only four free Groq models support both tool-calling and structured output — `gpt-oss-120b`, `gpt-oss-20b`, `gpt-oss-safeguard-20b`, `qwen3.8-27b`. `allam-2-7b`, `groq/compound` and `groq/compound-mini` reject a `tools` payload outright, so they cannot serve any stage here.
+
+### Output-token limits are a separate, tighter cap
+
+Groq enforces **output** tokens per minute (OTPM) separately from the input TPM cap, and rejects a request up front based on the output it *estimates* from `max_tokens` — not on what the model actually emits. `qwen3.8-27b` has OTPM=1000, so a RAG chain at `max_tokens=1024` claims the entire minute's budget and 429s before it runs. The RAG chain therefore caps at 512 (the prompt asks for "under 150 words" ≈ 200 tokens), and every client sets `request_timeout`, because langchain otherwise retries a 429 with backoff and no deadline — which hangs the uvicorn worker thread rather than returning an error.
+
+### `reasoning_effort` per stage
+
+The gpt-oss models are reasoning models: they emit a hidden reasoning trace before answering, billed against the completion budget. `reasoning_effort="low"` cut total tokens 280 → 171 on an identical prompt, and end-to-end agent latency from a 62.9s p50 to ~9s. Low for the planner, executor, RAG and intent stages; medium for the synthesizer and brief, where the output is the user-facing recommendation.
+
+Two consequences worth knowing:
+
+- **`max_tokens` must leave headroom for reasoning.** At `max_tokens=64` a tool-selection call spent the whole budget thinking and returned `finish_reason="length"` with no tool call at all. The executor runs at 2048 and the RAG chain at 1024 for this reason.
+- **`.content` is empty on a pure tool-call turn**, with the rationale in `additional_kwargs["reasoning_content"]`. Anything rendering the Executor's thinking must read both — hence `thought_text()` in `src/llm_config.py`, used by the SSE trace in `graph.py` and the Synthesizer's transcript builder.
 
 ### `parallel_tool_calls=False`
 
-Llama family models on Groq are more reliable when forced to emit one tool call per turn instead of multiple in parallel. Without this, you occasionally see malformed batch tool-call JSON that Groq rejects. The graph already loops the Executor naturally, so serial calling is functionally equivalent.
+Kept, but for a different reason than originally: the routing edge in `graph.py` assumes one tool call per turn, and the trace panel reads better serially. The graph already loops the Executor, so serial calling is functionally equivalent. (The original justification — keeping Llama models off their native XML function syntax — no longer applies.)
+
+### Tolerant `Evidence.tool` and Executor retries
+
+Two robustness measures that reasoning models made necessary:
+
+- The gpt-oss models are inconsistent about the evidence field name. Across three retries of one query they emitted `tool_name`, `tool`, and `source`. Since Groq validates tool-call arguments against the JSON schema *server-side*, demanding any single spelling turns that into a hard 400 that burns every retry and loses the whole recommendation. `Evidence` therefore makes `tool` optional on the wire and normalizes the aliases in a before-validator, while the Python attribute and serialized key stay `tool`.
+- Malformed tool-call JSON (`tool_use_failed`) is a stochastic generation slip — the same query succeeds on a retry. `_invoke_with_retry` in `nodes/executor.py` retries the turn up to three times, then degrades to a content-only message so the Synthesizer still produces a recommendation from the evidence already gathered, instead of failing the request.
 
 ### No optional numeric parameters on tools
 
@@ -282,7 +324,7 @@ Listed in the README's "What I'd do next" — repeating here with the migration 
 
 ### Scaling beyond 12 ASINs
 
-**Cheap fix (~2 hours):** [app.py:31-64](app.py) currently preloads all 12 FAISS vectorstores into memory at startup via a background task. For up to ~50 products, swap this for lazy-load-per-request:
+**Cheap fix (~2 hours):** [app.py:31-64](app.py) can preload all 12 FAISS vectorstores into memory at startup via a background task, but this is opt-in and off by default (`PRELOAD_CACHE=0`), so stores load lazily on first use. For up to ~50 products, make that lazy path explicit per request:
 
 ```python
 # In review_qa.py — instead of caching the chain at module init,
@@ -335,7 +377,7 @@ Different from the existing low-confidence replan because the Critic evaluates *
 
 ### Fine-tuned planner
 
-After logging 300+ real (`query`, `correct_plan`) pairs, the Planner's job — classify query + pick 2-4 tools from a fixed set of 5 — is small enough for SFT. Llama 3.2 3B + LoRA on a few thousand examples should outperform prompt-engineered Llama 4 Scout on the planning step specifically, while staying cheap to serve.
+After logging 300+ real (`query`, `correct_plan`) pairs, the Planner's job — classify query + pick 2-4 tools from a fixed set of 5 — is small enough for SFT. A small open-weights model with LoRA on a few thousand examples should outperform the prompt-engineered planner on that step specifically, while staying cheap to serve.
 
 The Executor and Synthesizer stay on the large model — they need general reasoning. Only the Planner gets specialized.
 

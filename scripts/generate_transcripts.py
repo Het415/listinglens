@@ -25,6 +25,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
+from src.llm_config import intent_model, reasoning_effort
+
 load_dotenv()
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -38,10 +40,6 @@ INTENT_WEIGHTS = {
 }
 
 
-def _model() -> str:
-    return os.getenv("INTENT_LLM_MODEL", "llama-3.1-8b-instant")
-
-
 class Turn(BaseModel):
     speaker: str = Field(description="'customer' or 'agent'")
     text: str = Field(description="What this speaker says.")
@@ -53,9 +51,8 @@ class GeneratedConversation(BaseModel):
 
 
 def _client():
-    import instructor
-    from groq import Groq
-    return instructor.from_groq(Groq(api_key=os.getenv("GROQ_API_KEY")))
+    from src.llm_config import groq_client
+    return groq_client()
 
 
 def _themes_for(asin: str) -> list[str]:
@@ -90,9 +87,10 @@ def _gen_one(client, product: str, category: str, theme: str) -> GeneratedConver
     )
     try:
         return client.chat.completions.create(
-            model=_model(),
+            model=intent_model(),
             response_model=GeneratedConversation,
             max_retries=2,
+            reasoning_effort=reasoning_effort("intent"),
             messages=[{"role": "system", "content": system},
                       {"role": "user", "content": user}],
         )
