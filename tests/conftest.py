@@ -63,6 +63,21 @@ os.environ["ENV_MODE"] = "production"
 # when REDIS_URL is unset.
 os.environ.pop("REDIS_URL", None)
 
+# Pin OpenMP to one thread before faiss / xgboost / sklearn load.
+#
+# Same fix as the one at the top of app.py and eval/run_eval.py, and it has to
+# be repeated here: app.py's `setdefault` runs when conftest imports app, which
+# is too late if a test module or fixture has already pulled in faiss. On macOS
+# each of faiss, sklearn and xgboost ships its own bundled libomp
+# (faiss/.dylibs/libomp.dylib et al), and initialising the second one kills the
+# process — SIGSEGV, exit 139, no traceback and no OMP error message.
+#
+# Without this, `pytest` segfaults mid-run on macOS while CI stays green, since
+# the manylinux wheels link a shared libgomp. `KMP_DUPLICATE_LIB_OK=TRUE` does
+# NOT fix it despite being the standard advice. Assign unconditionally: an
+# inherited higher value would reintroduce the crash.
+os.environ["OMP_NUM_THREADS"] = "1"
+
 
 @pytest.fixture(autouse=True)
 def production_mode(monkeypatch):
