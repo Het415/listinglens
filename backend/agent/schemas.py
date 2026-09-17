@@ -165,6 +165,17 @@ class AgentState(TypedDict, total=False):
     tools_called: list[str]  # accumulating record of executed tools (for trace + dedup)
     recommendation: Optional["Recommendation"]  # filled by Synthesizer
     replans_done: int  # how many low-confidence re-loops triggered (cap = 1)
+    synthesis_degraded: bool  # True when the Recommendation was assembled locally
+                              # after the Synthesizer LLM failed, NOT produced by
+                              # the model. Deliberately state and not a field on
+                              # `Recommendation`: every field added there is one
+                              # more thing the model can malform, and malformed
+                              # structured output is the failure this flag exists
+                              # to report. Also stops the low-confidence re-plan
+                              # loop from firing on a degraded result — it carries
+                              # confidence 0.0 by design, and re-looping would
+                              # spend another Executor pass against the same rate
+                              # limits that caused the degrade.
 
 
 # ── CLI / API shape ───────────────────────────────────────────────────────────
@@ -180,6 +191,16 @@ class AgentTrace(BaseModel):
     tools_called: list[str] = Field(default_factory=list)
     n_tool_calls: int = 0
     iterations: int = 0
+    synthesis_degraded: bool = Field(
+        default=False,
+        description=(
+            "True when the final Recommendation was assembled from tool "
+            "results after the Synthesizer LLM failed to return valid "
+            "structured output. The answer is real evidence but the "
+            "decision/confidence are not model judgements, so the UI must "
+            "label it rather than present it as a normal recommendation."
+        ),
+    )
 
 
 class AgentOutput(BaseModel):

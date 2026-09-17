@@ -138,6 +138,14 @@ def _route_after_synthesizer(state: AgentState):
         return "end"
     if state.get("replans_done", 0) >= MAX_REPLANS:
         return "end"
+    # A degraded recommendation carries confidence 0.0 by construction — the
+    # Synthesizer LLM failed and the answer was assembled from tool results
+    # locally. That is below the threshold, but re-planning would spend another
+    # Executor pass plus another synthesis attempt against the very rate limits
+    # or model defect that caused the degrade, and then degrade again. Bail out
+    # with what we have.
+    if state.get("synthesis_degraded"):
+        return "end"
     if rec.confidence < REPLAN_CONFIDENCE_THRESHOLD:
         return "replan"
     return "end"
@@ -233,6 +241,7 @@ def run_agent(asin: str, query: str) -> AgentOutput:
         tools_called=final_state.get("tools_called", []),
         n_tool_calls=len(final_state.get("tools_called", [])),
         iterations=final_state.get("iterations", 0),
+        synthesis_degraded=bool(final_state.get("synthesis_degraded")),
     )
 
     return AgentOutput(
@@ -329,6 +338,11 @@ def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
                 rec_data = rec.model_dump()
             else:
                 rec_data = rec  # already a dict
+            # Carried on the wire payload rather than on the Recommendation
+            # model, so the schema the LLM has to fill stays exactly as it is.
+            # The UI needs this to label a locally-assembled answer instead of
+            # presenting placeholder decision/confidence as real judgements.
+            rec_data = {**rec_data, "degraded": bool(delta.get("synthesis_degraded"))}
             out.append({"event": "recommendation", "data": rec_data})
         out.append({"event": "node_completed", "data": {"node": "synthesizer"}})
 
