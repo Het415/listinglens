@@ -1,14 +1,17 @@
 # ── ListingLens backend image ─────────────────────────────────────────────────
-# Single-stage build on python:3.11-slim. We don't need a separate builder
+# Single-stage build on python:3.13-slim. We don't need a separate builder
 # stage because the project is pure Python — no compile step, no static
-# assets to bundle. `--prefer-binary` is critical: torch, faiss-cpu, and
-# transformers all ship manylinux wheels; without `--prefer-binary` pip
+# assets to bundle. `--prefer-binary` is critical: faiss-cpu, onnxruntime
+# and xgboost all ship manylinux wheels; without `--prefer-binary` pip
 # will sometimes choose a source distribution and the build takes 20+ min.
 #
 # Layer ordering follows the standard "deps file first, source last"
 # pattern so editing app.py doesn't bust the heavy pip-install layer.
 
-FROM python:3.11-slim
+# Keep this tag's minor version in lockstep with .python-version (3.13) — a
+# mismatch there is what let the local env drift onto a different ABI than
+# the one production installs wheels for.
+FROM python:3.13-slim
 
 # PYTHONDONTWRITEBYTECODE — no .pyc files (smaller image, faster startup
 #                          on read-only filesystems).
