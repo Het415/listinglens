@@ -94,6 +94,7 @@ export async function submitAssistant(
   let recommendation: Recommendation | null = null
   let quickAnswer: { content: string; sources: ChatMessage['sources'] } | null = null
   let errored: string | null = null
+  let erroredKind: string | undefined
 
   try {
     const res = await fetch(`${apiUrl}/assistant/query`, {
@@ -133,6 +134,7 @@ export async function submitAssistant(
         case 'error': {
           const message = data?.message || 'Unknown error'
           errored = message
+          erroredKind = data?.kind
           pushTrace({ kind: 'error', message, ts: now })
           break
         }
@@ -144,6 +146,7 @@ export async function submitAssistant(
     }
   } catch (e: unknown) {
     errored = e instanceof Error ? e.message : 'Network failure — is the backend running?'
+    erroredKind = 'network'
   }
 
   // Finalize. This runs whether or not the user is still on the page: we mutate
@@ -151,7 +154,7 @@ export async function submitAssistant(
   // when they navigate back.
   const cur = states.get(asin) ?? hydrate(asin)
   const answer: ChatMessage = errored
-    ? { role: 'assistant', error: errored }
+    ? { role: 'assistant', error: errored, errorKind: erroredKind }
     : recommendation
       ? { role: 'assistant', recommendation }
       : quickAnswer

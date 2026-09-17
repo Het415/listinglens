@@ -5,6 +5,7 @@ import {
   ArrowRight,
   Copy,
   Check,
+  AlertTriangle,
 } from 'lucide-react'
 import type { Recommendation } from './types'
 import { decisionStyle, recommendationToText, toolMeta } from './style-helpers'
@@ -19,6 +20,9 @@ export function RecommendationCard({
 }) {
   const style = decisionStyle(rec.decision)
   const [copied, setCopied] = useState(false)
+  // Assembled from tool results because the Synthesizer LLM failed. The
+  // evidence below is real; the verdict and confidence are placeholders.
+  const degraded = rec.degraded === true
 
   const handleCopy = async () => {
     try {
@@ -34,13 +38,41 @@ export function RecommendationCard({
     <div
       className={`bg-card border border-border rounded-xl p-5 space-y-5 border-l-4 ${style.borderLeftClass} animate-in fade-in slide-in-from-bottom-2 duration-500`}
     >
-      <div className="flex items-center gap-4">
-        <ConfidenceRing confidence={rec.confidence} decision={rec.decision} />
-        <div className="flex-1 min-w-0">
-          <div className={`text-2xl font-bold tracking-tight ${style.textClass}`}>
-            {style.label}
+      {degraded && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+          <div className="text-xs leading-relaxed">
+            <span className="font-medium text-amber-400">Partial answer.</span>{' '}
+            <span className="text-foreground">
+              The research below completed, but the model could not produce a
+              final verdict — so there is no decision or confidence score here.
+              The evidence is real and can be read directly.
+            </span>
           </div>
-          <div className="text-xs text-muted-foreground">{style.tagline}</div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-4">
+        {/* A 0% ring beside a verdict label would read as "no confidence in
+            this recommendation" rather than "there is no recommendation".
+            Suppress both when degraded and let the banner above speak. */}
+        {!degraded && (
+          <ConfidenceRing confidence={rec.confidence} decision={rec.decision} />
+        )}
+        <div className="flex-1 min-w-0">
+          <div
+            className={`text-2xl font-bold tracking-tight ${
+              degraded ? 'text-muted-foreground' : style.textClass
+            }`}
+          >
+            {degraded ? 'No verdict' : style.label}
+          </div>
+          <div className="text-xs text-muted-foreground">
+            {degraded ? 'Synthesis step failed — evidence only' : style.tagline}
+          </div>
         </div>
         <button
           onClick={handleCopy}

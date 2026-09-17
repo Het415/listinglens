@@ -13,6 +13,12 @@ export interface ChatMessage {
   sources?: SourceItem[]
   recommendation?: Recommendation
   error?: string
+  /**
+   * Error class from the backend (`rate_limited`, `malformed_output`,
+   * `model_gone`, `auth`, `unknown`). Drives the retry hint — suggesting
+   * "try again" on a decommissioned model would be wrong.
+   */
+  errorKind?: string
 }
 
 export type EvidenceItem = { tool: string; snippet: string; relevance: number }
@@ -25,6 +31,13 @@ export type Recommendation = {
   evidence: EvidenceItem[]
   risks: string[]
   suggested_next_actions: string[]
+  /**
+   * True when the backend assembled this from tool results because the
+   * Synthesizer LLM failed. The evidence is real; `decision` and `confidence`
+   * are placeholders, so the card must say so rather than render 0% next to a
+   * confident-looking verdict.
+   */
+  degraded?: boolean
 }
 
 export type TraceStep =

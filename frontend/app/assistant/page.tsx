@@ -12,6 +12,7 @@ import {
   type Mode,
 } from '@/components/assistant/assistantStore'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { ErrorBubble } from '@/components/assistant/ErrorBubble'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
@@ -289,9 +290,7 @@ function AssistantPageContent() {
                 if (m.error) {
                   return (
                     <div key={i} className="flex justify-start">
-                      <div className="max-w-[80%] rounded-xl px-4 py-3 text-sm bg-rose-500/10 border border-rose-500/40 text-rose-300">
-                        {m.error}
-                      </div>
+                      <ErrorBubble message={m.error} kind={m.errorKind} />
                     </div>
                   )
                 }

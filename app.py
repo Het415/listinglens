@@ -176,6 +176,72 @@ class IntentClassifyRequest(BaseModel):
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
 
+# Human-readable messages for the provider failures that actually reach users,
+# keyed by a signature in the exception text.
+#
+# Why this exists: every SSE error frame used to carry `f"{type(e).__name__}: {e}"`
+# straight from the provider. On 2026-09-17 a user watched the chat print an
+# `InstructorRetryException` containing a 400 body, the entire `failed_generation`
+# payload, and the Groq organisation ID — in a red box, mid-demo. That is worse
+# than the failure it reports: unreadable, alarming, and it leaks an internal
+# identifier to anyone looking at the screen.
+#
+# The full exception still goes to the server log (Render keeps it, and the
+# Render API can query it), so nothing is lost for debugging. Only the browser
+# gets the short version.
+_ERROR_SIGNATURES = (
+    (
+        ("rate_limit_exceeded", "rate limit reached", "request too large"),
+        "rate_limited",
+        "The language model is temporarily out of request budget. This frees up "
+        "continuously — try again in a minute.",
+    ),
+    (
+        ("tool_use_failed", "failed to parse tool call arguments",
+         "tool call validation failed"),
+        "malformed_output",
+        "The model returned a response that did not match the required format. "
+        "This is usually transient — try the question again.",
+    ),
+    (
+        ("model_not_found", "does not exist or you do not have access"),
+        "model_gone",
+        "A configured language model is no longer available. The service needs "
+        "its model pins updated.",
+    ),
+    (
+        ("invalid_api_key", "authentication", "401"),
+        "auth",
+        "The service could not authenticate with the language model provider.",
+    ),
+)
+
+
+def user_facing_error(e: Exception, *, context: str = "") -> dict:
+    """Map an exception to a short SSE `error` payload, and log the full text.
+
+    Returns `{"message": ..., "kind": ...}`. `kind` lets the UI pick its tone
+    without parsing prose — a rate limit is worth retrying, a missing model is
+    not.
+    """
+    print(f"[error]{' ' + context if context else ''} {type(e).__name__}: {e}")
+
+    text = str(e).lower()
+    for signatures, kind, message in _ERROR_SIGNATURES:
+        if any(sig in text for sig in signatures):
+            return {"message": message, "kind": kind}
+
+    # Unknown failure: name the exception type, which is useful and safe, but
+    # not its message, which is where provider payloads and IDs live.
+    return {
+        "message": (
+            f"Something went wrong while answering ({type(e).__name__}). "
+            "The server log has the details."
+        ),
+        "kind": "unknown",
+    }
+
+
 def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
     """
     Runs complete pipeline for one ASIN.
@@ -475,7 +541,7 @@ async def agent_query(request: AgentQueryRequest):
                 payload = json.dumps(event["data"], default=str)
                 yield f"event: {event['event']}\ndata: {payload}\n\n"
         except Exception as e:
-            err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+            err = json.dumps(user_facing_error(e, context="agent/query"))
             yield f"event: error\ndata: {err}\n\n"
 
     # Redis cache wrapper — degrades to passthrough if REDIS_URL is unset
@@ -550,7 +616,7 @@ async def assistant_query(request: AssistantQueryRequest):
             try:
                 from backend.agent.graph import run_agent_streaming
             except Exception as e:
-                err = json.dumps({"message": f"Agent unavailable: {type(e).__name__}: {e}"})
+                err = json.dumps(user_facing_error(e, context="assistant/query agent import"))
                 yield f"event: error\ndata: {err}\n\n"
                 return
 
@@ -559,7 +625,7 @@ async def assistant_query(request: AssistantQueryRequest):
                     payload = json.dumps(event["data"], default=str)
                     yield f"event: {event['event']}\ndata: {payload}\n\n"
             except Exception as e:
-                err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+                err = json.dumps(user_facing_error(e, context="assistant/query copilot"))
                 yield f"event: error\ndata: {err}\n\n"
             return
 
@@ -569,7 +635,7 @@ async def assistant_query(request: AssistantQueryRequest):
             from backend.mcp_server.tools.review_qa import review_qa
             from backend.mcp_server.tools._loader import supported_asins
         except Exception as e:
-            err = json.dumps({"message": f"review_qa unavailable: {type(e).__name__}: {e}"})
+            err = json.dumps(user_facing_error(e, context="assistant/query review_qa import"))
             yield f"event: error\ndata: {err}\n\n"
             return
 
@@ -603,7 +669,7 @@ async def assistant_query(request: AssistantQueryRequest):
             # plays well with the upstream FAISS/Bert init.
             result = await asyncio.to_thread(review_qa, request.asin, request.query)
         except Exception as e:
-            err = json.dumps({"message": f"{type(e).__name__}: {e}"})
+            err = json.dumps(user_facing_error(e, context="agent/query"))
             yield f"event: error\ndata: {err}\n\n"
             return
 
