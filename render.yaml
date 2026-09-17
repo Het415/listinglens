@@ -57,3 +57,17 @@ services:
       # headroom for eager loading.
       - key: PRELOAD_CACHE
         value: "0"
+      # Render runs this service on the NATIVE python runtime (`env: python`
+      # above), not the Dockerfile — so the `PYTHONUNBUFFERED=1` set in the
+      # Dockerfile's ENV block never applied here, and it has to be repeated.
+      #
+      # Without it, Python batches stdout and the service's own diagnostics
+      # arrive tens of seconds late or not at all. That is not cosmetic: the
+      # `[llm_config] ... falling back to` and `[synthesizer] ... degrading`
+      # lines are how a model failover is reconstructed after the fact, and
+      # twice on 2026-09-17 they were missing from the exact log window being
+      # investigated while the HTTP access lines around them were present.
+      # A diagnostic that does not arrive is worse than none, because its
+      # absence reads as "that code path did not run".
+      - key: PYTHONUNBUFFERED
+        value: "1"
