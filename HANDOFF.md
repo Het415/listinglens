@@ -173,10 +173,14 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 1 | Wire dashboard cards → `/assistant` | ✅ done (`2d8dde33`) |
 | 2 | Onboarding banner for first-time sellers | ✅ done (`3fb44b43`) |
 | 3 | Delete or build out `/dashboard/visual` placeholder | ✅ done — same item as #13 below (it was double-listed) |
-| 4 | Surface real backend error messages on dashboard fetch failures | open |
-| 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | open |
-| 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open |
-| 7 | Planner prompt tuning to fix launch-query over-confidence | open — judge scores now exist (2026-09-17) |
+| 4 | Surface real backend error messages on dashboard fetch failures | ⚠️ partly done — `/assistant` done (`267d0288`: `user_facing_error` + `ErrorBubble`); the `/dashboard/*` fetch failures named in this row are still raw |
+| 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | ✅ done (`d5023158`) — it was five styles, not three. One `components/dashboard/loading.tsx`; 0 spinners and 0 hand-rolled pulse blocks left |
+| 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open — **audited, not fixed**. Full findings below under "Mobile audit". The premise that mobile nav is missing is WRONG (`MobileNav` exists); the real P0s are the tab bar overflowing <390px and two tabs highlighting at once |
+| 7 | Planner prompt tuning to fix launch-query over-confidence | open — **and the premise is inverted**. Measured: launch is the BEST type (7/10), zero wrong `go`s; the agent UNDER-commits. See "Planner diagnosis" below before touching prompts |
+| 16 | Synthesizer loses a completed run to one malformed generation | ✅ done (`16e13489`) — degrades to evidence assembled from tool results; 7 tests |
+| 17 | Raw provider stacktraces rendered in the chat UI | ✅ done (`267d0288`) — `user_facing_error` + `ErrorBubble`; 8 tests assert the Groq org id cannot reach the browser |
+| 18 | Production diagnostics arrive late or not at all | ✅ done (`327bd2e4`) — `render.yaml` uses `env: python`, so the Dockerfile's `PYTHONUNBUFFERED=1` never applied |
+| 19 | Eval scored a degraded run as a real `needs_more_data` answer | ✅ done (`a3b587c0`, tests `333906c1`) — `no_decision_rate` is the figure comparable to historical `error_rate` |
 | **12** | **Cold start: warmup cron doesn't actually run (~4h, not 10min)** | ⚠️ half done — local launchd pinger installed; **YOU still need to create the cron-job.org job**, see `docs/WARMUP.md` |
 | 10 | Make `tool_use_failed` retryable (instructor predicate) | ✅ done — `resilient_call` now retries same-model once then fails over; 8 unit tests in `tests/test_llm_config.py` |
 | 13 | Delete/hide `/dashboard/visual` "coming soon" placeholder | ✅ done — route deleted; also removed the landing page's unimplemented CLIP/"multimodal" claims |
@@ -446,6 +450,177 @@ flavour 3.
 
 Do not pipe the run through `tail` — it buffers, and the `[llm_config]` lines are the
 evidence. Redirect to a file instead.
+
+## Mobile audit — item #6 (audited 2026-09-17, NOT fixed)
+
+**The premise this item was written on is wrong: mobile navigation works.**
+`sidebar.tsx` is `hidden md:flex`, but the same file exports `MobileNav` (lines
+100-140), a bottom tab bar gated `md:hidden`, rendered by
+`app/dashboard/layout.tsx:23` with `pb-16 md:pb-0` reserving its space. Five of
+six destinations are in the bar (`navItems.slice(0, 5)`); the sixth,
+`/assistant`, is the "Ask AI" button in the top bar, which is not `md:`-gated.
+Nobody is stranded. Do not "add mobile nav".
+
+The real defects, ranked by what a reviewer notices first:
+
+**P0**
+
+1. **Tab bar overflows below 390px.** `sidebar.tsx:114-137` — five items, each
+   `px-3` plus a `max-w-[60px]` label, ≈384px of min-content in a 375px
+   viewport. `justify-around` cannot shrink below min-content, so the fifth tab
+   clips on an iPhone SE / 13 mini and most 360px Androids. Fix: `flex py-2` on
+   the `ul`, `min-w-0 flex-1` on each `li`, `w-full truncate text-center` on
+   the label.
+2. **Two tabs highlight at once.** `sidebar.tsx:119-120` — the mobile predicate
+   is `pathname === item.href || (item.href === '/dashboard' && pathname.startsWith('/dashboard'))`,
+   so on `/dashboard/reviews` both Dashboard and Review light up. The desktop
+   sidebar has the exclusion list (lines 66-72); the mobile copy does not.
+   Every mobile item is a leaf route, so `pathname === item.href` suffices.
+3. **Labels truncate to an ambiguous pair** — `Conversa…` beside `Competito…`.
+   Shorten the source strings for mobile rather than truncating.
+4. **`min-h-screen` duplicated on four page roots** (`reviews:359`,
+   `conversations:124`, `compare:268`, `brief:84`) inside a layout that is
+   already `min-h-screen`, below a 60px top bar in a `pb-16` wrapper — so
+   document height is ≥ `100vh + 124px` regardless of content and every
+   sub-route rubber-bands. Fix: delete it from the four pages.
+
+⚠️ **Do NOT apply gotcha #3's `h-screen overflow-hidden` to the dashboard
+layout.** That pattern belongs to the fixed-height chat routes, which pair it
+with `min-h-0` on both the column and `main`. `app/dashboard/layout.tsx:15` has
+no `min-h-0`, so `h-screen overflow-hidden` would let `main` overflow and get
+clipped with no scrollbar — everything below the fold unreachable. `min-h-screen`
+on the layout is correct here; the duplication on the pages is the bug.
+
+**P1** — reviews table crushes 6 columns into 343px while its `overflow-auto`
+container stays inert because the table is `w-full` (fix: `min-w-[760px]`);
+`quality-breakdown.tsx:277-284`'s fixed `w-24` value column starves the label
+to ~84px; the conversations chart reserves a fixed `YAxis width={120}` out of
+~303px; four `justify-between` header rows never stack; and **every
+explanatory tooltip is unreachable on touch** — Radix tooltips do not open on
+tap, and `phrase-clouds.tsx:116` literally says "Hover a chip to see the exact
+phrase". The synthetic-data disclaimer on the competitor panel is tooltip-only,
+which is the one caveat you most want read. `components/ui/popover.tsx` is
+already vendored.
+
+**Explicitly clean, do not spend time:** no un-prefixed multi-column grids
+anywhere in scope (all `grid-cols-1` with `sm:`/`md:`/`lg:` escalation), and the
+reviews list is bounded at `pageSize = 25`, so the 644KB payload is a network
+cost, not a layout defect.
+
+---
+
+## Planner diagnosis — item #7 (analysed 2026-09-17, NOT fixed)
+
+**The premise is inverted. The agent UNDER-commits; it is not over-confident.**
+Do not tighten the launch rubric — that is what created the current problem.
+
+Measured over `eval/reports/2026-09-17-full-judged.jsonl`:
+
+| type | gold distribution | majority-class baseline | agent |
+|---|---|---|---|
+| launch | nmd 6, go 2, no_go 2 | 6/10 | **7/10 — the best type** |
+| returns | go 9, nmd 1 | 9/10 | 6/10 |
+| improve | go 8, nmd 2 | 8/10 | 5/10 |
+
+Error taxonomy over 12 errors: **8 hedges** (`go→needs_more_data` ×7,
+`no_go→needs_more_data` ×1), 3 over-commits, 1 crash. **Zero** launch rows
+answered `go` against a non-`go` gold — the recorded failure pattern has no
+instances left. Commit `b5b2e3ee` already fixed it and overshot: wrong-`go`s
+went 5 → 0 and hedge errors 0 → 8.
+
+⚠️ **Sobering context for any claim about this agent: a constant-`go` predictor
+scores 19/30 = 63.3%, above the agent's 60.0%.** Put that baseline in the
+report header before quoting decision accuracy anywhere.
+
+**Root cause is a contradiction in `prompts.py`, not a tuning problem.** Line
+229: "List what's missing even when the decision is `go`." Line 189-191: "If
+`evidence_gaps` is non-empty, the decision MUST be `needs_more_data` — no
+exceptions." Jointly unsatisfiable: **`go` is logically unreachable for launch
+queries.** Worked Example 2 (line 274) then violates the rule it was just
+given. `schemas.py:137-139` reinforces it through the field description. That is
+why byte-identical trajectories coin-flip — `returns_002/003` hedge and
+`returns_006/010` say `go` on the same evidence state.
+
+Two independent code bugs found alongside:
+
+- **`synthesizer.py:53` passes a mutated plan under a misleading label.** It
+  renders `state["plan"]` as "PLANNER initial plan", but `executor.py:163-164`
+  removes each tool as it is called, so the Synthesizer is shown a plan
+  consisting of exactly the tools that never ran. That actively manufactures
+  the "a planned tool didn't run" inference behind the improve hedges. Fix:
+  add an `initial_plan` key written once by the planner.
+- **The re-plan loop has never fired.** `REPLAN_CONFIDENCE_THRESHOLD = 0.5`
+  (`graph.py:62`), and the minimum confidence observed across 76 runs in three
+  reports is **0.52** — the synthesizer prompt anchors hedge confidence at 0.55.
+  The whole re-plan mechanism is untested in practice. Found independently by
+  two separate investigations.
+
+Also: `MAX_TOOL_ITERATIONS = 8` is never hit (max observed 4), so stopping is
+prompt-driven and prompt changes can work. And confidence carries no
+information independent of the decision label — `go`→0.85 in 11/13 cases, and
+the ranges are disjoint, so it is a step function of the label copied from the
+worked examples.
+
+**Sequencing that matters:** the hedge bias is load-bearing for launch (it earns
+5 of launch's 7 correct answers), so de-hedge **per query type**, leaving launch
+alone. `returns` gold has exactly one `needs_more_data` row and it is already
+wrong, so de-hedging returns has zero downside on passing rows.
+
+---
+
+## Retrieval diagnosis — item #11 (analysed 2026-09-17, NOT fixed)
+
+**Not a ranking problem.** The judge never once complains about ranking in 29
+judged rows. The recorded interpretation ("weakly-relevant evidence, therefore
+retrieval ranking") is unsupported.
+
+**`synthesizer.py:39-40` truncates each tool result at 1500 chars, and
+`review_qa`'s serialized payload measures 2019-2218 chars** — so the cut lands
+~700 chars inside `sources`, and because `answer` serializes first, **3 of 5
+review snippets are deleted before the Synthesizer ever sees them**, on
+essentially every call. That is the score signature exactly: the prose answer
+survives (completeness 0.876, anti-hallucination 0.811) while the citable
+quotes do not (evidence_relevance 0.545). Raising the cap to 3000 costs ~175
+tokens per run — measured, and `review_qa` is the only tool that exceeds it
+(`competitor_search` 1197, `price_history` 949, `trend_signal` 439,
+`predict_return_risk` 252).
+
+**`Evidence.relevance` is self-reported by the LLM.** Nothing computes it;
+`rag_chatbot.py:226` calls `similarity_search`, not
+`similarity_search_with_score`, so the distance is discarded. Every value the
+judge quoted lies in [0.90, 1.00], n=11. Worse, `judges.py:53` renders it into
+the judge's prompt as `rel=0.90` and the judge **cites it as corroboration** — a
+self-graded constant fed to the grader as retrieval confidence. Compute it or
+drop it.
+
+**`evidence_relevance` is also contaminated**: `judges.py:66-73` packs
+`expected_decision`, `expected_tools` and free-text `notes` into the
+EXPECTED_OUTPUT the dimension is graded against, so it correlates with
+`decision_match` at **+0.708** — higher than with any evidence feature. It is a
+blended evidence/tool-recall/decision metric, not an evidence metric.
+
+The dominant real driver is tool recall: `actual_tools == ['review_qa']`
+(n=8) averages **0.300** versus 0.638 for everything else. If those 8 merely
+scored like the rest the aggregate goes 0.545 → 0.638 with no retrieval change
+at all.
+
+**Retire `FILTERED_FETCH_K` as a suspect** — measured, not guessed: at
+`fetch_k=20` a rating-filtered query returns 3 docs, at 400 it returns 5, on
+both the largest and smallest store. The 400 already fixes the starvation it
+was written for.
+
+**Chunk size goes last, and there is a landmine.** `tests/test_onnx_embeddings.py`
+does NOT block a re-chunk — it re-embeds stored text and compares, so it guards
+the embedding model, not the chunking, and a re-chunked index still passes at
+cosine 1.000000. The actual hazard: `review_qa.py:44` calls
+`asin_reviews_df(asin, limit=100)`, which yields ~200-250 chunks, while the
+committed stores hold 1,617-5,797. **Any rebuild through the current tool path
+silently produces a ~15x smaller index and nothing raises.** Fix that limit
+first, and note the stores are git-tracked (~65MB), so a re-index is a large
+binary commit that destroys the ability to A/B. Also pointless before the 1500
+cap is raised: larger chunks make truncation worse, not better.
+
+---
 
 ## Alternative pickup (product work) — Item #8: Competitor Compare auto-populate
 
