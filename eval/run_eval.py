@@ -147,7 +147,22 @@ def _per_query_result(gold: dict, out: dict | None, err: Exception | None, laten
     rec = out["recommendation"]
     actual_tools = out["trace"]["tools_called"]
     traj = trajectory_metrics(gold["expected_tools"], actual_tools)
-    decision_match = rec["decision"] == gold["expected_decision"]
+
+    # A degraded run is NOT an answer, and must not be scored as one.
+    #
+    # The Synthesizer now assembles a Recommendation from tool results when its
+    # structured output fails, instead of raising. That is right for users, but
+    # it silently changes what this function sees: the row arrives with err=None
+    # and decision="needs_more_data", so it would be counted as a genuine
+    # decision — and scored CORRECT on every gold row that happens to expect
+    # needs_more_data. That is unearned credit for a run where the model never
+    # committed to anything, and it would also make error_rate look like it
+    # improved when the failures were merely reclassified.
+    #
+    # So a degraded row is recorded explicitly, never matches, and is counted
+    # separately in the summary.
+    degraded = bool(out["trace"].get("synthesis_degraded"))
+    decision_match = (not degraded) and rec["decision"] == gold["expected_decision"]
 
     base.update({
         "actual_decision": rec["decision"],
@@ -156,6 +171,7 @@ def _per_query_result(gold: dict, out: dict | None, err: Exception | None, laten
         "n_tool_calls": out["trace"]["n_tool_calls"],
         "trajectory": traj,
         "decision_match": decision_match,
+        "synthesis_degraded": degraded,
         "recommendation_summary": rec["summary"][:300],
         "evidence_count": len(rec["evidence"]),
         "_full_output": out,  # kept for judges; stripped before JSONL write
@@ -201,7 +217,12 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
     """Compute aggregate metrics over the per-query list."""
     n = len(per_query)
     n_errors = sum(1 for q in per_query if q.get("error"))
-    n_success = n - n_errors
+    # Degraded runs completed without raising but produced no model decision.
+    # Tracked apart from both buckets so a drop in error_rate cannot be read as
+    # an improvement when it is really a reclassification. n_success counts only
+    # runs that actually produced a model-generated recommendation.
+    n_degraded = sum(1 for q in per_query if q.get("synthesis_degraded"))
+    n_success = n - n_errors - n_degraded
 
     decisions_match = sum(1 for q in per_query if q.get("decision_match"))
     decision_accuracy = decisions_match / n if n else 0.0
@@ -220,8 +241,17 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
     judge_aggs = {}
     if with_judges:
         from eval.judges import aggregate_judge_scores
+        # Degraded rows are excluded alongside errored ones: their `summary`
+        # is the executor's prose, not a synthesized recommendation, so judging
+        # it would mix "how good is the agent's answer" with "how readable was
+        # the fallback".
         judge_aggs = aggregate_judge_scores(
-            [q for q in per_query if not q.get("error") and "decision_correctness" in q]
+            [
+                q for q in per_query
+                if not q.get("error")
+                and not q.get("synthesis_degraded")
+                and "decision_correctness" in q
+            ]
         )
 
     return {
@@ -229,7 +259,12 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
         "n_queries": n,
         "n_success": n_success,
         "n_errors": n_errors,
+        "n_degraded": n_degraded,
         "error_rate": round(n_errors / n, 3) if n else 0.0,
+        # The honest headline: any run that did not yield a model decision,
+        # whether it raised or degraded. Compare THIS against historical
+        # error_rate figures, not error_rate itself.
+        "no_decision_rate": round((n_errors + n_degraded) / n, 3) if n else 0.0,
         "decision_accuracy": round(decision_accuracy, 3),
         "trajectory": trajectory_aggs,
         "latency": latency_stats,
@@ -263,7 +298,8 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         f"# Eval Report — {date.today().isoformat()} — {variant}",
         "",
         f"- **Variant:** `{variant}`",
-        f"- **Queries:** {summary['n_queries']} ({summary['n_success']} success, {summary['n_errors']} errors)",
+        f"- **Queries:** {summary['n_queries']} ({summary['n_success']} success, "
+        f"{summary['n_errors']} errors, {summary.get('n_degraded', 0)} degraded)",
         f"- **Agent model:** `{agent_model()}`",
         f"- **Executor model:** `{executor_model()}`",
         f"- **RAG model:** `{rag_model()}`",
@@ -280,6 +316,10 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         f"| First-tool match rate | {summary['trajectory']['ordering_match_rate']:.1%} |",
         f"| Latency p50 / p95 (s) | {summary['latency']['p50']:.1f} / {summary['latency']['p95']:.1f} |",
         f"| Error rate | {summary['error_rate']:.1%} |",
+        f"| Degraded (no model decision) | {summary.get('n_degraded', 0)} |",
+        # The figure to compare against historical error_rate values: before
+        # the Synthesizer learned to degrade, every one of these raised.
+        f"| No-decision rate | {summary.get('no_decision_rate', summary['error_rate']):.1%} |",
     ]
     if j:
         lines.extend([
