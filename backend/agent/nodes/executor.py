@@ -12,7 +12,7 @@ low-confidence Synthesizer output.
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_groq import ChatGroq
 
-from src.llm_config import reasoning_effort, resilient_call
+from src.llm_config import is_provider_capacity_error, reasoning_effort, resilient_call
 
 from ..prompts import executor_system_prompt
 from ..schemas import AgentState
@@ -57,14 +57,35 @@ def _invoke_with_retry(bind_for, messages):
         # Exhausted retries on THIS model without a provider-level error.
         raise _MalformedToolCalls(str(last_err))
 
+    reason = "unparseable tool calls on every model"
     try:
         return resilient_call("executor", attempt_with)
     except _MalformedToolCalls:
+        # Every retry on every model produced tool-call JSON Groq rejected.
         pass
-    except Exception:
-        raise
+    except Exception as e:  # noqa: BLE001 — provider exception types vary
+        # The chain is exhausted for a reason that is not our fault: every
+        # model rate-limited, or every model decommissioned. Degrade for the
+        # same reason the malformed-tool-call path does — the evidence already
+        # gathered is still worth synthesizing, and losing the whole run costs
+        # the user everything the agent had proved.
+        #
+        # This branch used to be a bare `raise`, so a rate-limited chain killed
+        # the request outright. Measured on the 2026-09-17 judged run:
+        # improve_006, improve_008 and improve_010 all died here, each with
+        # tools_called == [] — the run never reached the Synthesizer, so the
+        # Synthesizer's own fallback had nothing to catch. Three of thirty
+        # queries, all from one exhausted daily token budget.
+        #
+        # Anything else still raises. An auth failure or a bug in the request
+        # we built must surface loudly: degrading it would turn a total outage
+        # into a stream of plausible "partial answers" that nobody looks into.
+        if not is_provider_capacity_error(e):
+            raise
+        last_err = e
+        reason = f"provider capacity exhausted ({type(e).__name__})"
 
-    print("[executor] giving up on tool calls; synthesizing from evidence so far")
+    print(f"[executor] giving up on tool calls — {reason}; synthesizing from evidence so far")
     return AIMessage(
         content=(
             "I was unable to issue a further tool call. Synthesize a "

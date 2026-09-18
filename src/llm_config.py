@@ -197,6 +197,29 @@ def _failover_reason(err: Exception) -> str | None:
 _SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
 
 
+def is_provider_capacity_error(err: Exception) -> bool:
+    """True when `err` means the provider cannot serve us, not that we asked wrong.
+
+    Covers exactly the two conditions `resilient_call` walks the chain for —
+    every model decommissioned, or every model rate-limited — and nothing else.
+    A bad API key, a schema we built wrong, or a plain bug returns False.
+
+    Exposed for callers that must decide whether to degrade or fail loudly once
+    `resilient_call` has already exhausted the chain and re-raised. The
+    distinction matters: degrading on a capacity problem keeps a user's
+    completed research, while degrading on an auth failure would turn a total
+    outage into a stream of plausible "partial answers" that nobody
+    investigates — the same misleading-signal trap as a diagnostic that never
+    arrives.
+
+    Malformed tool calls are deliberately NOT included. They are recoverable,
+    but per-model and per-attempt, so callers handle them with their own retry
+    before this question arises (see backend/agent/nodes/executor.py).
+    """
+    text = str(err).lower()
+    return any(sig in text for sig in _MODEL_GONE + _RATE_LIMITED)
+
+
 def resilient_call(stage: str, fn):
     """Run `fn(model_id)` against the stage's chain until one succeeds.
 
