@@ -46,10 +46,18 @@ that needs you**, and two things were found along the way that were not on the l
   exist anywhere in the backend** (`grep -ri clip app.py backend src` → nothing), in
   four places including the page title. Deleting the placeholder route alone would have
   left all four claims standing. Replaced with what is actually built.
-- **P1, `tool_use_failed` — fixed and unit-tested (8 tests), NOT yet verified
-  end-to-end.** The Groq daily token budget (200k/model/day) was exhausted before the
-  verification run finished. One command to run after it resets; see
-  "Detail — `tool_use_failed`".
+- **P1, `tool_use_failed` — fixed and VERIFIED end-to-end.** A full judged run caught
+  the retry firing on `returns_004`, where the model wrote `"confidence": 0. nine` into
+  an otherwise perfect payload; one same-model retry recovered it to a correct `go`.
+  The Synthesizer degrade fired twice and was bucketed correctly. **But the run also
+  established that this harness has a ~11-row noise floor** — 11 of 24 like-for-like
+  rows flip between runs of identical code — so no single-run accuracy delta from it
+  means anything. Both points in "Detail — `tool_use_failed`".
+- **Found and fixed while measuring: the Executor had the same bug as the Synthesizer.**
+  A rate-limit-exhausted chain hit a bare `raise`, killing 3 of 30 queries with
+  `tools_called == []`. Fixed (`be38fec9`), unit-tested, not yet verified end-to-end.
+- **Also fixed: the eval was about to score a degraded run as a real answer.** Caught
+  before quoting any number from it — see queue #19.
 - **Found: `pytest` segfaulted on macOS** without `OMP_NUM_THREADS=1` — the same OpenMP
   bug as gotcha #11, but the existing fix did not cover the test suite. Pinned in
   `tests/conftest.py`; suite is 27 tests in ~4s, 3/3 clean.
@@ -177,7 +185,9 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 5 | Unify loading states across `/dashboard/*` (spinner vs skeleton vs third style) | ✅ done (`d5023158`) — it was five styles, not three. One `components/dashboard/loading.tsx`; 0 spinners and 0 hand-rolled pulse blocks left |
 | 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open — **audited, not fixed**. Full findings below under "Mobile audit". The premise that mobile nav is missing is WRONG (`MobileNav` exists); the real P0s are the tab bar overflowing <390px and two tabs highlighting at once |
 | 7 | Planner prompt tuning to fix launch-query over-confidence | open — **and the premise is inverted**. Measured: launch is the BEST type (7/10), zero wrong `go`s; the agent UNDER-commits. See "Planner diagnosis" below before touching prompts |
-| 16 | Synthesizer loses a completed run to one malformed generation | ✅ done (`16e13489`) — degrades to evidence assembled from tool results; 7 tests |
+| 16 | Synthesizer loses a completed run to one malformed generation | ✅ done (`16e13489`) — degrades to evidence assembled from tool results; 7 tests. **Degrade observed firing twice on the post-fix judged run** |
+| 20 | Executor loses a completed run when its model chain is rate-limited | ✅ done (`be38fec9`) — 12 tests, but **NOT yet verified end-to-end**; found by the judged run (`improve_006/008/010`, all `tools_called: []`) |
+| 21 | This eval cannot detect a change smaller than ~11 rows in one run | ⚠️ **open measurement constraint, not a bug** — 11 of 24 like-for-like rows flipped between two runs of identical code. Read before trusting any single-run delta |
 | 17 | Raw provider stacktraces rendered in the chat UI | ✅ done (`267d0288`) — `user_facing_error` + `ErrorBubble`; 8 tests assert the Groq org id cannot reach the browser |
 | 18 | Production diagnostics arrive late or not at all | ✅ done (`327bd2e4`) — `render.yaml` uses `env: python`, so the Dockerfile's `PYTHONUNBUFFERED=1` never applied |
 | 19 | Eval scored a degraded run as a real `needs_more_data` answer | ✅ done (`a3b587c0`, tests `333906c1`) — `no_decision_rate` is the figure comparable to historical `error_rate` |
@@ -329,8 +339,10 @@ Lead with what is measured, not what is built:
 
 ## Detail — `tool_use_failed` (P1 item 3)
 
-**Status: fixed and unit-tested. End-to-end verification is BLOCKED on the Groq daily
-token budget — one command to run when it resets, see "Finish the verification" below.**
+**Status: fixed, unit-tested, and VERIFIED end-to-end on a full judged run.** The retry
+fired on real traffic and recovered a query that would previously have died — evidence
+under "Verified end-to-end" below, along with the run's confound and a noise-floor
+finding that changes how any future eval result should be read.
 
 ### What the fix is
 
@@ -417,39 +429,110 @@ about capability, and the free tier's daily budget is routinely spent by one eva
 failing `doctor` on a 429 would make it useless in exactly the situation where you want
 to run it. Schema flakiness is not actionable either — the output says so, in the report.
 
-### Finish the verification
+### ✅ Verified end-to-end — full judged run, 2026-09-17 late
 
-`python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix` was started and
-**abandoned at 7/15**, because it stopped measuring the fix and started measuring the
-rate limiter. Results: 3 passed, then `launch_004`, `006` and `007` all died on 429s and
-`launch_005` on a genuine `tool_use_failed`.
+`eval/reports/2026-09-17-postfix-judged.{md,jsonl}`. 30 queries, Haiku 4.5 judge.
 
-The cause was **TPD, not TPM**: `Limit 200000, Used 198974` on `gpt-oss-120b` and
-`Used 199863` on `gpt-oss-20b`. Note gotcha #2 below omitted the 200k tokens/day cap;
-it is the binding constraint, not the 8000 TPM one. Requests-per-day was never close
-(957-993 of 1000 remaining).
+**The retry fired and recovered a query that would previously have died.** Exactly one
+agent-stage malformed tool call in 30 queries, on `returns_004`, and the failed
+generation is worth seeing:
 
-So: **the fix is verified at the unit level, not end-to-end.** When the daily budget
-resets (UTC midnight = 8 PM EDT):
-
-```bash
-python -m scripts.doctor --probe          # confirm the buckets actually refilled
-python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix
+```
+"confidence": 0. nine,
 ```
 
-`--limit 15`, not the prior handoff's `--limit 8`: `returns_005` — the one reproducer
-from the baseline judged run — is gold index **15**, so `--limit 8` never reaches it.
-`launch_001` is index 1.
+A numeral-word hybrid. Everything else in the payload was perfect — `"decision": "go"`,
+full summary, four reasoning steps, two evidence entries, risks, next actions — and
+three characters destroyed it. Then:
 
-What success looks like: no `tool_use_failed` in the errors, and
-`[llm_config] agent: … is emitting malformed tool calls; retrying the same model`
-appearing in stdout where a query previously died. That line was captured this session
-(single-query repro of `launch_005`), so the mechanism is confirmed to fire in the real
-agent — it simply could not rescue that particular query, since all attempts landed on
-flavour 3.
+```
+[llm_config] agent: openai/gpt-oss-120b is emitting malformed tool calls; retrying the same model (attempt 2).
+```
 
-Do not pipe the run through `tail` — it buffers, and the `[llm_config]` lines are the
-evidence. Redirect to a file instead.
+`returns_004` came back `go` at confidence 0.92, correct, 27.3s. One same-model retry,
+no failover, no degrade. That is flavour A behaving exactly as the fix assumes.
+
+Note this is the *same quirk* as the baseline's `returns_005` failure (which was also
+`"confidence": 0. nine`), so it is a recurring tic of `gpt-oss-120b` on this schema, not
+a one-off. `returns_005` itself passed first try this run — consistent with the failure
+being stochastic rather than query-specific.
+
+**The Synthesizer degrade fired twice** (`improve_007`, `improve_009`) and both were
+bucketed correctly by the new accounting rather than counted as answers.
+
+### What the aggregates say: nothing, and that is correct
+
+| metric | baseline (`full-judged`) | this run | read |
+|---|---|---|---|
+| decision accuracy, like-for-like (24 rows both decided) | 62.5% | 66.7% | **+1 row — noise, not claimed** |
+| decision accuracy, headline | 60.0% | 56.7% | **not comparable** — see confound below |
+| decision correctness (judge) | 0.572 | 0.540 | flat |
+| evidence relevance | 0.545 | 0.536 | flat (nothing touched retrieval) |
+| completeness | 0.876 | 0.872 | flat |
+| anti-hallucination | 0.811 | 0.860 | up, not claimed |
+| trajectory F1 / precision / recall | 0.773 / 0.865 / 0.750 | 0.781 / 0.877 / 0.762 | flat |
+| latency p50 | 33.1s | 33.4s | flat |
+| latency p95 | 48.6s | 60.4s | worse — rate-limit failovers, see below |
+| no-decision rate | 3.3% | 16.7% | worse — budget, see below |
+
+Everything is flat within noise, which is the **right** outcome: this session's changes
+were reliability, not quality. Do not let a future reader mistake the anti-hallucination
+bump or the +1 row for an effect.
+
+### ⚠️ The confound, stated plainly
+
+The last five queries (`improve_006`-`improve_010`) are **rate-limit casualties, not
+agent failures** — 3 errors and 2 degrades — and they score as `decision_match=False`.
+That alone accounts for the headline dropping below the baseline. `120b` and `20b` were
+at their TPD cap, `safeguard-20b` too, so both chains walked to qwen and hit its
+1000-output-tokens-per-minute ceiling.
+
+Cause: two eval runs plus several `--probe` calls in one day. The baseline ran on a fresh
+budget. So the honest claim is **not** "reliability improved" — it is "the failure modes
+are now recovered or labelled instead of fatal". On the one class that was fixed, 1/1
+recovered.
+
+### ⚠️⚠️ The most important finding: this harness has a ~11-row noise floor
+
+Across the 24 rows where both runs produced a real decision, **11 flipped — 6 fixed,
+5 broke — while hedge errors stayed identical at 7 and 7.** Nothing in this session
+touches decision logic, so that is pure run-to-run variance.
+
+**Consequence: a single run cannot detect a change smaller than ~11 rows (~37%).** That
+invalidates the way the planner plan below states its targets — its "+6 rows / +20
+points" predictions sit *below* the noise floor. To measure those you need either
+repeated runs of the same config, or a narrower primary metric that moves first
+(per-query-type hedge-error count, tool recall, evidence count), with headline accuracy
+as a secondary. Budget accordingly: at one full run per day, a repeated-runs design is
+several days of wall-clock.
+
+This also independently corroborates the planner diagnosis — identical trajectories
+coin-flipping is exactly what a prompt-level contradiction produces.
+
+### Live confirmation of the planner diagnosis
+
+**Zero `go` decisions across all 10 launch queries**, where gold expects 2 — and both
+(`launch_006`, `launch_009`) were answered `needs_more_data`. That is the `prompts.py`
+contradiction made visible: `go` is unreachable for launch queries. Confidence was
+0.60-0.62 on every hedge and 0.84-0.86 on both commits — the disjoint step function,
+all of it above the dead 0.5 replan threshold.
+
+### What is still unverified
+
+The **Executor** degrade (`be38fec9`) is unit-tested (12 tests) but **not exercised
+end-to-end** — the budget was spent by the time it was written. It is in the same
+position the retry fix was in that morning, and that one held up.
+
+To verify, on a fresh budget:
+
+```bash
+python -m scripts.doctor --probe     # confirm the buckets actually refilled
+python -m eval.run_eval --output-tag exec-degrade > /tmp/eval.log 2>&1
+```
+
+Success looks like: no row with `"error"` containing `rate_limit_exceeded`, and
+`[executor] giving up on tool calls — provider capacity exhausted` in the log where a
+query previously died. Do **not** pipe through `tail` — it buffers away the evidence.
 
 ## Mobile audit — item #6 (audited 2026-09-17, NOT fixed)
 
@@ -1137,10 +1220,11 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 > 1. Create the cron-job.org warmup job — ~2 min, config in `docs/WARMUP.md`. Until
 >    then the backend sleeps whenever the Mac is off and an interviewer opening the link
 >    cold waits 30-80s.
-> 2. After 8 PM EDT (UTC midnight), when Groq's daily token budget resets, finish the
->    `tool_use_failed` verification:
->    `python -m eval.run_eval --limit 15 --no-judge --output-tag toolfix`
->    (redirect to a file, don't pipe through `tail` — it buffers away the evidence).
+> 2. ✅ Done — the `tool_use_failed` verification ran and passed; see "Verified
+>    end-to-end". What is left in that vein is the **Executor** degrade (`be38fec9`),
+>    which is unit-tested but never exercised against real traffic. On a fresh budget:
+>    `python -m eval.run_eval --output-tag exec-degrade > /tmp/eval.log 2>&1`
+>    (redirect, don't pipe through `tail` — it buffers away the evidence).
 >
 > Then P2 (unify loading states, mobile pass) and P3 (`evidence_relevance` = 0.545,
 > planner over-confidence) are the remaining plan items.
@@ -1153,6 +1237,17 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 > - **Budget one full eval run per day.** Groq's binding limit is 200k tokens per model
 >   per day; a 30-query run nearly exhausts it, and the second run of a day measures the
 >   rate limiter rather than your change. Check with `python -m scripts.doctor --probe`.
+>   Confirmed the hard way on 2026-09-17: the second run's last five queries were all
+>   rate-limit casualties. The cap is a ROLLING window, not a midnight reset — the 429
+>   says "try again in 2m10s" — so it frees continuously and you do not have to wait for
+>   a fixed hour.
+> - **Do not trust a single-run eval delta smaller than ~11 rows (~37%).** Two runs of
+>   identical code flipped 11 of 24 comparable rows in opposite directions. Use repeated
+>   runs, or a narrower metric that moves first (per-type hedge-error count, tool recall,
+>   evidence count), with headline accuracy as secondary.
+> - **Groq's free tier is now the binding constraint on this project** — it produced both
+>   the live demo failure and the noise in the verification run. Dev Tier is higher
+>   leverage than the Render upgrade, for demoing and for being able to measure at all.
 > - **Don't reorder `FALLBACK_CHAINS` from one observed failure.** Tried this session on
 >   what looked like clear evidence; the A/B showed the replacement was worse than the
 >   incumbent and the primary model was flakier than both.
