@@ -58,6 +58,15 @@ that needs you**, and two things were found along the way that were not on the l
   `tools_called == []`. Fixed (`be38fec9`), unit-tested, not yet verified end-to-end.
 - **Also fixed: the eval was about to score a degraded run as a real answer.** Caught
   before quoting any number from it — see queue #19.
+- **The gold set itself was the weakest link, and is now repaired.** `expected_decision`
+  was near-determined by `query_type`, so a three-entry lookup table scored 76.7% against
+  the agent's 60.0%. Only `launch` is scored now, three `no_go` cases were added (it had
+  2, so the capability was unmeasurable), and four rows demanding percentages retrieval
+  cannot produce were repaired. 33 rows; the launch floor fell to 46.2%.
+- **Latest run (2026-09-20) is the cleanest this project has had: 33/33, zero errors,
+  zero degraded.** The three new `no_go` cases passed 3/3 first try. Read the
+  "Run on the rebalanced gold set" section before quoting any number from it — the
+  nine-point accuracy rise is the benchmark sharpening, not the agent improving.
 - **Found: `pytest` segfaulted on macOS** without `OMP_NUM_THREADS=1` — the same OpenMP
   bug as gotcha #11, but the existing fix did not cover the test suite. Pinned in
   `tests/conftest.py`; suite is 27 tests in ~4s, 3/3 clean.
@@ -186,8 +195,10 @@ The CORS regex uses Starlette's `fullmatch`, which means `https://malicioushetpr
 | 6 | Mobile QA pass on `/dashboard/*` (we did `/assistant` last session) | open — **audited, not fixed**. Full findings below under "Mobile audit". The premise that mobile nav is missing is WRONG (`MobileNav` exists); the real P0s are the tab bar overflowing <390px and two tabs highlighting at once |
 | 7 | Planner prompt tuning to fix launch-query over-confidence | open — **and the premise is inverted**. Measured: launch is the BEST type (7/10), zero wrong `go`s; the agent UNDER-commits. See "Planner diagnosis" below before touching prompts |
 | 16 | Synthesizer loses a completed run to one malformed generation | ✅ done (`16e13489`) — degrades to evidence assembled from tool results; 7 tests. **Degrade observed firing twice on the post-fix judged run** |
-| 20 | Executor loses a completed run when its model chain is rate-limited | ✅ done (`be38fec9`) — 12 tests, but **NOT yet verified end-to-end**; found by the judged run (`improve_006/008/010`, all `tools_called: []`) |
+| 20 | Executor loses a completed run when its model chain is rate-limited | ✅ done (`be38fec9`) — 12 tests, but **STILL not verified end-to-end**. The 2026-09-20 run could not exercise it: nothing failed. Needs a forced failure or a genuinely exhausted budget |
 | 21 | This eval cannot detect a change smaller than ~11 rows in one run | ⚠️ **open measurement constraint, not a bug** — 11 of 24 like-for-like rows flipped between two runs of identical code. Read before trusting any single-run delta |
+| 22 | Gold set was degenerate: decision label near-determined by `query_type` | ✅ done (`6280fb44`) — only `launch` scored, 3 `no_go` rows added, 4 unwinnable rows repaired. 33 rows; launch floor 60.0% → 46.2% |
+| 23 | Raise the 1500-char tool-result cap in `synthesizer.py:39-40` | **open — highest-value item left.** Diagnosed mechanism, ~175 tokens/run, and `evidence_relevance` is sitting flat at 0.548 waiting to confirm it |
 | 17 | Raw provider stacktraces rendered in the chat UI | ✅ done (`267d0288`) — `user_facing_error` + `ErrorBubble`; 8 tests assert the Groq org id cannot reach the browser |
 | 18 | Production diagnostics arrive late or not at all | ✅ done (`327bd2e4`) — `render.yaml` uses `env: python`, so the Dockerfile's `PYTHONUNBUFFERED=1` never applied |
 | 19 | Eval scored a degraded run as a real `needs_more_data` answer | ✅ done (`a3b587c0`, tests `333906c1`) — `no_decision_rate` is the figure comparable to historical `error_rate` |
@@ -519,20 +530,75 @@ all of it above the dead 0.5 replan threshold.
 
 ### What is still unverified
 
-The **Executor** degrade (`be38fec9`) is unit-tested (12 tests) but **not exercised
-end-to-end** — the budget was spent by the time it was written. It is in the same
-position the retry fix was in that morning, and that one held up.
+The **Executor** degrade (`be38fec9`) is unit-tested (12 tests) but **still not
+exercised end-to-end.** The 2026-09-20 run could not test it — nothing failed. That is
+the good outcome and the annoying one: the path only runs when a model chain is
+exhausted, and on a clean budget no chain was. It stays in the same position the retry
+fix was in before its own run confirmed it.
 
-To verify, on a fresh budget:
+To verify you would need it to actually fire, which means either catching a genuinely
+exhausted budget, or forcing it — patch `resilient_call` to raise a `RateLimitError` for
+one query and confirm the run completes with a degraded row instead of an error. The
+log line to look for is `[executor] giving up on tool calls — provider capacity
+exhausted`. Do **not** pipe an eval through `tail`; it buffers away exactly these lines.
 
-```bash
-python -m scripts.doctor --probe     # confirm the buckets actually refilled
-python -m eval.run_eval --output-tag exec-degrade > /tmp/eval.log 2>&1
-```
+---
 
-Success looks like: no row with `"error"` containing `rate_limit_exceeded`, and
-`[executor] giving up on tool calls — provider capacity exhausted` in the log where a
-query previously died. Do **not** pipe through `tail` — it buffers away the evidence.
+## ✅ Run on the rebalanced gold set — 2026-09-20
+
+`eval/reports/2026-09-20-goldv2-judged.{md,jsonl}`. 33 queries, Haiku 4.5 judge, budget
+verified clean beforehand (all four models served 1500-token requests), so **unlike the
+2026-09-17 post-fix run there is no rate-limited tail confounding it.**
+
+**33/33 completed. Zero errors, zero degraded, 0.0% no-decision rate** — the first full
+run this project has finished without losing a query.
+
+| metric | 2026-09-17 post-fix | 2026-09-20 (33 rows) |
+|---|---|---|
+| decision accuracy — launch, scored | 60.0% vs **60.0%** floor | **69.2%** vs **46.2%** floor |
+| decision accuracy — all types | 56.7% vs 76.7% floor | 66.7% vs 69.7% floor |
+| error / degraded / no-decision | 10.0% / 2 / 16.7% | **0.0% / 0 / 0.0%** |
+| trajectory precision / F1 / recall | 0.877 / 0.781 / 0.762 | 0.849 / 0.798 / 0.811 |
+| judge: decision / evidence / hallu / complete | 0.540 / 0.536 / 0.860 / 0.872 | 0.603 / 0.548 / 0.824 / 0.870 |
+| latency p50 / p95 | 33.4s / 60.4s | 35.5s / **53.9s** |
+
+### ⚠️ The nine-point jump is the benchmark, not the agent
+
+**The agent code was identical between these two runs.** Launch accuracy rose 60.0% →
+69.2% because the *floor* fell 60.0% → 46.2% when three `no_go` rows were added. The
+previous run sat exactly on its baseline — i.e. demonstrated no decision value at all.
+Same behaviour; a benchmark that can now show it. Do not quote the delta as an
+improvement, and do not let a future reader do so either.
+
+### What the run DOES prove
+
+**The three new `no_go` cases went 3/3 on first execution**, at 0.85-0.86 confidence,
+each calling the tools that carry the evidence:
+
+- `launch_011` — Amazon's own Fire TV Stick Lite already sits at this SKU's exact price
+- `launch_012` — the 4K Max ships Wi-Fi 6E and its seeded top complaint is "Wi-Fi 6E underused"
+- `launch_013` — `smart_speaker` is −17.1% YoY and saturated
+
+`no_go` overall is **4/5**. This is the first real evidence about that capability; at 2
+rows it was unmeasurable. Declining a bad idea is the hardest of the three decisions.
+
+The one miss is the pre-existing `launch_007` (AirPods sport variant) answered `go`.
+Worth recording because it **partially rehabilitates the old over-confidence story**:
+over-commitment is real but rare — 2 cases against 8 hedges — so under-commitment is
+still the dominant pattern, with `launch_007` now isolated instead of buried.
+
+### A useful negative result
+
+Repairing the four unwinnable gold rows did **not** move `evidence_relevance`: 0.545 →
+0.548, flat. That is the expected outcome and it is evidence *for* the truncation
+diagnosis, not against it — softening the themes made those rows winnable, it did not
+make the agent better at them, because the 1500-char cap in `synthesizer.py:39-40` is
+still dropping 3 of 5 review snippets. Per-row the four are 0.1→0.2, error→0.6, 0.4→0.1,
+0.7→0.9: all inside the ~11-row noise floor, so read the aggregate, not the rows.
+
+**The single highest-value remaining change is therefore raising that cap** (~175 extra
+tokens per run, measured). It is the one item with a diagnosed mechanism and an
+unmoved metric waiting to confirm it.
 
 ## Mobile audit — item #6 (audited 2026-09-17, NOT fixed)
 
@@ -1230,11 +1296,16 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 > 1. Create the cron-job.org warmup job — ~2 min, config in `docs/WARMUP.md`. Until
 >    then the backend sleeps whenever the Mac is off and an interviewer opening the link
 >    cold waits 30-80s.
-> 2. ✅ Done — the `tool_use_failed` verification ran and passed; see "Verified
->    end-to-end". What is left in that vein is the **Executor** degrade (`be38fec9`),
->    which is unit-tested but never exercised against real traffic. On a fresh budget:
->    `python -m eval.run_eval --output-tag exec-degrade > /tmp/eval.log 2>&1`
->    (redirect, don't pipe through `tail` — it buffers away the evidence).
+> 2. ✅ Done — `tool_use_failed` verified, and the 2026-09-20 run on the rebalanced
+>    gold set came back 33/33 with zero errors and zero degrades. Still unexercised:
+>    the **Executor** degrade (`be38fec9`), because nothing failed. Forcing it is the
+>    only reliable way now — patch `resilient_call` to raise a `RateLimitError` for one
+>    query and confirm the run completes with a degraded row.
+>
+> The single highest-value code change left is **queue #23** — raise the 1500-char
+> tool-result cap in `synthesizer.py:39-40`. It has a diagnosed mechanism (3 of 5 review
+> snippets discarded before the Synthesizer sees them), a measured cost (~175 tokens per
+> run), and a metric already sitting flat at 0.548 waiting to move.
 >
 > Then P2 (unify loading states, mobile pass) and P3 (`evidence_relevance` = 0.545,
 > planner over-confidence) are the remaining plan items.
