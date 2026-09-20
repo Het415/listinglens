@@ -612,8 +612,18 @@ instances left. Commit `b5b2e3ee` already fixed it and overshot: wrong-`go`s
 went 5 → 0 and hedge errors 0 → 8.
 
 ⚠️ **Sobering context for any claim about this agent: a constant-`go` predictor
-scores 19/30 = 63.3%, above the agent's 60.0%.** Put that baseline in the
-report header before quoting decision accuracy anywhere.
+scored 19/30 = 63.3%, above the agent's 60.0%.**
+
+✅ **Acted on 2026-09-17 (late).** Baselines are now computed from the gold set at
+runtime and printed beside the accuracy in every report, so they cannot drift.
+Two deeper problems surfaced while doing it: `go/no_go/needs_more_data` is
+launch-decision vocabulary that degenerates on diagnostic queries (a three-entry
+per-type lookup scored **76.7%**), and `no_go` had only 2 of 30 rows, so that
+capability was unmeasurable. Fixed by scoring only `launch` in the headline
+(`DECISION_SCORED_TYPES` in `eval/run_eval.py`) with returns/improve reported as
+informational, and by adding three `no_go` cases. The gold set is now **33 rows**;
+the launch baseline fell 60.0% → **46.2%**, and the all-rows floors are 57.6%
+(constant) / 69.7% (per-type). Full audit note in `eval/README.md`.
 
 **Root cause is a contradiction in `prompts.py`, not a tuning problem.** Line
 229: "List what's missing even when the decision is `go`." Line 189-191: "If

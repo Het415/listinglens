@@ -64,7 +64,7 @@ The full agent must beat both baselines on a composite score. If it doesn't, the
 
 | File | Status | Purpose |
 |---|---|---|
-| `gold_set.jsonl` | **Stage 0 ✅** | 30 hand-crafted queries with expected outputs |
+| `gold_set.jsonl` | **Stage 0 ✅** | 33 hand-crafted queries with expected outputs |
 | `run_eval.py` | Stage 4 | Main eval runner — invokes agent on each gold query, records results |
 | `judges.py` | Stage 4 | DeepEval `GEval` LLM-as-judge metrics (Claude Haiku 4.5 by default; `JUDGE_PROVIDER=openai` switches to GPT-4o-mini) |
 | `trajectory_eval.py` | Stage 4 | F1 + ordering bonus over actual vs expected tool sets |
@@ -81,18 +81,24 @@ The gold set is intentionally diverse along several dimensions:
 - `returns` — "why are returns spiking?" — diagnostic queries, mostly `go` (action plan)
 - `improve` — "how do I improve this listing?" — mostly `go` (concrete recommendations)
 
-**Decision distribution (deliberately not all "go"):**
+**Decision distribution** (rebalanced 2026-09-17 — see the audit note below):
 | Decision | Count | Why |
 |---|---|---|
 | `go` | 19 | Most returns/improve queries have clear action plans |
 | `needs_more_data` | 9 | Most launch queries + a few honest "we don't have that data" cases (e.g., temporal trends, BSR causality) |
-| `no_go` | 2 | Tests agent's ability to actively decline. `launch_007` (AirPods sport variant — brand issue + saturated segment) and `launch_010` (Echo Dot clock — Amazon already sells this) |
+| `no_go` | 5 | Tests the agent's ability to actively decline. All inside `launch`, the only type where declining is meaningful: `launch_007` (AirPods sport variant), `launch_010` (Echo Dot clock — Amazon already sells it), `launch_011` (cheaper Fire stick — Amazon's own Lite is already at the same price), `launch_012` (Wi-Fi 6E stick — the 4K Max ships it and its top complaint is "Wi-Fi 6E underused"), `launch_013` (portable Echo Dot — category −17.1% YoY and saturated) |
+
+⚠️ **Audit, 2026-09-17 — read before trusting a decision-accuracy number.** `expected_decision` used to be near-determined by `query_type` (returns → `go` 9/10, improve → `go` 8/10, launch → `needs_more_data` 6/10). A three-entry lookup table scored **76.7%** against the agent's 60.0%, and a flat "always `go`" scored 63.3%. Two things were wrong: `go/no_go/needs_more_data` is *launch* vocabulary that degenerates on diagnostic queries, and `no_go` had only 2 instances so the capability was unmeasurable.
+
+Fixed by (a) scoring only `launch` in the headline — `DECISION_SCORED_TYPES` in `run_eval.py` — with returns/improve reported as informational, and (b) adding three `no_go` cases. The launch baseline fell from 60.0% to **46.2%**, so the scored benchmark is now materially harder to guess. Every report prints these floors next to the accuracy, derived from the gold set at runtime, so this cannot silently drift again.
 
 **Tool-set discrimination:**
 The 30 queries do not all expect the same tools. `review_qa` is universal (always evidence). `predict_return_risk` is mostly returns queries. `trend_signal` and `competitor_search` cluster on launch queries. The trajectory F1 has real discriminative signal.
 
 **ASIN coverage:**
-All 12 supported ASINs are exercised. Queries are matched to each product's *actual* complaint signature from `data/processed/features_*.json` — e.g., Ring Doorbell's "What's driving negative reviews?" query expects evidence around customer service (44.8% negative in real data), setup/installation, and connectivity.
+All 12 supported ASINs are exercised, at 2-3 queries each. Queries are matched to each product's *actual* complaint signature from `data/processed/features_*.json` — e.g., Ring Doorbell's "What's driving negative reviews?" query expects evidence around customer service, setup/installation, and connectivity.
+
+⚠️ Those `features_*.json` shares (Ring customer service is genuinely 44.8% negative) are **real but not evidenceable**. No tool reads that block — `_loader.asin_summary()` exists but nothing under `tools/` calls it — and `review_qa` returns 5 retrieved chunks out of ~2,900, which cannot derive a share. Four gold rows used to demand those percentages and were unwinnable by construction; their themes now ask for the complaint category to be named and quoted instead. Keep new themes on the evidenceable side of that line. Quantitative themes ARE legitimate where a tool genuinely returns a number — `predict_return_risk` returns `risk_pct`, so risk figures stay quantitative.
 
 **Honesty tests:**
 Two queries (`returns_008` Panasonic — "trending over time", `improve_010` Fire TV HD — "BSR drop causes") test whether the agent honestly admits limitations of the data instead of fabricating temporal trends or BSR causality.
@@ -102,7 +108,7 @@ Two queries (`returns_008` Panasonic — "trending over time", `improve_010` Fir
 ## How to run the eval (Stage 4 will implement)
 
 ```bash
-# Full 30-query run, produces eval/reports/YYYY-MM-DD.md
+# Full run over every gold query, produces eval/reports/YYYY-MM-DD.md
 python -m eval.run_eval --gold eval/gold_set.jsonl
 
 # Baselines
@@ -119,7 +125,7 @@ When you change anything in the synthesizer, planner, or schemas, the
 ritual is: re-run the eval, then diff against the previous report.
 
 ```bash
-# 1. Run the eval (waits on Groq quota — daily 500k tokens)
+# 1. Run the eval (Groq free tier: 200k tokens/day PER MODEL, rolling window)
 python -m eval.run_eval
 
 # 2. Diff the new report against the previous one. By default this
@@ -165,10 +171,10 @@ First full-agent eval, 2026-05-16 (30 gold queries, Claude Haiku 3 judge):
 **Reading the numbers honestly:**
 
 - **Trajectory is the agent's strongest dimension.** F1 of 0.85 with 0.92 precision means the Planner reliably picks the right tools; recall of 0.82 means it occasionally skips one.
-- **Decision accuracy of 56.7% reflects over-confidence on launch queries.** The agent often outputs `go` where the gold says `needs_more_data` or `no_go`. The trajectory was correct in those cases — the agent saw the right evidence but committed too eagerly.
+- ~~**Decision accuracy of 56.7% reflects over-confidence on launch queries.**~~ **Disproven 2026-09-17 — the direction is inverted.** Re-measured on a judged 30-query run: 8 hedges (`go` gold answered `needs_more_data`) against only 3 over-commits, and **zero** launch queries wrongly answered `go`. The agent under-commits. A prompt fix for the original over-confidence landed months ago (`b5b2e3ee`) and overshot; this note survived because nobody re-derived it. The root cause is now known to be a contradiction in `prompts.py` — always populate `evidence_gaps`, and non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` unreachable for launch queries.
 - **Anti-hallucination 0.74** confirms the cited evidence usually supports the claims.
 - **The 10% error rate** was all Groq daily-TPD-limit hits at the end of the run, not agent bugs.
 
 Latest report: [reports/2026-05-16-full.md](reports/2026-05-16-full.md)
 
-Baselines (`no_tool`, `single_tool`) deferred: the full-agent eval used 498k of Groq's 500k daily TPD cap. They'll run with the cheap Haiku 3 judge after quota reset.
+Baselines (`no_tool`, `single_tool`) deferred: the full-agent eval exhausted the Groq daily budget. (That 500k figure was the old org-wide scheme; the limit is now **200k tokens/day per model**, on a rolling window rather than a midnight reset — one 30-query run comes close to exhausting it, so budget one full run per day.)

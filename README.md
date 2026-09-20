@@ -54,20 +54,24 @@ You'll see the planner pick tools, the executor run them with live results, and 
 
 ## Headline numbers
 
-Evaluated on a 30-query benchmark, judged by Claude Haiku 4.5 (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-09-17-full-judged.md](eval/reports/2026-09-17-full-judged.md).
+Evaluated on a 33-query benchmark, judged by Claude Haiku 4.5 (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-09-17-full-judged.md](eval/reports/2026-09-17-full-judged.md) — numbers below are from that 30-row run, before three `no_go` cases were added to the gold set (see the note on baselines).
 
 | Metric | Score | What it means |
 |---|---|---|
 | **Trajectory precision** | **0.865** | When the planner picks a tool, it is almost always one the gold set expects |
 | Trajectory F1 / recall | 0.773 / 0.750 | Recall is the weaker half — the agent calls *fewer* tools than the gold set wants |
-| **Decision accuracy** | **60%** | Final recommendation matches the gold decision 18/30 times |
+| **Decision accuracy (launch only)** | **60%** | Against a 46.2% always-`needs_more_data` floor. Only launch is scored — see below |
 | Anti-hallucination (judge) | 0.811 | Claims are traceable to cited evidence |
 | Completeness (judge) | 0.876 | Answers address what was asked |
 | Evidence relevance (judge) | 0.545 | Weakest dimension — see below |
 | Latency (p50 / p95) | 33s / 49s | End-to-end agent run, excluding the judge |
 | Error rate | 3.3% | One query lost to a malformed tool call — since fixed and verified |
 
-**Honest reading — including the number that does not flatter the agent.** A constant "always say go" predictor scores **63.3%** on this gold set, *above* the agent's 60%. Decision accuracy alone is therefore not yet evidence that the agent reasons well; the trajectory and anti-hallucination scores are where its value currently shows.
+**Honest reading — including the numbers that do not flatter the agent.** Every eval report now prints decision accuracy beside the baseline it has to beat, computed from the gold set at runtime rather than carried by hand. On the current 33-row set those floors are: a constant "always say `go`" predictor at **57.6%**, and a best-constant-per-query-type lookup at **69.7%**.
+
+That comparison exposed a flaw in the benchmark itself, not just the agent. `go/no_go/needs_more_data` is *launch-decision* vocabulary — "Should I launch a wireless version?" has a real yes/no/unsure. But "Why are returns spiking?" has no proposal to approve, so `go` there just means "the agent answered", and 19 of the original 30 rows were `go`. A three-entry lookup table beat the agent. **Only `launch` now counts toward the headline**; returns and improve are reported as informational. And even on launch the agent currently scores 60% against a 46.2% floor — real signal, but modest.
+
+Decision accuracy alone is therefore not yet evidence that the agent reasons well; the trajectory and anti-hallucination scores are where its value currently shows.
 
 The failure mode is **under-commitment, not over-confidence** — a correction to what this README previously claimed. Measured across 30 queries: 8 hedges (`go` → `needs_more_data`) against only 3 over-commits, and **zero** launch queries wrongly answered `go`. The root cause is a contradiction in the synthesizer prompt: it is told to always populate `evidence_gaps`, *and* that a non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` logically unreachable for launch queries. That is a fix with a known mechanism, not a tuning guess.
 
@@ -179,7 +183,7 @@ scripts/predemo_check.sh            # backend latency, demo-ASIN warmth, live-vs
 ### Run the eval
 
 ```bash
-python -m eval.run_eval                    # full agent on 30 gold queries
+python -m eval.run_eval                    # full agent on all 33 gold queries
 python -m eval.run_eval --no-judge         # skip LLM judging (no Anthropic key needed)
 python -m eval.run_eval --limit 5          # 5-query smoke (what CI runs on PRs)
 ```
@@ -254,7 +258,7 @@ listinglens/
 │   ├── agent/              # LangGraph state machine + nodes
 │   ├── mcp_server/tools/   # 5 tools as Python functions + MCP wrappers
 │   └── cache.py            # Redis-backed SSE cache
-├── eval/                   # 30-query gold set + judge + trajectory eval
+├── eval/                   # 33-query gold set + judge + trajectory eval
 ├── frontend/app/assistant/ # Next.js Copilot UI (live; /agent is a mock fixture)
 ├── Dockerfile              # Backend image
 ├── docker-compose.yml      # api + redis sidecar
