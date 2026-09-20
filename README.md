@@ -54,30 +54,32 @@ You'll see the planner pick tools, the executor run them with live results, and 
 
 ## Headline numbers
 
-Evaluated on a 33-query benchmark, judged by Claude Haiku 4.5 (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-09-17-full-judged.md](eval/reports/2026-09-17-full-judged.md) — numbers below are from that 30-row run, before three `no_go` cases were added to the gold set (see the note on baselines).
+Evaluated on a 33-query benchmark, judged by Claude Haiku 4.5 (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-09-20-goldv2-judged.md](eval/reports/2026-09-20-goldv2-judged.md).
 
 | Metric | Score | What it means |
 |---|---|---|
-| **Trajectory precision** | **0.865** | When the planner picks a tool, it is almost always one the gold set expects |
-| Trajectory F1 / recall | 0.773 / 0.750 | Recall is the weaker half — the agent calls *fewer* tools than the gold set wants |
-| **Decision accuracy (launch only)** | **60%** | Against a 46.2% always-`needs_more_data` floor. Only launch is scored — see below |
-| Anti-hallucination (judge) | 0.811 | Claims are traceable to cited evidence |
-| Completeness (judge) | 0.876 | Answers address what was asked |
-| Evidence relevance (judge) | 0.545 | Weakest dimension — see below |
-| Latency (p50 / p95) | 33s / 49s | End-to-end agent run, excluding the judge |
-| Error rate | 3.3% | One query lost to a malformed tool call — since fixed and verified |
+| **Decision accuracy (launch only)** | **69.2%** | Against a 46.2% always-`needs_more_data` floor. Only launch is scored — see below |
+| **Error rate** | **0.0%** | 33/33 completed; no errors and no degraded answers |
+| Trajectory precision / F1 / recall | 0.849 / 0.798 / 0.811 | When the planner picks a tool it is usually one the gold set expects |
+| Anti-hallucination (judge) | 0.824 | Claims are traceable to cited evidence |
+| Completeness (judge) | 0.870 | Answers address what was asked |
+| Evidence relevance (judge) | 0.548 | Weakest dimension — see below |
+| Latency (p50 / p95) | 36s / 54s | End-to-end agent run, excluding the judge |
+| `no_go` cases | 4/5 | Actively declining a bad idea, the hardest decision to get right |
 
 **Honest reading — including the numbers that do not flatter the agent.** Every eval report now prints decision accuracy beside the baseline it has to beat, computed from the gold set at runtime rather than carried by hand. On the current 33-row set those floors are: a constant "always say `go`" predictor at **57.6%**, and a best-constant-per-query-type lookup at **69.7%**.
 
-That comparison exposed a flaw in the benchmark itself, not just the agent. `go/no_go/needs_more_data` is *launch-decision* vocabulary — "Should I launch a wireless version?" has a real yes/no/unsure. But "Why are returns spiking?" has no proposal to approve, so `go` there just means "the agent answered", and 19 of the original 30 rows were `go`. A three-entry lookup table beat the agent. **Only `launch` now counts toward the headline**; returns and improve are reported as informational. And even on launch the agent currently scores 60% against a 46.2% floor — real signal, but modest.
+That comparison exposed a flaw in the benchmark itself, not just the agent. `go/no_go/needs_more_data` is *launch-decision* vocabulary — "Should I launch a wireless version?" has a real yes/no/unsure. But "Why are returns spiking?" has no proposal to approve, so `go` there just means "the agent answered", and 19 of the original 30 rows were `go`. A three-entry lookup table beat the agent. **Only `launch` now counts toward the headline**; returns and improve are reported as informational, and the all-types figure (66.7%) is still below its 69.7% lookup-table floor.
 
-Decision accuracy alone is therefore not yet evidence that the agent reasons well; the trajectory and anti-hallucination scores are where its value currently shows.
+⚠️ **The scored number rose from 60% to 69.2%, and that is not the agent getting better.** The agent code was identical across both runs. What changed is the benchmark: adding three `no_go` cases dropped the launch floor from 60.0% to 46.2%, so the same behaviour now has room to show above a baseline instead of sitting exactly on it. The honest claim is that the measurement got sharper, not the model.
 
-The failure mode is **under-commitment, not over-confidence** — a correction to what this README previously claimed. Measured across 30 queries: 8 hedges (`go` → `needs_more_data`) against only 3 over-commits, and **zero** launch queries wrongly answered `go`. The root cause is a contradiction in the synthesizer prompt: it is told to always populate `evidence_gaps`, *and* that a non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` logically unreachable for launch queries. That is a fix with a known mechanism, not a tuning guess.
+What is genuinely new evidence: the three added `no_go` cases were answered correctly **3/3 on first run**, at 0.85-0.86 confidence, each using the tools carrying the evidence — Amazon's own Lite already at the SKU's price, a competitor shipping Wi-Fi 6E whose top complaint is that nobody uses it, a category down 17.1% YoY. Declining a bad idea is the hardest of the three decisions, and it was previously unmeasurable at 2 rows.
+
+The failure mode is **under-commitment, not over-confidence** — a correction to what this README previously claimed. Measured again on the 33-query set: 8 hedges (committal gold answered `needs_more_data`) against 2 over-commits. One launch row (`launch_007`) is still wrongly answered `go`, so the over-confidence the README used to describe is real but rare — it is now a single isolated case rather than the dominant pattern. The root cause is a contradiction in the synthesizer prompt: it is told to always populate `evidence_gaps`, *and* that a non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` logically unreachable for launch queries. That is a fix with a known mechanism, not a tuning guess.
 
 **And a caveat on reading any single run:** two runs of *identical* code flipped 11 of 24 comparable rows in opposite directions. This benchmark has a **~11-row (~37%) noise floor**, so a single-run delta smaller than that is meaningless. Detecting the prompt fix above needs repeated runs, or a narrower metric (per-type hedge-error count) as the primary signal. Knowing that a benchmark cannot resolve your change is more useful than a number that moves.
 
-**Weakest dimension, and what it actually is.** `evidence_relevance` at 0.545 reads like a retrieval-ranking problem. It is not — the judge never once complains about ranking. The synthesizer truncates each tool result at 1500 characters while `review_qa`'s payload measures 2019–2218, so **3 of 5 retrieved review snippets are discarded before the synthesizer sees them**, on essentially every call. That is why answers stay thorough (completeness 0.876) while their citations go vague.
+**Weakest dimension, and what it actually is.** `evidence_relevance` at 0.545 reads like a retrieval-ranking problem. It is not — the judge never once complains about ranking. The synthesizer truncates each tool result at 1500 characters while `review_qa`'s payload measures 2019–2218, so **3 of 5 retrieved review snippets are discarded before the synthesizer sees them**, on essentially every call. That is why answers stay thorough (completeness 0.870) while their citations go vague. Confirmed by the latest run: repairing four gold rows that demanded unreachable percentages left `evidence_relevance` flat at 0.548, because the truncation causing it is still there.
 
 The eval is the dev loop, not the scoreboard.
 
