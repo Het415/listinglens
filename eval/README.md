@@ -178,3 +178,42 @@ First full-agent eval, 2026-05-16 (30 gold queries, Claude Haiku 3 judge):
 Latest report: [reports/2026-05-16-full.md](reports/2026-05-16-full.md)
 
 Baselines (`no_tool`, `single_tool`) deferred: the full-agent eval exhausted the Groq daily budget. (That 500k figure was the old org-wide scheme; the limit is now **200k tokens/day per model**, on a rolling window rather than a midnight reset — one 30-query run comes close to exhausting it, so budget one full run per day.)
+
+---
+
+## 2026-09-20 — six `image_audit` rows added (33 → 39)
+
+Four positive rows (`images_001`-`004`) and **two negative rows**
+(`images_005`, `images_006`). The negative rows are the highest-signal
+addition: `images_005` is a copy question that must *not* pull `image_audit`
+just because it says "listing", and `images_006` is a returns diagnosis that
+must not be hijacked by attached images.
+
+**⚠️ Read the baselines before comparing any run to `2026-09-20-goldv2-judged.md`.**
+
+| Floor | Before (33 rows) | After (39 rows) |
+|---|---|---|
+| Launch-only, always-`needs_more_data` — **the published headline floor** | 46.2% | **46.2% (unchanged)** |
+| All-types, always-`go` | 57.6% | 64.1% |
+| All-types, best-constant-per-type lookup | 69.7% | **74.4%** |
+
+All six new rows are `improve` or `returns`, so `DECISION_SCORED_TYPES`
+(launch-only, 13 rows) is untouched and the **headline decision accuracy
+remains directly comparable** across the change. That was deliberate: a new
+`QueryType` would have needed a fourth synthesizer rubric and a fourth
+baseline on a benchmark affordable about once a day.
+
+The *informational* all-types figure is **not** comparable. Its lookup-table
+floor rose 4.7 points because the added rows are `go` in types where `go`
+already dominated, so identical agent behaviour will score further below its
+floor than before. This is the same confound the README documents for the
+60% → 69.2% move, running in the opposite direction — do not read a drop there
+as a regression.
+
+**Primary metric for the new rows is a count, not an aggregate.** Per the
+build plan and the ~11-row noise floor, report `image_audit` called on N of 4
+positive rows and 0 of 2 negative rows. First measurement, 2026-09-20, single
+runs: **2/2 positives tested, 2/2 negatives correct** —
+`images_002` used `image_audit` alone (no padding), `images_005` used
+`competitor_search, review_qa, trend_signal`, `images_006` used
+`predict_return_risk, review_qa`.
