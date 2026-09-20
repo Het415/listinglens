@@ -1281,59 +1281,187 @@ in sync with `origin/main` and `1d388b75` is live on Render.
 
 ---
 
+## Session 2026-09-20 — the image audit, and a new repo
+
+Everything below is committed and pushed. Two repos now:
+
+| | | |
+|---|---|---|
+| [listinglens](https://github.com/Het415/listinglens) | public | 6 commits, `c5aabe80..7383048a` |
+| [vislens](https://github.com/Het415/vislens) | public, NEW | 7 commits, CI green |
+
+**What this session was.** `visual_retrieval_build_plan.md` proposed a two-repo visual
+retrieval system. Discussed as a *product* rather than a portfolio line, and split: a
+real image-audit feature, and a benchmark honest about being a benchmark. All vision
+code went to `vislens` because torch cannot come back into this process
+(`requirements.txt:36-53`) and this container peaks at 469.8/512 MiB. ListingLens holds
+only a thin HTTP client, one tool, and the UI.
+
+### What is built
+
+**vislens** (223 tests, ruff clean, CI on every push, no secrets/network/GPU):
+- 6 deterministic compliance checks with a `tier` system — only `rule_exact` and
+  `measured` can drive a verdict
+- hardened fetcher, 6 SSRF controls, 72 tests
+- the audit service (`vislens.service.app:app`, port 8100)
+- near-duplicate detection, calibrated: **dhash @ ≤8**, held-out P 1.000 / R 0.989
+- ABO catalog: 145,671 products, 535,734 images, both leak invariants asserted
+
+**listinglens**:
+- `image_audit` as a sixth tool (thin HTTP client, degrades to `unavailable`)
+- `ImageAuditCard` + `ImageUpload` on `/assistant`
+- 6 new gold rows (4 positive, 2 negative), 96 tests
+- the fabricated `FALLBACK_CHECKS` / `FALLBACK_RECOMMENDATIONS` deleted
+
+### ⚠️ Findings that contradict the build plan
+
+**1. "Split by `product_id`, never by image" is necessary and NOT sufficient.** Done
+exactly as specified it still left **27,554 images spanning two splits, touching 40.3%
+of rows** — ABO lists the same product across marketplaces with byte-identical assets,
+so a product-level split passes its own check while the pixels cross freely. Fixed by
+splitting connected components of the product-image graph, after pruning 70 boilerplate
+images (23 of them attached to ~33,300 products each) that otherwise create a giant
+component of 36.6%. Now 0.
+
+**2. ABO's 147K does not survive the `en_US` filter.** Measured: 26,424 (17.9%) — smaller
+than the fallback dataset the plan proposed as backup. Hence two tables, both counts
+published. The `en_*` ladder reaches 122,734, a 4.7× difference that makes the mandated
+scaling sweep informative.
+
+**3. A prompt instruction is weaker than a data structure.** THE lesson of the session.
+Three measured iterations before the agent stopped reporting advisory measurements as
+violations — a per-check `tier` field mislabelled them, then separate `f`/`a` lists still
+carrying "fail" statuses did not help (the model claimed "the background isn't pure
+white" about rules never evaluated, and invented "14.44° deviation" for a 14.44:1 ratio),
+then neutralising the status to "measured" still left "key rule failures" in the prose.
+What worked was **deleting the data**: the payload now carries only findings the agent may
+assert, advisory measurements are counted not enumerated.
+
+**4. Three rules govern the MAIN image only.** White background, 85% occupancy, and
+background marks. Secondary images are explicitly permitted lifestyle backgrounds, props
+and text. Applying all three across a set fails a compliant lifestyle photo — observed on
+B08XPWDSWW: the main image genuinely fails occupancy at 45.8% while five secondaries
+produce identical-looking numbers that mean nothing.
+
+**5. pHash lost to dHash**, which is not the conventional wisdom. A 20%-wide promo badge
+moves exactly the low-frequency DCT coefficients pHash rests on (48% recall); dHash
+compares gradient signs on a 9×8 thumbnail where a badge flips two bits (100%). The tiled
+hash is the mirror image — perfect on badges, 22% on crops.
+
+**6. The near-duplicate encoder is not justified.** dhash reaches AUC 1.0000 against hard
+negatives, leaving no headroom for a CLIP embedding to demonstrate. Per the plan's own
+pre-commitment, ship hashing only — no model to host, no 176 MB ONNX export, no RSS gate.
+
+**7. Spark is cut.** 83 MB of gzipped JSON is one DuckDB query. Also: the trading repo's
+PySpark is `local[*]` + a pandas UDF in a notebook, so describe it as local-mode rather
+than letting it imply a cluster.
+
+### Eval impact — read before comparing any run
+
+| floor | 33 rows | 39 rows |
+|---|---|---|
+| launch-only (**the headline**) | 46.2% | **46.2% unchanged** |
+| all-types, always-`go` | 57.6% | 64.1% |
+| all-types, per-type lookup | 69.7% | **74.4%** |
+
+All six new rows are `improve`/`returns`, so `DECISION_SCORED_TYPES` is untouched and the
+headline stays comparable. The **informational all-types figure is not comparable** — its
+floor rose 4.7 points, so identical behaviour scores further below it. Same confound as
+the 60%→69.2% move, opposite direction. Details in `eval/README.md`.
+
+Primary metric for the new rows is a **count**: `image_audit` on N of 4 positives and 0 of
+2 negatives. First measurement, single runs: **2/2 positives tested, 2/2 negatives
+correct**.
+
+### Bugs caught by verifying rather than reading
+
+- The card's first wiring passed the tool's outer wrapper where the inner audit was
+  expected → `undefined.flatMap` took down the whole assistant page. Now guarded.
+- `had_alpha` was set from the image *mode*, so every opaque RGBA PNG (i.e. every canvas
+  export) warned spuriously. Now pixel-based.
+- `binary_closing` defaults to `border_value=0`, eating the outermost rows of any product
+  touching the frame edge → false `white_background` failures.
+- A grey background made the whole image one component, so product-exclusion claimed the
+  entire border band and reported `skipped` on the violation the check exists to catch.
+- The SKU-mismatch finding had no distance gate → flagged 5 of 7 real images.
+- `test_service_imports_no_llm_client_and_no_torch` inspected `sys.modules` in-process
+  and had been passing for the wrong reason; now a subprocess.
+- CI's first run caught `httpx2` undeclared — installed ad hoc locally, never in
+  `pyproject.toml`.
+
+### Commands
+
+```bash
+# vislens
+cd ~/github/vislens && .venv/bin/pytest -q          # 223 tests, ~19s
+.venv/bin/python -m uvicorn vislens.service.app:app --port 8100
+.venv/bin/python -m scripts.build_catalog --subset 500   # local smoke, <5 min
+.venv/bin/python -m scripts.calibrate_near_dup           # needs data/near_dup_set
+
+# the three-process dev loop
+# .claude/launch.json now has backend, frontend AND audit-service
+```
+
+### Not done
+
+1. **Kaggle account + phone verification** — still the critical path for the training
+   half, and still only a human can do it. Gates GPU access *and* notebook internet.
+   Select `NvidiaTeslaT4` explicitly: the P100 no longer runs Kaggle's own torch
+   (`sm_60` excluded, restore PR rejected).
+2. **Shard packing** — 398K loose files would hit Kaggle's ~500-output cap, so they pack
+   straight into WebDataset tars. `abo-images-small.tar` (3 GB) is downloaded and
+   verified but deliberately not extracted.
+3. **Encoder training** — B2/B3. Recommendation against the spec: initialize the image
+   tower from CLIP's visual encoder, because ResNet-50 + MiniLM is set up to lose and the
+   loss would be uninterpretable. Freeze the text tower and precompute its embeddings —
+   that is what makes batch 256 fit a free T4 with true in-batch negatives and no MoCo
+   queue. Mask false negatives (`product_id` or `title_hash` match) or the ceiling is
+   silently capped. fp16 + `GradScaler` on `sm_75`, `logit_scale` clamped to `log(100)`,
+   loss in fp32, or it NaNs hours into a headless commit.
+4. **`VISLENS_URL`** needs setting wherever the audit service is deployed. The tool
+   defaults to localhost and degrades cleanly until then.
+5. **Render plan** — Starter at $7/mo removes spin-down but keeps 512 MB; 2 GB is ~$25.
+6. `visual_retrieval_build_plan.md` is committed and **public**. It reads as a portfolio
+   document ("Project A from the portfolio plan", "what this produces for the resume").
+   `git rm --cached` it if that is not wanted — though it is already in public history.
+
 ## How to start the next chat
 
-> Read `HANDOFF.md` in the repo root. Last session was infrastructure: production was down
-> from a Groq decommission of the entire Llama family, and the local environment had
-> drifted from what production installed. Both fixed, plus Python 3.13 alignment,
-> embeddings moved off torch, and the eval judge working for the first time since May.
-> Everything is committed, pushed and live.
+> Read `HANDOFF.md` in the repo root, **starting at "Session 2026-09-20"**. Last session
+> built a listing image audit as a sixth agent tool, and created a second repo
+> ([vislens](https://github.com/Het415/vislens)) holding all vision code. Both repos are
+> committed, pushed, and CI-green.
 >
-> **Start with "Update — later on 2026-09-17" in the TL;DR.** P0 and P1 of the
-> DEMO-READINESS PLAN are done; P2 and P3 are not.
+> **The single most important thing to carry forward is finding #3: a prompt instruction
+> is weaker than a data structure.** It took three measured iterations before the agent
+> stopped reporting advisory measurements as violations, and what finally worked was
+> removing the data from its context rather than instructing it better. Expect to apply
+> that again.
 >
-> **Two things are waiting on a human, and neither is code:**
-> 1. Create the cron-job.org warmup job — ~2 min, config in `docs/WARMUP.md`. Until
->    then the backend sleeps whenever the Mac is off and an interviewer opening the link
->    cold waits 30-80s.
-> 2. ✅ Done — `tool_use_failed` verified, and the 2026-09-20 run on the rebalanced
->    gold set came back 33/33 with zero errors and zero degrades. Still unexercised:
->    the **Executor** degrade (`be38fec9`), because nothing failed. Forcing it is the
->    only reliable way now — patch `resilient_call` to raise a `RateLimitError` for one
->    query and confirm the run completes with a degraded row.
+> **One thing is waiting on a human and is the critical path:** create a Kaggle account
+> and complete phone verification. It gates both GPU access and notebook internet, and
+> nothing in the training half can start without it. Select `NvidiaTeslaT4` explicitly —
+> the P100 no longer runs Kaggle's own PyTorch.
 >
-> The single highest-value code change left is **queue #23** — raise the 1500-char
-> tool-result cap in `synthesizer.py:39-40`. It has a diagnosed mechanism (3 of 5 review
-> snippets discarded before the Synthesizer sees them), a measured cost (~175 tokens per
-> run), and a metric already sitting flat at 0.548 waiting to move.
+> The highest-value next code is **shard packing** (`scripts/pack_shards.py`), because
+> 398K loose image files hit Kaggle's ~500-output cap. `abo-images-small.tar` is already
+> downloaded and verified at `vislens/data/abo/`.
 >
-> Then P2 (unify loading states, mobile pass) and P3 (`evidence_relevance` = 0.545,
-> planner over-confidence) are the remaining plan items.
+> Still open from before this session, unchanged: the cron-job.org warmup job (~2 min,
+> `docs/WARMUP.md`), and the Executor degrade path is still unexercised because nothing
+> has failed.
 >
-> Standing rules, learned the hard way this session:
+> Standing rules, all still true:
 > - Before anything LLM-related, run `python -m scripts.doctor`.
-> - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY` — without it the
->   judge silently does not run, and reports used to advertise a judge anyway. (It IS
->   there as of 2026-09-17.)
-> - **Budget one full eval run per day.** Groq's binding limit is 200k tokens per model
->   per day; a 30-query run nearly exhausts it, and the second run of a day measures the
->   rate limiter rather than your change. Check with `python -m scripts.doctor --probe`.
->   Confirmed the hard way on 2026-09-17: the second run's last five queries were all
->   rate-limit casualties. The cap is a ROLLING window, not a midnight reset — the 429
->   says "try again in 2m10s" — so it frees continuously and you do not have to wait for
->   a fixed hour.
-> - **Do not trust a single-run eval delta smaller than ~11 rows (~37%).** Two runs of
->   identical code flipped 11 of 24 comparable rows in opposite directions. Use repeated
->   runs, or a narrower metric that moves first (per-type hedge-error count, tool recall,
->   evidence count), with headline accuracy as secondary.
-> - **Groq's free tier is now the binding constraint on this project** — it produced both
->   the live demo failure and the noise in the verification run. Dev Tier is higher
->   leverage than the Render upgrade, for demoing and for being able to measure at all.
-> - **Don't reorder `FALLBACK_CHAINS` from one observed failure.** Tried this session on
->   what looked like clear evidence; the A/B showed the replacement was worse than the
->   incumbent and the primary model was flakier than both.
+> - **Groq hosts no vision model.** Verified 2026-09-20 against the live catalog: 13
+>   models, none multimodal. For image work use a local pinned ONNX model — that is
+>   already the house pattern (`src/onnx_embeddings.py`) and it preserves determinism.
+> - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY`.
+> - **Budget one full eval run per day.** 200k tokens per model per day, rolling window.
+> - **Do not trust a single-run eval delta smaller than ~11 rows (~37%).**
+> - Groq's free tier is the binding constraint on ListingLens. vislens has no such
+>   constraint — its whole suite is deterministic, which is why it can run in CI.
 > - Run `scripts/predemo_check.sh` before any demo.
-> - To check what is deployed, ask the Render API, not `/health` — that field lags a
->   deploy. And `deactivated` in Render's history means *superseded*, not failed.
+> - To check what is deployed, ask the Render API, not `/health`.
 
 *End of handoff.*
