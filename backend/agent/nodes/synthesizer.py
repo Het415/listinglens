@@ -37,6 +37,39 @@ from ..prompts import SYNTHESIZER_SYSTEM_PROMPT
 from ..schemas import AgentState, Evidence, Recommendation
 
 
+# How much of a single tool result the Synthesizer gets to see.
+#
+# Was 1500, which silently deleted most of the evidence on every `review_qa`
+# call. Measured on B08XPWDSWW, serialized exactly as LangGraph's ToolNode
+# passes it (`json.dumps`, field order preserved):
+#
+#     review_qa            2239   <- the only tool over the old cap
+#     competitor_search    1197
+#     price_history         949
+#     trend_signal          439
+#     predict_return_risk   252
+#
+# `ReviewQAOutput` is `{answer, sources, n_sources}` in that order, so `answer`
+# (963 chars) serializes first and the 1500 cut landed 739 chars inside
+# `sources` (1235 chars, 5 entries). Only 2 of the 5 retrieved review snippets
+# even STARTED before the cut. The Synthesizer was therefore writing its
+# recommendation from the RAG's prose summary plus two quotes, not from the
+# five snippets retrieval had actually found.
+#
+# That is the mechanism behind `evidence_relevance` being the weakest judge
+# dimension (0.545-0.548 across three runs) while completeness stayed at ~0.87:
+# the summary survived, the citable quotes did not. The judge never once
+# complained about ranking, which is why this is a truncation bug and not the
+# retrieval-ranking problem it was mistaken for.
+#
+# 3000 covers the measured worst case with headroom. It is bounded: `sources`
+# is 5 entries each already truncated to 200 chars upstream
+# (`rag_chatbot.ask_question`), and the RAG prompt caps `answer` at ~150 words,
+# so review_qa cannot grow far past ~2500. Cost is ~185 tokens per run, and
+# only on the one tool that exceeds the old limit.
+_TOOL_RESULT_CHARS = 3000
+
+
 def _build_transcript(messages: list, query: str, query_type: str, plan: list[str]) -> str:
     """Compact, structured transcript of the agent's research."""
     lines = [
@@ -61,8 +94,8 @@ def _build_transcript(messages: list, query: str, query_type: str, plan: list[st
                 lines.append(f"EXECUTOR thought: {thought}")
         elif isinstance(m, ToolMessage):
             content = str(m.content)
-            if len(content) > 1500:
-                content = content[:1500] + " ...[truncated]"
+            if len(content) > _TOOL_RESULT_CHARS:
+                content = content[:_TOOL_RESULT_CHARS] + " ...[truncated]"
             lines.append(f"TOOL RESULT [{m.name}]: {content}")
     return "\n\n".join(lines)
 
