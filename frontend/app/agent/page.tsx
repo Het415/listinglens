@@ -283,7 +283,8 @@ function AgentPageContent() {
 
           <div className="border-t border-border pt-4 mt-2">
             <p className="text-xs text-muted-foreground text-center mb-2">
-              Copilot uses 5 tools (RAG, return-risk model, competitors, prices, trends).
+              Copilot uses 6 tools (RAG, return-risk model, competitors, prices, trends,
+              image audit).
               {AGENT_ENDPOINT.endsWith('/mock') && (
                 <span className="ml-2 px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[10px] uppercase tracking-wider">
                   mock mode

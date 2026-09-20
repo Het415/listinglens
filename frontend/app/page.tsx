@@ -261,7 +261,7 @@ export default function LandingPage() {
               <FeatureCard
                 icon={<Sparkles className="w-6 h-6 text-accent-blue" />}
                 title="Agentic Copilot"
-                description="Ask a question in plain English. The agent plans which of its five tools to call, runs them, and returns a decision with every claim cited back to a review"
+                description="Ask a question in plain English. The agent plans which of its six tools to call, runs them, and returns a decision with every claim cited back to evidence"
                 delay="stagger-1"
               />
               <FeatureCard

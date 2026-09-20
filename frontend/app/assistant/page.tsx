@@ -5,6 +5,9 @@ import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
+import type { ImageAudit } from '@/components/assistant/types'
+import { ImageUpload } from '@/components/assistant/ImageUpload'
+import { ImageAuditCard } from '@/components/assistant/ImageAuditCard'
 import {
   useAssistant,
   submitAssistant,
@@ -174,6 +177,16 @@ function AssistantPageContent() {
   // Thin wrapper around the store. The actual fetch + SSE loop runs in module
   // scope (assistantStore.ts) so it isn't bound to this component's lifecycle —
   // navigating away no longer cancels it, and the answer is persisted on return.
+  // An audit the user ran by uploading files. Held here rather than in the
+  // store because it is per-session UI state, not part of a run's transcript.
+  const [auditId, setAuditId] = useState<string | null>(null)
+  const [uploadedAudit, setUploadedAudit] = useState<ImageAudit | null>(null)
+
+  const handleAudited = useCallback((id: string, audit: ImageAudit) => {
+    setAuditId(id)
+    setUploadedAudit(audit)
+  }, [])
+
   const submit = useCallback(
     (query: string, overrideMode?: Mode) => {
       const trimmed = query.trim()
@@ -181,9 +194,11 @@ function AssistantPageContent() {
       setInput('')
       // Pass the mode explicitly: deep-link auto-submit sets mode and submits
       // back-to-back, and setState hasn't flushed yet inside this closure.
-      submitAssistant(asin, trimmed, overrideMode ?? mode, API_URL)
+      // `auditId` rides along so the agent's image_audit tool can reference the
+      // audit the browser already ran, including which image was marked main.
+      submitAssistant(asin, trimmed, overrideMode ?? mode, API_URL, auditId)
     },
-    [asin, mode, loading],
+    [asin, mode, loading, auditId],
   )
 
   // Auto-submit support for dashboard deep-links: /assistant?asin=…&q=…&mode=copilot.
@@ -248,6 +263,19 @@ function AssistantPageContent() {
                 </button>
               ))}
             </div>
+
+            {/* Copilot-only: the image audit is one of its six tools, and the
+                quick Q&A path never calls it. */}
+            {mode === 'copilot' && (
+              <div className="mt-3 space-y-3">
+                <ImageUpload onAudited={handleAudited} disabled={loading} />
+                {uploadedAudit && (
+                  <ImageAuditCard
+                    result={{ asin, status: 'ok', reason: '', audit: uploadedAudit }}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           {messages.length === 0 && !loading ? (
@@ -344,7 +372,7 @@ function AssistantPageContent() {
             <p className="text-xs text-muted-foreground text-center mb-2">
               {mode === 'quick'
                 ? 'Quick Q&A — grounded in '
-                : 'Copilot uses 5 tools — '}
+                : 'Copilot uses 6 tools — '}
               {productName} reviews.
             </p>
             <div className="flex gap-2">

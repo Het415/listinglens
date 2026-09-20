@@ -73,6 +73,12 @@ export async function submitAssistant(
   query: string,
   mode: Mode,
   apiUrl: string,
+  /** An audit the browser already ran by uploading files straight to the audit
+   *  service. Passed through so the agent's `image_audit` tool can reference
+   *  the same audit — including which image the seller marked as the main one,
+   *  which is what turns the main-image rules from measurements into
+   *  verdicts. */
+  auditId?: string | null,
 ) {
   const trimmed = query.trim()
   if (!trimmed) return
@@ -100,7 +106,7 @@ export async function submitAssistant(
     const res = await fetch(`${apiUrl}/assistant/query`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ asin, query: trimmed, mode }),
+      body: JSON.stringify({ asin, query: trimmed, mode, audit_id: auditId ?? null }),
     })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
 
@@ -117,7 +123,13 @@ export async function submitAssistant(
           pushTrace({ kind: 'tool_call', tool: data.tool, args: data.args || {}, ts: now })
           break
         case 'tool_result':
-          pushTrace({ kind: 'tool_result', tool: data.tool, preview: data.result_preview || '', ts: now })
+          pushTrace({
+            kind: 'tool_result',
+            tool: data.tool,
+            preview: data.result_preview || '',
+            auditResult: data.audit,
+            ts: now,
+          })
           break
         case 'executor_thought':
           pushTrace({ kind: 'executor_thought', content: data.content, ts: now })

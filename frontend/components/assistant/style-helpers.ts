@@ -4,6 +4,7 @@ import {
   GitCompare,
   LineChart,
   TrendingUp,
+  ImageIcon,
   Wrench,
 } from 'lucide-react'
 import type { Recommendation, SourceItem } from './types'
@@ -94,6 +95,12 @@ export const TOOL_META: Record<
     bgClass: 'bg-amber-500/10 border-amber-500/30',
     label: 'trend_signal',
   },
+  image_audit: {
+    icon: ImageIcon,
+    colorClass: 'text-cyan-400',
+    bgClass: 'bg-cyan-500/10 border-cyan-500/30',
+    label: 'image_audit',
+  },
 }
 
 export function toolMeta(name: string) {
@@ -105,6 +112,30 @@ export function toolMeta(name: string) {
       label: name,
     }
   )
+}
+
+/** Colour for one compliance check's status.
+ *
+ * `measured` is deliberately neutral, not amber. It means a rule was not
+ * evaluated, which is an absence of a verdict rather than a mild one — the
+ * whole point of the tier system is that it cannot read as a problem.
+ */
+export function checkStatusStyle(status: string) {
+  switch (status) {
+    case 'pass':
+      return { cls: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', label: 'PASS' }
+    case 'fail':
+      return { cls: 'bg-rose-500/15 text-rose-300 border-rose-500/30', label: 'FAIL' }
+    case 'warn':
+      return { cls: 'bg-amber-500/15 text-amber-300 border-amber-500/30', label: 'WARN' }
+    case 'skipped':
+      return { cls: 'bg-muted-foreground/10 text-muted-foreground border-border', label: 'SKIPPED' }
+    default:
+      return {
+        cls: 'bg-muted-foreground/10 text-muted-foreground border-border',
+        label: 'MEASURED',
+      }
+  }
 }
 
 export function decisionStyle(d: Recommendation['decision']) {

@@ -11,6 +11,7 @@ import {
   ChevronDown,
 } from 'lucide-react'
 import type { TraceStep } from './types'
+import { ImageAuditCard } from './ImageAuditCard'
 import { toolMeta } from './style-helpers'
 
 function TraceRow({ step, inFlight }: { step: TraceStep; inFlight: boolean }) {
@@ -74,6 +75,28 @@ function TraceRow({ step, inFlight }: { step: TraceStep; inFlight: boolean }) {
     }
     case 'tool_result': {
       const meta = toolMeta(step.tool)
+      // `image_audit` returns rule verdicts, which are the substance of the
+      // answer rather than raw evidence — so they get a real card. Everything
+      // else keeps the collapsible JSON preview.
+      if (step.tool === 'image_audit' && step.auditResult) {
+        return (
+          <div className="py-1.5 animate-in fade-in slide-in-from-left-2 duration-300">
+            <div className="flex items-start gap-2 mb-2">
+              <div
+                className={`w-5 h-5 rounded border flex items-center justify-center shrink-0 ${meta.bgClass}`}
+              >
+                <CheckCircle2 className={`w-3 h-3 ${meta.colorClass}`} />
+              </div>
+              <div className="text-xs text-muted-foreground">
+                <span className="text-foreground font-medium">{step.tool}</span> returned
+              </div>
+            </div>
+            <div className="ml-7">
+              <ImageAuditCard result={step.auditResult} />
+            </div>
+          </div>
+        )
+      }
       return (
         <details className="py-1.5 group animate-in fade-in slide-in-from-left-2 duration-300">
           <summary className="flex items-start gap-2 cursor-pointer list-none select-none">
