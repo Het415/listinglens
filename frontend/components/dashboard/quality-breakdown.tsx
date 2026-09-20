@@ -28,20 +28,20 @@ type CheckStatus = 'good' | 'critical' | 'warning'
 
 type QualityCheck = { label: string; status: CheckStatus; value: string }
 
-const FALLBACK_CHECKS: QualityCheck[] = [
-  { label: 'Title keyword coverage', status: 'good', value: '84%' },
-  { label: 'Image count (only 3, need 7+)', status: 'critical', value: '43%' },
-  { label: 'Primary image background', status: 'critical', value: 'white bg missing' },
-  { label: 'Description length', status: 'warning', value: '67%' },
-  { label: 'Bullet points structure', status: 'good', value: '91%' },
-  { label: 'A+ Content present', status: 'warning', value: 'not detected' },
-]
-
-const FALLBACK_RECOMMENDATIONS = [
-  'Add 4 more product images showing the headphone from different angles and in-use scenarios',
-  'Revise product description to address battery expectations — set realistic 20hr claim prominently',
-  'Respond to top 10 battery complaints publicly to show customer service quality',
-]
+// There is deliberately no placeholder data in this panel.
+//
+// It used to carry a FALLBACK_CHECKS / FALLBACK_RECOMMENDATIONS pair of invented
+// findings — 'Image count (only 3, need 7+)', 'Primary image background: white bg
+// missing', and three recommendations naming a headphone and a '20hr claim' — that
+// rendered whenever the payload had no usable numeric fields. The backend always
+// populates risk + features (_generate_risk_explanation in src/fusion.py can never
+// return empty), so they never showed in practice. But /dashboard JSON.parse's its
+// sessionStorage cache without validating the shape, so a payload change is all it
+// would take to make them live, and two of those six checks are exactly what the
+// real image audit will measure.
+//
+// Same class of problem as the CLIP claims deleted in f69e6d60: an empty state is
+// honest about having no data, a fabricated one is not.
 
 /** pct_negative is 0–1 (API `features`). */
 function negativeShareStatus(pct: number): CheckStatus {
@@ -129,7 +129,7 @@ function buildQualityChecks(risk: RiskInput | null | undefined, features: Featur
 
 function buildRecommendations(explanation?: string): string[] {
   const text = explanation?.trim()
-  if (!text) return [...FALLBACK_RECOMMENDATIONS]
+  if (!text) return []
 
   const cleaned = text.replace(/^Risk drivers:\s*/i, '').trim()
   const segments = cleaned
@@ -137,7 +137,7 @@ function buildRecommendations(explanation?: string): string[] {
     .map((s) => s.trim())
     .filter(Boolean)
 
-  if (segments.length === 0) return [...FALLBACK_RECOMMENDATIONS]
+  if (segments.length === 0) return []
 
   const recs = segments.slice(0, 3).map((s) => {
     const line = s.charAt(0).toUpperCase() + s.slice(1)
@@ -145,37 +145,19 @@ function buildRecommendations(explanation?: string): string[] {
     return `Address this driver: ${body}`
   })
 
-  while (recs.length < 3) {
-    recs.push(
-      'Monitor review sentiment and adjust listing copy so ratings and review tone stay aligned.',
-    )
-  }
-
-  return recs.slice(0, 3)
-}
-
-function shouldUseFallback(
-  risk: RiskInput | null | undefined,
-  features: FeaturesInput | null | undefined,
-): boolean {
-  if (risk == null && features == null) return true
-  const checks = buildQualityChecks(risk, features)
-  return checks.length === 0
+  // Not padded to a fixed count. However many drivers the model actually
+  // reported is the honest number of recommendations to show.
+  return recs
 }
 
 export function QualityBreakdown({ asin, risk, features }: QualityBreakdownProps) {
-  const { qualityChecks, recommendations } = useMemo(() => {
-    if (shouldUseFallback(risk, features)) {
-      return {
-        qualityChecks: FALLBACK_CHECKS,
-        recommendations: [...FALLBACK_RECOMMENDATIONS],
-      }
-    }
-    return {
+  const { qualityChecks, recommendations } = useMemo(
+    () => ({
       qualityChecks: buildQualityChecks(risk, features),
       recommendations: buildRecommendations(risk?.explanation),
-    }
-  }, [risk, features])
+    }),
+    [risk, features],
+  )
 
   // Phrase the deep-link question using actual risk signals when we have them,
   // so the Copilot lands with concrete context instead of a generic prompt.
@@ -195,24 +177,40 @@ export function QualityBreakdown({ asin, risk, features }: QualityBreakdownProps
       <div className="bg-background-card border border-border rounded-xl p-5 animate-fade-up opacity-0 stagger-6">
         <h3 className="font-medium text-text-primary mb-4">Listing Quality Breakdown</h3>
 
-        <div className="space-y-3">
-          {qualityChecks.map((check, index) => (
-            <QualityItem key={`${check.label}-${index}`} {...check} />
-          ))}
-        </div>
+        {qualityChecks.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-muted/30 px-4 py-12 text-center">
+            <p className="text-sm text-muted-foreground">No listing signals available yet.</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Run a full analysis to see review sentiment, rating gaps and return risk for this ASIN.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {qualityChecks.map((check, index) => (
+              <QualityItem key={`${check.label}-${index}`} {...check} />
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="bg-background-card border border-border rounded-xl p-5 animate-fade-up opacity-0 stagger-7">
         <h3 className="font-medium text-text-primary mb-4">AI Recommendations</h3>
 
-        <div className="space-y-3">
-          {recommendations.map((rec, index) => (
-            <div key={index} className="flex items-start gap-2 text-sm text-text-secondary">
-              <ArrowRight className="w-4 h-4 text-accent-blue flex-shrink-0 mt-0.5" />
-              <span>{rec}</span>
-            </div>
-          ))}
-        </div>
+        {recommendations.length === 0 ? (
+          <p className="text-sm text-text-muted">
+            No risk drivers reported for this listing, so there is nothing to recommend from the
+            current signals.
+          </p>
+        ) : (
+          <div className="space-y-3">
+            {recommendations.map((rec, index) => (
+              <div key={index} className="flex items-start gap-2 text-sm text-text-secondary">
+                <ArrowRight className="w-4 h-4 text-accent-blue flex-shrink-0 mt-0.5" />
+                <span>{rec}</span>
+              </div>
+            ))}
+          </div>
+        )}
 
         {askCopilotHref && (
           <div className="mt-4 pt-4 border-t border-border">
