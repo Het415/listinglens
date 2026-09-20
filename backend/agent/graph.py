@@ -23,8 +23,9 @@ Stage 5 adds run_agent_streaming() — an async generator yielding events
 suitable for Server-Sent Events. The frontend subscribes to these and
 animates the trace panel as the agent progresses.
 """
+import json
 import os
-from typing import AsyncIterator
+from typing import Annotated, AsyncIterator
 
 from dotenv import load_dotenv
 from langchain_core.messages import (
@@ -34,10 +35,11 @@ from langchain_core.messages import (
 )
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
-from langgraph.prebuilt import ToolNode
+from langgraph.prebuilt import InjectedState, ToolNode
 
 from ..mcp_server.tools import (
     competitor as competitor_tool,
+    image_audit as image_audit_tool,
     price as price_tool,
     return_risk as return_risk_tool,
     review_qa as review_qa_tool,
@@ -65,6 +67,17 @@ REPLAN_CONFIDENCE_THRESHOLD = 0.5     # below this triggers the re-plan loop
 # ── Per-ASIN tool wrappers ────────────────────────────────────────────────────
 # Same as Stage 2: bind ASIN at graph-build time so the LLM never has to
 # supply it. Each tool here is a thin closure over the Stage-1 MCP tool.
+#
+# `image_audit` is the one exception to closure-binding, and it has to be.
+# Its inputs — which images, and which of them is the main one — vary per
+# REQUEST, while `_GRAPH_CACHE` is keyed per ASIN, so binding them at build
+# time would let the first request for an ASIN permanently fix the image set
+# for every later request. `InjectedState` resolves it properly: LangGraph
+# strips the injected parameter from the schema the model sees, so the tool is
+# still zero-argument to the LLM, while reading the current request's state at
+# call time. It is also registered UNCONDITIONALLY — gating registration on
+# "did the user attach images" would reintroduce the same cache-keying bug, so
+# the tool answers `no_images` instead of being absent.
 
 
 def _build_tools_for_asin(asin: str) -> list:
@@ -104,7 +117,29 @@ def _build_tools_for_asin(asin: str) -> list:
         """
         return trends_tool.trend_signal(asin=asin)
 
-    return [review_qa, predict_return_risk, competitor_search, price_history, trend_signal]
+    @tool
+    def image_audit(state: Annotated[dict, InjectedState]) -> dict:
+        """Check this listing's product images against Amazon's published
+        main-image requirements: pure white background, product filling at
+        least 85% of the frame, resolution and format, marks on the background,
+        and duplicate images across the set. Deterministic rule verdicts, not a
+        model judgement.
+        """
+        return image_audit_tool.image_audit(
+            asin=asin,
+            image_urls=state.get("image_urls") or None,
+            main_index=state.get("main_index"),
+            audit_id=state.get("audit_id"),
+        )
+
+    return [
+        review_qa,
+        predict_return_risk,
+        competitor_search,
+        price_history,
+        trend_signal,
+        image_audit,
+    ]
 
 
 # ── Routing edges ─────────────────────────────────────────────────────────────
@@ -229,6 +264,9 @@ def run_agent(asin: str, query: str) -> AgentOutput:
         "tools_called": [],
         "plan": [],
         "replans_done": 0,
+        "image_urls": image_urls or [],
+        "main_index": main_index,
+        "audit_id": audit_id,
     }
 
     final_state = compiled.invoke(initial_state, config={"recursion_limit": 50})
@@ -314,16 +352,29 @@ def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
         msgs = delta.get("messages") or []
         for m in msgs:
             if isinstance(m, ToolMessage):
+                name = getattr(m, "name", "unknown")
                 content = str(m.content)
+                data: dict = {"tool": name}
+
+                if name == "image_audit":
+                    # Sent structured as well as previewed, because the UI
+                    # renders a verdict table rather than a blob — and a
+                    # truncated JSON string cannot be parsed into one.
+                    #
+                    # Safe to parse: LangGraph's `msg_content_output`
+                    # json.dumps() any non-string tool return, so this content
+                    # is valid JSON. The audit payload is built to fit the
+                    # synthesizer's 3000-char budget, so it survives the
+                    # preview cap below intact.
+                    try:
+                        data["audit"] = json.loads(content)
+                    except (ValueError, TypeError):
+                        pass
+
                 if len(content) > 1200:
                     content = content[:1200] + " ...[truncated]"
-                out.append({
-                    "event": "tool_result",
-                    "data": {
-                        "tool": getattr(m, "name", "unknown"),
-                        "result_preview": content,
-                    },
-                })
+                data["result_preview"] = content
+                out.append({"event": "tool_result", "data": data})
 
     elif node_name == "synthesizer":
         out.append({
@@ -355,11 +406,21 @@ def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
     return out
 
 
-async def run_agent_streaming(asin: str, query: str) -> AsyncIterator[dict]:
+async def run_agent_streaming(
+    asin: str,
+    query: str,
+    audit_id: str | None = None,
+    image_urls: list[str] | None = None,
+    main_index: int | None = None,
+) -> AsyncIterator[dict]:
     """Async generator yielding events as the agent runs.
 
     Each yielded item is `{"event": <name>, "data": <dict>}` — the FastAPI
     layer turns these into SSE frames.
+
+    `audit_id` / `image_urls` / `main_index` are optional image context from the
+    UI. They go into state rather than into the tool closure because they vary
+    per request while the compiled graph is cached per ASIN.
     """
     catalog = supported_asins()
     if asin not in catalog:
@@ -386,6 +447,9 @@ async def run_agent_streaming(asin: str, query: str) -> AsyncIterator[dict]:
         "tools_called": [],
         "plan": [],
         "replans_done": 0,
+        "image_urls": image_urls or [],
+        "main_index": main_index,
+        "audit_id": audit_id,
     }
 
     try:

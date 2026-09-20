@@ -153,11 +153,21 @@ class ChatRequest(BaseModel):
 class AgentQueryRequest(BaseModel):
     asin: str
     query: str
+    # Image context from the UI. `audit_id` refers to an audit the browser
+    # already ran by uploading files straight to the audit service — so the
+    # bytes never pass through this process, which keeps this backend off the
+    # image path entirely.
+    audit_id: str | None = None
+    image_urls: list[str] | None = None
+    main_index: int | None = None
 
 
 class AssistantQueryRequest(BaseModel):
     asin: str
     query: str
+    audit_id: str | None = None
+    image_urls: list[str] | None = None
+    main_index: int | None = None
     # User explicitly picks the mode via the segmented toggle on /assistant.
     # "quick"   → review_qa only (fast grounded Q&A)
     # "copilot" → full Planner→Executor→Synthesizer agent
@@ -621,7 +631,13 @@ async def assistant_query(request: AssistantQueryRequest):
                 return
 
             try:
-                async for event in run_agent_streaming(request.asin, request.query):
+                async for event in run_agent_streaming(
+                    request.asin,
+                    request.query,
+                    audit_id=request.audit_id,
+                    image_urls=request.image_urls,
+                    main_index=request.main_index,
+                ):
                     payload = json.dumps(event["data"], default=str)
                     yield f"event: {event['event']}\ndata: {payload}\n\n"
             except Exception as e:

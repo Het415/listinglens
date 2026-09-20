@@ -18,6 +18,7 @@ ToolName = Literal[
     "competitor_search",
     "price_history",
     "trend_signal",
+    "image_audit",
 ]
 
 
@@ -158,6 +159,9 @@ class AgentState(TypedDict, total=False):
     asin: str
     query: str
     product_name: str  # resolved from supported_asins at entry
+    image_urls: list[str]  # optional, supplied by the UI alongside asin
+    main_index: Optional[int]  # which supplied image is the MAIN image
+    audit_id: Optional[str]  # an audit the UI already ran by uploading files
     messages: Annotated[list[AnyMessage], add_messages]
     iterations: int  # tool-call counter (cap = 8)
     query_type: QueryType  # filled by Planner

@@ -1,4 +1,4 @@
-"""MCP server exposing the 5 ListingLens Copilot tools over stdio.
+"""MCP server exposing the 6 ListingLens Copilot tools over stdio.
 
 The same Python functions are also importable directly from
 backend.mcp_server.tools — this server is the protocol-conformant
@@ -10,7 +10,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from .tools import competitor, price, return_risk, review_qa, trends
+from .tools import competitor, image_audit, price, return_risk, review_qa, trends
 
 mcp = FastMCP("listinglens-copilot")
 
@@ -38,6 +38,13 @@ def price_tool(asin: str, days: int = 90) -> dict[str, Any]:
 @mcp.tool(name=trends.TOOL_NAME, description=trends.TOOL_DESCRIPTION)
 def trends_tool(asin: str | None = None, category: str | None = None) -> dict[str, Any]:
     return trends.trend_signal(asin=asin, category=category)
+
+
+@mcp.tool(name=image_audit.TOOL_NAME, description=image_audit.TOOL_DESCRIPTION)
+def image_audit_tool(
+    asin: str, image_urls: list[str] | None = None, main_index: int | None = None
+) -> dict[str, Any]:
+    return image_audit.image_audit(asin=asin, image_urls=image_urls, main_index=main_index)
 
 
 def main() -> None:
