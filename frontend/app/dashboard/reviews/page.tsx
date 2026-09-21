@@ -9,6 +9,7 @@ import { Bar, BarChart, CartesianGrid, Cell, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { isAbortError } from '@/lib/abort'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 
 const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
@@ -158,6 +159,10 @@ function ReviewsPageInner() {
     if (!mounted) return
 
     let cancelled = false
+    // Abort the in-flight analysis/reviews fetches when the ASIN changes, so a
+    // rapid product switch doesn't leave two loads racing on the connection
+    // pool. `cancelled` still guards the setState calls below.
+    const controller = new AbortController()
     const run = async () => {
       setLoading(true)
       setError(null)
@@ -180,10 +185,19 @@ function ReviewsPageInner() {
 
         // 2. Kick off the per-review fetch immediately (in parallel with the
         //    analysis fetch when we need one) instead of waiting in series.
-        const reviewsPromise = fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`)
+        const reviewsPromise = fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`, {
+          signal: controller.signal,
+        })
+        // The analysis step below can throw (or abort) before we ever await
+        // this one. Attaching a no-op handler marks the rejection as handled so
+        // it doesn't surface as an unhandled promise rejection; the `await`
+        // further down still observes the real outcome.
+        reviewsPromise.catch(() => {})
 
         if (!analyzeJson) {
-          const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`)
+          const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`, {
+            signal: controller.signal,
+          })
           if (!analyzeRes.ok) {
             throw new Error(`Analysis not found for ASIN ${asinFromQuery}`)
           }
@@ -212,12 +226,16 @@ function ReviewsPageInner() {
             if (cancelled) return
             setReviews(reviewsJson.reviews || [])
           }
-        } catch {
+        } catch (e) {
+          // An abort here means a different ASIN is already loading — don't
+          // degrade that load's UI with this one's warning.
+          if (isAbortError(e)) return
           if (cancelled) return
           setReviews([])
           setReviewsWarning('Could not load individual reviews. Showing summary-based analysis only.')
         }
       } catch (e) {
+        if (isAbortError(e)) return
         if (cancelled) return
         const message = e instanceof Error ? e.message : 'Failed to load review analysis'
         setError(message)
@@ -232,6 +250,7 @@ function ReviewsPageInner() {
     run()
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [asinFromQuery, mounted])
 
