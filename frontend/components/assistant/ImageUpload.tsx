@@ -1,8 +1,8 @@
 'use client'
 
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Upload, X, Star, Loader2 } from 'lucide-react'
-import type { ImageAudit } from './types'
+import type { AuditDetail, ImageAudit, PickedImageMeta } from './types'
 
 /**
  * Upload control for a listing's images.
@@ -25,20 +25,44 @@ const VISLENS_URL =
 
 const MAX_IMAGES = 12
 
-type Picked = { file: File; url: string }
+type Picked = { file: File } & PickedImageMeta
 
 export function ImageUpload({
   onAudited,
   disabled,
+  standalone,
 }: {
-  onAudited: (auditId: string, audit: ImageAudit) => void
+  onAudited: (
+    auditId: string,
+    audit: ImageAudit,
+    images: PickedImageMeta[],
+    detail: AuditDetail | null,
+  ) => void
   disabled?: boolean
+  /** True where there is no ASIN fallback to describe — i.e. the dedicated
+   * audit page, which only ever audits uploaded files. On /assistant the agent
+   * CAN fall back to reading the product page, and saying so is the honest way
+   * to explain why uploading is the only path that yields main-image verdicts.
+   * Off that page the same sentence describes a path that does not exist. */
+  standalone?: boolean
 }) {
   const [picked, setPicked] = useState<Picked[]>([])
   const [mainIndex, setMainIndex] = useState(0)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Blob URLs currently rendered by an audit card. Held so `remove()` cannot
+  // revoke one out from under it; replaced wholesale when a new audit lands,
+  // and drained on unmount so nothing leaks past the page.
+  const publishedRef = useRef<Set<string>>(new Set())
+
+  useEffect(
+    () => () => {
+      publishedRef.current.forEach((url) => URL.revokeObjectURL(url))
+      publishedRef.current.clear()
+    },
+    [],
+  )
 
   const addFiles = useCallback((files: FileList | null) => {
     if (!files) return
@@ -56,15 +80,49 @@ export function ImageUpload({
       }
       return [
         ...current,
-        ...images.slice(0, room).map((file) => ({ file, url: URL.createObjectURL(file) })),
+        ...images.slice(0, room).map((file) => {
+          const url = URL.createObjectURL(file)
+          // Measured asynchronously, and patched back by URL rather than by
+          // index: `remove()` reindexes the array, so an index captured here
+          // can point at a different file by the time decode resolves.
+          //
+          // These are a fallback only. The audit's own `orig_width/height` win
+          // where the detail record is available, because they are what the
+          // verdict was computed from — `naturalWidth` can disagree on a
+          // rotated JPEG, and a card whose stated dimensions contradict its own
+          // measured value is worse than one that states none.
+          const probe = new Image()
+          probe.onload = () =>
+            setPicked((cur) =>
+              cur.map((p) =>
+                p.url === url
+                  ? { ...p, width: probe.naturalWidth, height: probe.naturalHeight }
+                  : p,
+              ),
+            )
+          probe.src = url
+          return {
+            file,
+            url,
+            name: file.name,
+            size: file.size,
+            type: file.type,
+            width: null,
+            height: null,
+          }
+        }),
       ]
     })
   }, [])
 
   const remove = useCallback((index: number) => {
     setPicked((current) => {
-      // Revoke the blob URL we created, or the page leaks one per removal.
-      URL.revokeObjectURL(current[index].url)
+      // Revoke the blob URL we created, or the page leaks one per removal —
+      // EXCEPT for URLs already handed to the audit card, which renders them.
+      // Revoking one of those replaces a thumbnail with a broken-image glyph
+      // inside a card about image quality.
+      const url = current[index].url
+      if (!publishedRef.current.has(url)) URL.revokeObjectURL(url)
       return current.filter((_, i) => i !== index)
     })
     setMainIndex((current) => (index < current ? current - 1 : current === index ? 0 : current))
@@ -91,7 +149,26 @@ export function ImageUpload({
       }
       const audit: ImageAudit = await response.json()
       if (!audit.audit_id) throw new Error('the audit service returned no audit id')
-      onAudited(audit.audit_id, audit)
+
+      // The compact payload carries no reason text — deliberately, so the agent
+      // cannot over-claim. The detail record has it, plus the dimensions the
+      // audit actually measured. Fetched here rather than from the card so the
+      // "Auditing…" spinner already covers the round trip, and so the only copy
+      // of VISLENS_URL stays in this module.
+      //
+      // A null result is ordinary, not an error: the store is a 64-entry
+      // in-memory LRU with no disk, so a restart or an eviction 404s. Missing
+      // detail costs the explanations, not the audit.
+      const detail: AuditDetail | null = await fetch(`${VISLENS_URL}/audit/${audit.audit_id}`)
+        .then((r) => (r.ok ? (r.json() as Promise<AuditDetail>) : null))
+        .catch(() => null)
+
+      const published = picked.map(({ file: _file, ...meta }) => meta)
+      publishedRef.current.forEach((url) => {
+        if (!published.some((m) => m.url === url)) URL.revokeObjectURL(url)
+      })
+      publishedRef.current = new Set(published.map((m) => m.url))
+      onAudited(audit.audit_id, audit, published, detail)
     } catch (e) {
       // Named plainly rather than swallowed: the service runs on its own host
       // and a cold start or a stopped process is the most likely cause.
@@ -150,7 +227,7 @@ export function ImageUpload({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   src={item.url}
-                  alt={item.file.name}
+                  alt={item.name}
                   className="w-16 h-16 object-cover bg-white"
                 />
                 <button
@@ -196,9 +273,9 @@ export function ImageUpload({
 
       {picked.length === 0 && !error && (
         <p className="text-xs text-muted-foreground">
-          Without uploads the audit falls back to reading the product page, which usually
-          cannot tell which image is the main one — so those rules get measured but not
-          judged.
+          {standalone
+            ? 'JPEG or PNG, up to 12 images. Marking the main one is what turns the three main-image rules into verdicts rather than measurements.'
+            : 'Without uploads the audit falls back to reading the product page, which usually cannot tell which image is the main one — so those rules get measured but not judged.'}
         </p>
       )}
     </div>

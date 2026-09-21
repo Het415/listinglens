@@ -2,7 +2,12 @@
 
 import { ImageIcon, AlertTriangle, Copy, Info } from 'lucide-react'
 import { checkStatusStyle } from './style-helpers'
-import type { ImageAudit, ImageAuditResult } from './types'
+import type {
+  AuditDetail,
+  ImageAudit,
+  ImageAuditResult,
+  PickedImageMeta,
+} from './types'
 
 /**
  * Renders an `image_audit` result.
@@ -18,6 +23,19 @@ import type { ImageAudit, ImageAuditResult } from './types'
  * in the same shape as verdicts, an LLM reported every one as a violation
  * despite an explicit instruction not to. A UI has the same failure mode with a
  * human reader, so the distinction is carried visually and not just in a field.
+ *
+ * `images` and `detail` are optional enrichments, and the rule for both is the
+ * same: they may explain a verdict, never create one. `verdicts` below stays
+ * derived from `audit.groups[].f` — the compact payload — because that is the
+ * only source where an advisory measurement has had its status neutralised.
+ * `detail.images[].checks` carries RAW statuses, so a compliant lifestyle photo
+ * appears there as `status: "fail", tier: "advisory"`; enumerating it would
+ * reintroduce the exact bug this component was built to prevent. See the
+ * warning on AuditCheckDetail.
+ *
+ * Both are absent on the agent path (TracePanel renders a tool result with no
+ * blob URLs and no detail record), so every use of them degrades to the
+ * original rendering.
  */
 
 function statusFromFinding(finding: [string, string, number?]): string {
@@ -32,6 +50,12 @@ function formatValue(code: string, value: number | undefined): string | null {
   if (code === 'asp') return `${value.toFixed(2)}:1`
   if (code === 'res') return `${value.toFixed(0)}px`
   return `${value}`
+}
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function Unavailable({ result }: { result: ImageAuditResult }) {
@@ -64,7 +88,15 @@ function Unavailable({ result }: { result: ImageAuditResult }) {
   )
 }
 
-export function ImageAuditCard({ result }: { result: ImageAuditResult }) {
+export function ImageAuditCard({
+  result,
+  images,
+  detail,
+}: {
+  result: ImageAuditResult
+  images?: PickedImageMeta[]
+  detail?: AuditDetail | null
+}) {
   // `!result.audit.groups` is not paranoia: the first wiring of this card
   // passed the tool's outer wrapper instead of the inner audit, and the
   // resulting `undefined.flatMap` crashed the whole assistant page rather than
@@ -76,9 +108,46 @@ export function ImageAuditCard({ result }: { result: ImageAuditResult }) {
   const audit: ImageAudit = result.audit
   const headline = checkStatusStyle(audit.headline)
   const verdicts = audit.groups.flatMap((g) =>
-    g.f.map((finding) => ({ finding, images: g.i })),
+    g.f.map((finding) => ({ finding, groupImages: g.i })),
   )
   const measuredOnly = audit.groups.reduce((n, g) => n + (g.n_measured_only ?? 0), 0)
+  // Per-image facts, merged service-first. The service's dimensions are the
+  // ones its verdicts were computed from; the browser only has the pixels.
+  const perImage = Array.from({ length: audit.n_images }, (_, i) => {
+    const d = detail?.images?.[i]
+    const c = images?.[i]
+    return {
+      url: c?.url ?? null,
+      width: d?.orig_width ?? c?.width ?? null,
+      height: d?.orig_height ?? c?.height ?? null,
+      format: d?.format ?? c?.type?.split('/')[1]?.toUpperCase() ?? null,
+      size: d?.n_bytes ?? c?.size ?? null,
+    }
+  })
+  const showStrip = perImage.some((p) => p.url || p.width)
+
+  /** The service's own sentence for a code that is ALREADY a verdict.
+   *
+   * Returned verbatim. Composing our own ("too small for Amazon", "re-export at
+   * 1000px") would be this component re-wording a verdict, which it does not
+   * do. Returns null unless every image in the group gives the same sentence —
+   * `white_background`'s reason names a modal RGB that is not part of the
+   * grouping signature, so two images can share a verdict without sharing an
+   * explanation, and attributing one image's pixels to another would be a
+   * fabricated finding.
+   */
+  const reasonFor = (code: string, imgs: number[]): string | null => {
+    if (!detail?.images) return null
+    const checkId = audit.legend[code]?.check
+    if (!checkId) return null
+    const reasons = new Set(
+      imgs.map((i) => detail.images[i]?.checks?.find((c) => c.check_id === checkId)?.reason ?? ''),
+    )
+    if (reasons.size !== 1) return null
+    const [only] = [...reasons]
+    return only || null
+  }
+
   const duplicates = audit.duplicates
   const clusters = duplicates?.clusters ?? []
   const setChecks = audit.set_checks ?? []
@@ -112,10 +181,62 @@ export function ImageAuditCard({ result }: { result: ImageAuditResult }) {
         </div>
       )}
 
+      {/* What was actually audited. Deliberately free of any status vocabulary:
+          these are measurements, and a dimension rendered in a verdict colour
+          is the same category error the payload design exists to prevent. The
+          numbers alone do the explaining — `resolution_and_format` reports the
+          LONGEST SIDE, so "92 × 65" next to the thumbnail makes a bare "92px"
+          self-evident without a word of new prose. */}
+      {showStrip && (
+        <div className="flex flex-wrap gap-2">
+          {perImage.map((img, i) => (
+            <div
+              key={i}
+              className={`flex items-center gap-2.5 rounded-lg border bg-background-secondary px-2.5 py-2 ${
+                i === audit.main_index ? 'border-cyan-400/50' : 'border-border'
+              }`}
+            >
+              {img.url ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img
+                  src={img.url}
+                  alt={`image ${i + 1}`}
+                  className="w-12 h-12 object-contain bg-white rounded shrink-0"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded bg-muted/40 shrink-0" />
+              )}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-text-primary">image {i + 1}</span>
+                  {i === audit.main_index && (
+                    <span className="text-[9px] font-semibold px-1 py-px rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                      MAIN
+                    </span>
+                  )}
+                </div>
+                {img.width && img.height && (
+                  <div className="font-mono text-[11px] text-muted-foreground mt-0.5">
+                    {img.width} × {img.height}
+                  </div>
+                )}
+                {(img.format || img.size !== null) && (
+                  <div className="text-[10px] text-muted-foreground/70 mt-px">
+                    {[img.format, img.size !== null ? formatBytes(img.size) : null]
+                      .filter(Boolean)
+                      .join(' · ')}
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Verdicts. Only rules that were actually broken appear here. */}
       {verdicts.length > 0 ? (
         <div className="space-y-2">
-          {verdicts.map(({ finding, images }, index) => {
+          {verdicts.map(({ finding, groupImages }, index) => {
             const [code, , value] = finding
             const entry = audit.legend[code]
             const style = checkStatusStyle(statusFromFinding(finding))
@@ -139,8 +260,18 @@ export function ImageAuditCard({ result }: { result: ImageAuditResult }) {
                   {entry?.rule && (
                     <div className="text-xs text-muted-foreground mt-0.5">{entry.rule}</div>
                   )}
+                  {/* And the service's own explanation of what it measured, also
+                      verbatim. Distinguished from the rule by opacity rather
+                      than a label: any label would have to be a severity or a
+                      remedy word, and this component states neither. */}
+                  {reasonFor(code, groupImages) && (
+                    <div className="text-xs text-muted-foreground/70 mt-1 leading-relaxed">
+                      {reasonFor(code, groupImages)}
+                    </div>
+                  )}
                   <div className="text-[11px] text-muted-foreground mt-0.5">
-                    image{images.length === 1 ? '' : 's'} {images.map((i) => i + 1).join(', ')}
+                    image{groupImages.length === 1 ? '' : 's'}{' '}
+                    {groupImages.map((i) => i + 1).join(', ')}
                   </div>
                 </div>
               </div>

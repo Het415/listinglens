@@ -19,7 +19,13 @@ export function TopBar({
   isExporting?: boolean
 }) {
   const searchParams = useSearchParams()
-  const asin = searchParams.get('asin') || DEMO_ASIN
+  // Two values on purpose. `asin` is the resolved one, for fetching and
+  // display. `asinParam` is what the URL actually said, and LINKS must use it:
+  // building an href from the resolved value writes DEMO_ASIN into the URL,
+  // which turns an implicit fallback into an explicit claim and stops every
+  // `isDemo` check downstream from firing.
+  const asinParam = searchParams.get('asin')
+  const asin = asinParam || DEMO_ASIN
   const [productName, setProductName] = useState(asin)
   const { resolvedTheme, setTheme } = useTheme()
   const [mounted, setMounted] = useState(false)
@@ -144,7 +150,7 @@ export function TopBar({
         </button>
 
         <Link
-          href={`/assistant?asin=${encodeURIComponent(asin)}`}
+          href={asinParam ? `/assistant?asin=${encodeURIComponent(asinParam)}` : '/assistant'}
           className="flex items-center gap-2 px-4 py-2 text-sm bg-accent-teal text-white font-medium rounded-lg hover:bg-accent-teal/90 transition-colors h-9"
         >
           Ask AI
