@@ -12,6 +12,7 @@ import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 import { exportToPDF } from '@/lib/exportReport'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { isAbortError } from '@/lib/abort'
 import { useDashboardExport } from './dashboard-export-context'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -34,6 +35,11 @@ function DashboardPageContent() {
   useEffect(() => {
     setMounted(true)
     let cancelled = false
+    // Switching products must drop the previous product's requests, not just
+    // ignore their results. The POST below starts the backend's 3-5 minute
+    // pipeline, so an abandoned load would otherwise hold a connection open
+    // for minutes — and the browser only allows a handful per origin.
+    const controller = new AbortController()
 
     const loadAnalysis = async () => {
       setLoading(true)
@@ -57,7 +63,7 @@ function DashboardPageContent() {
         }
 
         // fallback — fetch directly from API
-        const response = await fetch(`${API_URL}/analyze/${asin}`)
+        const response = await fetch(`${API_URL}/analyze/${asin}`, { signal: controller.signal })
         if (cancelled) return
         if (!response.ok) {
           // not cached in API yet — run analysis
@@ -65,6 +71,7 @@ function DashboardPageContent() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url_or_asin: asin }),
+            signal: controller.signal,
           })
           if (cancelled) return
           if (!analyzeRes.ok) throw new Error('Analysis failed')
@@ -75,6 +82,9 @@ function DashboardPageContent() {
           if (!cancelled) setData(result)
         }
       } catch (err) {
+        // A deliberate abort is not a failure — the component is unmounting or
+        // already loading a different ASIN, so leave the error state alone.
+        if (isAbortError(err)) return
         if (!cancelled) setError('Failed to load analysis. Make sure backend is running.')
       } finally {
         if (!cancelled) setLoading(false)
@@ -82,7 +92,10 @@ function DashboardPageContent() {
     }
 
     loadAnalysis()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      controller.abort()
+    }
   }, [asin])
 
   useEffect(() => {
