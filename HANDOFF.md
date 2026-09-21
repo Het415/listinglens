@@ -1425,42 +1425,225 @@ cd ~/github/vislens && .venv/bin/pytest -q          # 223 tests, ~19s
    document ("Project A from the portfolio plan", "what this produces for the resume").
    `git rm --cached` it if that is not wanted — though it is already in public history.
 
+## Session 2026-09-21 — shard packing, and two split bugs it exposed
+
+All in **vislens**. ListingLens is untouched this session. Three commits, pushed,
+CI green on `defd026` (both jobs):
+
+| | |
+|---|---|
+| `fb3112e` | `feat(data): pack the ABO images into shards, and fix what the packer found` |
+| `4652664` | `build(deps): install only what serves, and delete a 122 MB dependency nothing imports` |
+| `defd026` | `feat(deploy): a Render blueprint for the audit service, and CORS for the real frontend` |
+
+`4652664` came from a spun-off background task, not the main thread. It shares the
+same working tree, so **stage by explicit path in vislens rather than `git add -A`**
+if another task is running.
+
+### What is built
+
+**`scripts/pack_shards.py`** — the archive's 398,212 images, of which 392,324 are
+packable, into **42 shards, 3.86 GB, ~30s**.
+The source tar is never extracted: the plan comes from the catalog parquet first,
+then one sequential pass copies bytes across. Bytes are copied, never re-encoded
+(vislens `CLAUDE.md` §9 — a packer that resized to 224 would be a second preprocessing
+definition, and the disagreement with the ONNX export would be silent).
+
+Two roles, an image in exactly one of them, shards pure in split *and* role:
+
+| series | samples | shards | size |
+|---|---|---|---|
+| `pairs-train` | 97,287 | 10 | 942 MB |
+| `pairs-val` / `pairs-test` | 11,747 / 12,107 | 2 / 2 | 113 / 117 MB |
+| `index-train` | 228,619 | 22 | 2,166 MB |
+| `index-val` / `index-test` | 26,652 / 28,704 | 3 / 3 | 251 / 268 MB |
+
+405,116 samples over 392,324 images. `pairs` is a separate series because it is
+942 MB of a 3.86 GB corpus — one undivided series makes every epoch read the other
+2.9 GB to train on none of it. A job that globs `pairs-train-*.tar` **cannot
+physically read a val pixel**, which is stronger than filtering at load time.
+
+`manifest.json` carries per-series counts, payload bytes, shard bytes and a
+SHA-256 per shard. Tar headers use fixed mtime/ownership and USTAR, so a run
+record can cite a shard set by hash.
+
+**Deployment path for the audit service** — `render.yaml`, `.python-version` (3.11),
+and CORS that admits the real frontend plus Vercel previews. Nothing is deployed
+yet; this is the config, not the act.
+
+vislens is now at **243 tests** (from 223).
+
+### ⚠️ Findings that matter more than the code
+
+**1. An invariant that reads the wrong table proves nothing.** This is the
+session's lesson, and the companion to the last session's finding #3. The packer
+re-asserts no-image-in-two-splits on the bytes it is about to write, and on the
+first real run it found **five images heading 57 catalog rows (43 of them in
+`pairs`) in two or three splits at once**. `catalog.main_image_path` comes
+straight from the listings and never passes through the product-image edge table,
+so pruning the generic images left those rows pointing at a dropped image — and,
+because the prune also removed the edge that would have unioned those listings
+into one component, each got its split assigned independently. Both existing
+checks read `product_images`, where the offending edges were already gone, so
+both reported **zero**. Fixed by dropping listings headed by a generic image,
+plus a third invariant on `catalog.main_image_id`.
+
+**2. ⚠️⚠️ The split was not reproducible, and no invariant could tell.**
+`assign_splits` keyed each component on its union-find **root** — whichever member
+arrived first — and the edge list comes out of an unordered DuckDB scan. Rebuilding
+an unchanged archive moved whole components between splits: **train +118, val −214,
+test +39**. Every leak check passed throughout, because components stayed intact
+and only their labels moved.
+
+**Consequence for any future comparison: a split-dependent number measured before
+2026-09-21 is not comparable to one measured after.** Nothing has been trained
+yet, so nothing is lost — but do not treat a pre-fix figure as a baseline.
+
+The key is now the component's smallest `product_id`. Two consecutive full builds
+now produce a byte-identical assignment over all 145,614 rows, and a test shuffles
+the edge list 25 ways and demands one answer.
+
+**3. The packer's own first version was not reproducible either, and the way it
+failed is the interesting part.** Shard count, per-shard sample counts and
+per-shard **sizes** all matched exactly; only the SHA-256s disagreed. `product_id`
+is not unique in `pairs` (the same ASIN is listed per marketplace), so the sample
+key carries an occurrence suffix from `row_number()`. **101 groups of rows tie on
+the ordering key, 99 of them differing only in `title_lang` — and every `en_XX`
+tag is five characters.** Identical lengths, different contents. The ordering now
+covers every column that can distinguish two rows.
+
+**4. `pip install .` breaks the audit service at its first request**, and the
+build log looks healthy. Measured: the wheel has 17 entries and **no data files** —
+hatch packages `src/vislens` while the thresholds live at the repo root. Both
+modules resolve them with `Path(__file__).resolve().parents[3]`, which is the repo
+root from a checkout and the interpreter's `lib/python3.11` from site-packages.
+Verified both ways: importing the app succeeds from a non-editable install,
+`load_rules()` then raises `FileNotFoundError`. **`render.yaml` must keep `-e`** —
+the reasoning is written at the line so nobody tidies it away.
+
+**5. Vercel is the wrong host for the audit service**, checked against its docs
+rather than remembered: a **4.5 MB request body cap** against 12 files × 8 MB, a
+Python runtime offering 3.12/3.13/3.14 but **not 3.11** (which this repo pins for
+Kaggle parity), and no state between invocations for the bounded in-memory audit
+store. The frontend stays on Vercel; the service belongs on a long-lived process.
+
+**6. ⚠️ The image audit is live and broken in production right now.**
+`NEXT_PUBLIC_VISLENS_URL` is unset, so the deployed bundle at
+`listinglens.hetprajapati.me` carries `|| "http://localhost:8100"` — confirmed by
+pulling the live chunk, not inferred. The page is https, so the browser blocks the
+request as mixed content before it is sent. It fails cleanly (`ImageUpload` renders
+"Could not reach the audit service — …") and the agent-side tool degrades to
+`unavailable` by design, but every visitor who clicks the upload card gets an error.
+
+Also worth knowing: `listinglens-kappa.vercel.app` now **404s**. Only the custom
+domain resolves.
+
+### Catalog counts moved
+
+Both fixes together: catalog 145,671 → **145,614**, product_images 535,734 →
+**535,602**, pairs 121,350 → **121,307**. 0.04% of rows, and they were the rows
+putting the same pixels in two splits.
+
+### Resolved from the previous session's "Not done"
+
+- **#5 Render plan** — decided and written into `render.yaml`: free tier, with the
+  32-81s cold start explicitly traded against the tool's 8s timeout.
+- **#2 Shard packing** — done, above.
+- **#4 `VISLENS_URL`** — still unset, but the blueprint and CORS now exist, so
+  what remains is dashboard work rather than code.
+
+### Commands
+
+```bash
+# vislens
+cd ~/github/vislens && .venv/bin/pytest -q            # 243 tests, ~20s
+uv venv --python 3.11 && uv pip install -e ".[dev,data]"   # note: dev,data
+
+python -m scripts.build_catalog                       # full catalog rebuild
+python -m scripts.pack_shards                          # 42 shards, ~30s
+python -m scripts.pack_shards --roles pairs            # training set only, 0.9 GB
+```
+
+### Not done
+
+1. **Kaggle account + phone verification** — unchanged, and still the critical
+   path. Gates GPU access *and* notebook internet. Select `NvidiaTeslaT4`
+   explicitly; the P100 no longer runs Kaggle's own torch.
+2. **Deploy the audit service.** Create the Render service from the blueprint, set
+   `VISLENS_URL` on ListingLens' Render service, set `NEXT_PUBLIC_VISLENS_URL` on
+   its Vercel project — and **redeploy the frontend**, because `NEXT_PUBLIC_*` is
+   inlined at build time.
+3. **Encoder training (B2/B3)** — the shards it needs now exist, so this is
+   blocked on Kaggle alone. The recommendation against the spec stands: initialize
+   the image tower from CLIP's visual encoder, freeze the text tower and precompute
+   its embeddings, mask false negatives on `product_id`/`title_hash`, fp16 +
+   `GradScaler` on `sm_75`, `logit_scale` clamped to `log(100)`, loss in fp32.
+4. **Ship the rule JSONs as package data** behind `importlib.resources`, so
+   `pip install .` works and finding #4 stops being a comment in a yaml file.
+5. **vislens is not `ruff format` clean repo-wide** — 11 files would be
+   reformatted, 15 are clean. CI runs `ruff check` only, so this is latent; but
+   `.pre-commit-config.yaml` declares the `ruff-format` hook and the hook is **not
+   installed locally** (`.git/hooks/pre-commit` absent). Either run the formatter
+   once across the repo or drop the hook, rather than leaving both half-true.
+6. **CI action versions** — `actions/checkout@v4` and `actions/setup-python@v5` are
+   being forced onto Node 24, and `ubuntu-latest` migrates to Ubuntu 26 on
+   2026-10-19. Nothing broken today.
+7. **`visual_retrieval_build_plan.md` is still committed and public**, and still
+   reads as a portfolio document. Carried forward undecided from 2026-09-20:
+   `git rm --cached` it if that is not wanted, though it is already in public
+   history either way.
+8. Unchanged from before: the cron-job.org warmup job (~2 min, `docs/WARMUP.md`),
+   and the Executor degrade path is still unexercised because nothing has failed.
+
 ## How to start the next chat
 
-> Read `HANDOFF.md` in the repo root, **starting at "Session 2026-09-20"**. Last session
-> built a listing image audit as a sixth agent tool, and created a second repo
-> ([vislens](https://github.com/Het415/vislens)) holding all vision code. Both repos are
-> committed, pushed, and CI-green.
+> Read `HANDOFF.md` in the repo root, **starting at "Session 2026-09-21"**. Last
+> session packed the ABO images into WebDataset shards in
+> [vislens](https://github.com/Het415/vislens) and, in doing so, found two bugs in
+> the train/val/test split that every existing check had passed. Three commits,
+> pushed, CI green.
 >
-> **The single most important thing to carry forward is finding #3: a prompt instruction
-> is weaker than a data structure.** It took three measured iterations before the agent
-> stopped reporting advisory measurements as violations, and what finally worked was
-> removing the data from its context rather than instructing it better. Expect to apply
-> that again.
+> **Carry forward two lessons, not one.** From 2026-09-20: a prompt instruction is
+> weaker than a data structure — what stopped the agent misreporting advisory
+> measurements was deleting them from its context, not instructing it better. From
+> 2026-09-21: **an invariant that reads the wrong table proves nothing.** Two leak
+> checks read `product_images` and reported zero while five images sat in two
+> splits in `catalog`, and the split assignment was non-deterministic for months
+> without a single check noticing, because components stayed intact and only their
+> labels moved. Assert on the artifact you are about to ship, not on the table it
+> came from.
 >
-> **One thing is waiting on a human and is the critical path:** create a Kaggle account
-> and complete phone verification. It gates both GPU access and notebook internet, and
-> nothing in the training half can start without it. Select `NvidiaTeslaT4` explicitly —
-> the P100 no longer runs Kaggle's own PyTorch.
+> **One thing is waiting on a human and is still the critical path:** create a
+> Kaggle account and complete phone verification. It gates GPU access and notebook
+> internet, and nothing in the training half can start without it. Select
+> `NvidiaTeslaT4` explicitly — the P100 no longer runs Kaggle's own PyTorch.
 >
-> The highest-value next code is **shard packing** (`scripts/pack_shards.py`), because
-> 398K loose image files hit Kaggle's ~500-output cap. `abo-images-small.tar` is already
-> downloaded and verified at `vislens/data/abo/`.
+> **The shards now exist**, so encoder training (B2/B3) is blocked on Kaggle alone
+> rather than on data prep. `data/shards/` holds 42 shards, 3.86 GB, reproducible
+> and manifest-checksummed; `pairs-train-*.tar` is the contrastive set.
 >
-> Still open from before this session, unchanged: the cron-job.org warmup job (~2 min,
-> `docs/WARMUP.md`), and the Executor degrade path is still unexercised because nothing
-> has failed.
+> **The other live item is a deploy, and it is mostly dashboard work.** The audit
+> service has a `render.yaml` and CORS for the real frontend but is not deployed,
+> so the upload card on `listinglens.hetprajapati.me` errors for every visitor
+> today. Create the Render service, set `VISLENS_URL` and
+> `NEXT_PUBLIC_VISLENS_URL`, then redeploy the frontend — the Vercel variable is
+> inlined at build time, so setting it is not enough.
 >
 > Standing rules, all still true:
 > - Before anything LLM-related, run `python -m scripts.doctor`.
-> - **Groq hosts no vision model.** Verified 2026-09-20 against the live catalog: 13
->   models, none multimodal. For image work use a local pinned ONNX model — that is
->   already the house pattern (`src/onnx_embeddings.py`) and it preserves determinism.
+> - **Groq hosts no vision model.** Verified 2026-09-20: 13 models, none
+>   multimodal. For image work use a local pinned ONNX model.
 > - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY`.
-> - **Budget one full eval run per day.** 200k tokens per model per day, rolling window.
+> - **Budget one full eval run per day.** 200k tokens per model per day, rolling.
 > - **Do not trust a single-run eval delta smaller than ~11 rows (~37%).**
+> - **A split-dependent number from before 2026-09-21 is not comparable to one
+>   after it.** The split was relabelled by the reproducibility fix.
+> - In vislens, install `.[dev,data]` — the test suite imports duckdb, and the
+>   default set no longer carries it.
+> - In vislens, `render.yaml` must install with `-e`. A non-editable install
+>   cannot find the rule thresholds.
 > - Groq's free tier is the binding constraint on ListingLens. vislens has no such
->   constraint — its whole suite is deterministic, which is why it can run in CI.
+>   constraint — its whole suite is deterministic, which is why it runs in CI.
 > - Run `scripts/predemo_check.sh` before any demo.
 > - To check what is deployed, ask the Render API, not `/health`.
 
