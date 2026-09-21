@@ -307,6 +307,12 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
         with open(feat_json, "w") as f:
             json.dump({"features": features, "summary": summary}, f)
 
+    # Pre-computed caches written before `top_topics` carried an `id` store
+    # `"id": null` on every entry; recover it from the label so the API doesn't
+    # hand clients ten topics that share one identity.
+    from src.nlp_pipeline import backfill_topic_ids
+    summary = backfill_topic_ids(summary)
+
     # ── Step 2: Fusion ──
     from src.fusion import run_fusion_pipeline
     risk = run_fusion_pipeline(features)

@@ -164,6 +164,38 @@ CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
 _CATEGORY_INDEX_BY_NAME = {name: i for i, (name, _) in enumerate(CATEGORY_KEYWORDS)}
 
 
+def backfill_topic_ids(summary: dict) -> dict:
+    """Fill in `id` on `summary["top_topics"]` entries that are missing one.
+
+    Pre-computed `data/processed/features_<asin>.json` caches written before
+    `top_topics` carried an `id` store `"id": null` on every entry. Clients that
+    fall back to a single sentinel then treat all ten topics as the same topic.
+
+    Labels come from the fixed CATEGORY_KEYWORDS taxonomy, so the id is
+    recoverable by name — no need to re-run the NLP pipeline over cached ASINs.
+    These are the same ids as the per-review `topic_id` column, so a filled-in
+    summary can be cross-referenced against the review table.
+
+    Idempotent: an existing id is never overwritten, and a label outside the
+    taxonomy is left untouched. Mutates and returns `summary`.
+    """
+    if not isinstance(summary, dict):
+        return summary
+
+    topics = summary.get("top_topics")
+    if not isinstance(topics, list):
+        return summary
+
+    for topic in topics:
+        if not isinstance(topic, dict) or topic.get("id") is not None:
+            continue
+        cat_idx = _CATEGORY_INDEX_BY_NAME.get(topic.get("label"))
+        if cat_idx is not None:
+            topic["id"] = cat_idx
+
+    return summary
+
+
 def _review_matches_keywords(text_lower: str, keywords: list[str]) -> bool:
     return any(kw in text_lower for kw in keywords)
 
