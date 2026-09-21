@@ -4,6 +4,7 @@ import requests
 import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
+from src.cancellation import CancelToken, check_cancelled, cancellable_sleep
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -45,14 +46,22 @@ HEADERS = {
 
 def get_sentiment_batch(texts: list[str],
                         batch_size: int = 8,
-                        max_retries: int = 3) -> list[dict]:
+                        max_retries: int = 3,
+                        cancel: CancelToken | None = None) -> list[dict]:
     """
     Sends each review individually to HuggingFace Inference API.
     The router endpoint doesn't support true batching — sends one at a time.
+
+    This loop is where a cancelled analysis actually stops. It dominates the
+    3-5 minute runtime (one HTTP round-trip plus a rate-limit delay per
+    review), so checking `cancel` once per iteration bounds the wasted work at
+    roughly a single review. Both sleeps below are interruptible too, which
+    matters most for the 20s+ 503 backoff.
     """
     results = []
 
     for i, text in enumerate(texts):
+        check_cancelled(cancel)
         # truncate to 512 chars — model max token limit
         text = text[:512]
 
@@ -73,7 +82,7 @@ def get_sentiment_batch(texts: list[str],
             elif response.status_code == 503:
                 wait = 20 * (attempt + 1)
                 print(f"Model loading, waiting {wait}s...")
-                time.sleep(wait)
+                cancellable_sleep(cancel, wait)
 
             else:
                 print(f"API error {response.status_code} on review {i}")
@@ -81,7 +90,7 @@ def get_sentiment_batch(texts: list[str],
                 break
 
         # small delay — respect rate limits
-        time.sleep(0.3)
+        cancellable_sleep(cancel, 0.3)
 
         # progress indicator
         print(f"Sentiment: {i+1}/{len(texts)} reviews processed", end="\r")
@@ -318,7 +327,8 @@ def engineer_features(df: pd.DataFrame,
 
 # ── Main Pipeline Function ─────────────────────────────────────────────────────
 
-def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> dict:
+def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None,
+                     cancel: CancelToken | None = None) -> dict:
     """
     Master function — runs full NLP pipeline on a reviews DataFrame.
 
@@ -327,6 +337,10 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
 
     Args:
         df: clean reviews DataFrame from ingest.py
+        cancel: optional CancelToken; when the caller sets it the pipeline
+            raises AnalysisCancelled at the next checkpoint instead of
+            finishing. Checked per review inside sentiment scoring and again
+            between steps.
 
     Returns dict with:
         df_enriched:  original df + sentiment columns + topic_id
@@ -338,7 +352,7 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
 
     # ── Step 1: Sentiment ──
     print("\nStep 1/3: Sentiment scoring...")
-    raw_sentiment = get_sentiment_batch(df["body"].tolist())
+    raw_sentiment = get_sentiment_batch(df["body"].tolist(), cancel=cancel)
     sentiment_df  = parse_sentiment_results(raw_sentiment)
 
     # attach sentiment columns to reviews DataFrame
@@ -348,6 +362,7 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
     )
 
     # ── Step 2: Category analysis ──
+    check_cancelled(cancel)
     print("\nStep 2/3: Category analysis...")
     topics, topic_info, categories = _build_category_outputs(
         df["body"],
@@ -355,6 +370,7 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None) -> 
     )
 
     # ── Step 3: Feature engineering ──
+    check_cancelled(cancel)
     print("\nStep 3/3: Feature engineering...")
     df_enriched, features = engineer_features(df_enriched, topics, topic_info)
 
