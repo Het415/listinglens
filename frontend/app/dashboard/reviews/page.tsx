@@ -155,6 +155,19 @@ function ReviewsPageInner() {
   const [analysis, setAnalysis] = useState<AnalyzeResponse | null>(null)
   const [reviews, setReviews] = useState<ReviewRow[]>([])
 
+  // View state for the topic cards (section 3) and the review table
+  // (section 5). Declared up here next to the data it decorates so the fetch
+  // effect below can reset it in one place when the ASIN changes — the
+  // sections that consume it are several hundred lines down.
+  const [expandedTopicIndex, setExpandedTopicIndex] = useState<number | null>(null)
+  const [query, setQuery] = useState('')
+  const [starFilter, setStarFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>('all')
+  const [sentimentFilter, setSentimentFilter] = useState<'all' | 'positive' | 'neutral' | 'negative'>('all')
+  const [sortKey, setSortKey] = useState<'review_id' | 'rating' | 'compound_score'>('review_id')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+  const [page, setPage] = useState(1)
+  const pageSize = 25
+
   useEffect(() => {
     if (!mounted) return
 
@@ -169,6 +182,18 @@ function ReviewsPageInner() {
       setReviewsWarning(null)
       setAnalysis(null)
       setReviews([])
+      // The incoming product has its own topic list, star mix and row count,
+      // so anything that hides or positions rows is meaningless against it:
+      // carrying it over silently shows B's reviews through A's filters,
+      // usually as a confusingly empty table, and leaves row N of B's topics
+      // expanded because A's row N was. Sort is deliberately left alone —
+      // it's a reading preference that stays valid for any product and
+      // can't hide a row.
+      setExpandedTopicIndex(null)
+      setQuery('')
+      setStarFilter('all')
+      setSentimentFilter('all')
+      setPage(1)
       try {
         // 1. Analysis: prefer the sessionStorage cache the landing/dashboard
         //    pages already populated — saves a network round-trip and makes
@@ -322,19 +347,13 @@ function ReviewsPageInner() {
   // Section 3 topic cards
   // -----------------------
   const maxTopicCount = useMemo(() => Math.max(...topics.map((t) => t.count ?? 0), 0), [topics])
-  const [expandedTopicIndex, setExpandedTopicIndex] = useState<number | null>(null)
 
   // -----------------------
   // Section 5 table controls (filter/sort)
   // -----------------------
-  const [query, setQuery] = useState('')
-  const [starFilter, setStarFilter] = useState<'all' | '1' | '2' | '3' | '4' | '5'>('all')
-  const [sentimentFilter, setSentimentFilter] = useState<'all' | 'positive' | 'neutral' | 'negative'>('all')
-  const [sortKey, setSortKey] = useState<'review_id' | 'rating' | 'compound_score'>('review_id')
-  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [page, setPage] = useState(1)
-  const pageSize = 25
-
+  // Narrowing the filters renumbers the result set, so page 3 of the old
+  // filter is almost never page 3 of the new one. This covers filter changes
+  // within one product; the fetch effect above covers switching products.
   useEffect(() => {
     setPage(1)
   }, [query, starFilter, sentimentFilter, sortKey, sortDir])
