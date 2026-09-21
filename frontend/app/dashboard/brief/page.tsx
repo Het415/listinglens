@@ -8,6 +8,7 @@ import { ArrowLeft, AlertTriangle, CheckCircle2, FileText } from 'lucide-react'
 import { ScoreCard } from '@/components/dashboard/score-card'
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { isAbortError } from '@/lib/abort'
 import { exportBriefToPDF, type BriefResponse } from '@/lib/exportBrief'
 import { useDashboardExport } from '../dashboard-export-context'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
@@ -38,16 +39,22 @@ function BriefInner() {
   useEffect(() => {
     if (!mounted) return
     let cancelled = false
+    // Drop the in-flight request when the ASIN changes — `cancelled` alone
+    // would ignore the response but leave the connection open.
+    const controller = new AbortController()
     const run = async () => {
       setLoading(true)
       setError(null)
       setData(null)
       try {
-        const res = await fetch(`${API_URL}/brief/${asin}`)
+        const res = await fetch(`${API_URL}/brief/${asin}`, { signal: controller.signal })
         if (!res.ok) throw new Error(`Could not generate brief for ${asin} (${res.status})`)
         const json = (await res.json()) as BriefResponse
         if (!cancelled) setData(json)
       } catch (e) {
+        // A deliberate abort isn't a failure — stay silent and let the newer
+        // load own the UI.
+        if (isAbortError(e)) return
         if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load')
       } finally {
         if (!cancelled) setLoading(false)
@@ -56,6 +63,7 @@ function BriefInner() {
     run()
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [asin, mounted])
 

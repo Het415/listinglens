@@ -35,6 +35,9 @@ export function TopBar({
   // stale product never lingers, and (b) re-hydrate it from cache or network.
   useEffect(() => {
     let cancelled = false
+    // Abort the name lookup on an ASIN change so a fast click-through doesn't
+    // queue up one request per product it passed through.
+    const controller = new AbortController()
     setProductName(asin) // reset first — never show the previous product's name
 
     const cached = sessionStorage.getItem(`analysis_${asin}`)
@@ -52,17 +55,20 @@ export function TopBar({
     // fetch just the name. Cheap — the backend serves this from cache/disk.
     ;(async () => {
       try {
-        const res = await fetch(`${API_URL}/analyze/${asin}`)
+        const res = await fetch(`${API_URL}/analyze/${asin}`, { signal: controller.signal })
         if (!res.ok || cancelled) return
         const data = await res.json()
         if (!cancelled && data?.product_name) setProductName(data.product_name)
       } catch {
-        /* keep the ASIN as a graceful fallback */
+        /* keep the ASIN as a graceful fallback — this also absorbs the
+           AbortError from the cleanup below, which needs no special casing
+           because the fallback is exactly the right outcome. */
       }
     })()
 
     return () => {
       cancelled = true
+      controller.abort()
     }
   }, [asin])
 

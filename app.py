@@ -2,11 +2,14 @@ import os
 import json
 import pandas as pd
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from typing import Callable
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
+
+from src.cancellation import AnalysisCancelled, CancelToken, check_cancelled
 
 load_dotenv()
 
@@ -252,11 +255,41 @@ def user_facing_error(e: Exception, *, context: str = "") -> dict:
     }
 
 
-def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
+def _atomic_write(path: str, write: Callable[[str], None]) -> None:
+    """
+    Write via a temp file in the same directory, then `os.replace`.
+
+    The cache-hit check below is `os.path.exists`, so a half-written file would
+    still count as present and be served from disk forever. `os.replace` is
+    atomic on POSIX, so readers see either the old file or the complete new
+    one — never a truncated prefix. This matters now that a cancelled analysis
+    can unwind partway through.
+    """
+    tmp = f"{path}.tmp.{os.getpid()}"
+    try:
+        write(tmp)
+        os.replace(tmp, path)
+    except BaseException:
+        # Includes AnalysisCancelled — never leave a stray temp file behind.
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        raise
+
+
+def run_full_pipeline(asin: str, max_reviews: int = 250,
+                      cancel: CancelToken | None = None) -> dict:
     """
     Runs complete pipeline for one ASIN.
     In PRODUCTION: Strictly loads from disk.
     In DEVELOPMENT: Can trigger heavy ingestion if files are missing.
+
+    `cancel` is optional and defaults to None (never cancels), so the callers
+    that have no cancellation story — preload_cache, /chat, get_cached_analysis
+    — are unaffected. Only `POST /analyze` passes a live token, since that is
+    the one path a browser can abandon mid-flight.
     """
     # 1. Memory cache hit
     if asin in app_state.get("cache", {}):
@@ -289,6 +322,9 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
         from src.ingest import get_reviews
         from src.nlp_pipeline import run_nlp_pipeline
 
+        # Bail before the expensive part if the caller already left.
+        check_cancelled(cancel)
+
         df, raw_distribution = get_reviews(
             asin,
             max_reviews=max_reviews,
@@ -297,15 +333,24 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
         if df.empty:
             raise HTTPException(status_code=404, detail="No reviews found.")
 
-        nlp_result  = run_nlp_pipeline(df, raw_distribution=raw_distribution)
+        nlp_result  = run_nlp_pipeline(df, raw_distribution=raw_distribution,
+                                       cancel=cancel)
         df_enriched = nlp_result["df_enriched"]
         features    = nlp_result["features"]
         summary     = nlp_result["summary"]
 
-        # Save for future use
-        df_enriched.to_csv(nlp_csv, index=False)
-        with open(feat_json, "w") as f:
-            json.dump({"features": features, "summary": summary}, f)
+        # Save for future use. Atomic so an interrupted run leaves the previous
+        # state intact rather than a corrupt file that `os.path.exists` would
+        # happily serve on the next request.
+        def _write_features(tmp: str) -> None:
+            # Explicit `with` rather than an inline open(): the file must be
+            # flushed and closed *before* os.replace promotes it, and relying
+            # on refcounting to do that is too subtle to leave implicit.
+            with open(tmp, "w") as f:
+                json.dump({"features": features, "summary": summary}, f)
+
+        _atomic_write(nlp_csv, lambda tmp: df_enriched.to_csv(tmp, index=False))
+        _atomic_write(feat_json, _write_features)
 
     # Pre-computed caches written before `top_topics` carried an `id` store
     # `"id": null` on every entry; recover it from the label so the API doesn't
@@ -314,6 +359,7 @@ def run_full_pipeline(asin: str, max_reviews: int = 250) -> dict:
     summary = backfill_topic_ids(summary)
 
     # ── Step 2: Fusion ──
+    check_cancelled(cancel)
     from src.fusion import run_fusion_pipeline
     risk = run_fusion_pipeline(features)
 
@@ -360,14 +406,35 @@ def get_supported_asins():
     }
 
 
+# How often the watcher below asks whether the client is still there. The
+# pipeline checks its token once per review, so polling much faster than a
+# review takes would just burn event-loop wakeups for no extra responsiveness.
+_DISCONNECT_POLL_SECONDS = 0.5
+
+
 @app.post("/analyze")
-def analyze_product(request: AnalyzeRequest):
+async def analyze_product(request: AnalyzeRequest, http_request: Request):
     """
     Main endpoint — runs full pipeline for a product URL or ASIN.
 
     Returns complete analysis: sentiment, topics, risk score, features.
     First call takes 3-5 minutes (NLP pipeline).
     Subsequent calls return cached results instantly.
+
+    Cancellation: the frontend aborts this request when the user switches
+    products, and we stop the pipeline rather than let an abandoned analysis
+    run to completion. Getting that to work needs all three pieces below —
+    see src/cancellation.py for why the obvious one-liners do not work.
+
+      1. `async def`, so we have an event loop free to notice the disconnect
+         while the pipeline runs.
+      2. `asyncio.to_thread`, so the blocking pipeline does not starve that
+         event loop. (FastAPI already did this implicitly for the old sync
+         `def` handler; doing it explicitly is what frees us to run the
+         watcher alongside.)
+      3. A polled `is_disconnected()` watcher driving a CancelToken, because
+         Starlette does not raise CancelledError into a handler on client
+         disconnect, and a thread cannot be killed even if it did.
     """
     from src.ingest import extract_asin
     if not request.asin and not request.url_or_asin:
@@ -377,8 +444,35 @@ def analyze_product(request: AnalyzeRequest):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    result = run_full_pipeline(asin, request.max_reviews)
-    return result
+    cancel = CancelToken()
+    work = asyncio.create_task(
+        asyncio.to_thread(run_full_pipeline, asin, request.max_reviews, cancel)
+    )
+
+    async def watch_for_disconnect() -> None:
+        while not work.done():
+            if await http_request.is_disconnected():
+                # flush=True: this is the only record that a cancellation
+                # happened, and stdout is block-buffered when the server's
+                # output is piped to a log collector — without it the line can
+                # sit unwritten until the buffer fills, or vanish on restart.
+                print(f"[analyze] client disconnected — cancelling {asin}", flush=True)
+                cancel.cancel()
+                return
+            await asyncio.sleep(_DISCONNECT_POLL_SECONDS)
+
+    watcher = asyncio.create_task(watch_for_disconnect())
+    try:
+        return await work
+    except AnalysisCancelled:
+        # Expected when the user switched products. Nothing was written and
+        # nothing was cached; the client is gone, so this status is really
+        # just for the access log. 499 is nginx's "client closed request".
+        raise HTTPException(status_code=499, detail="Analysis cancelled by client")
+    finally:
+        # Always retire the watcher — on the success path it is still sitting
+        # in its poll loop and would otherwise leak until the next tick.
+        watcher.cancel()
 
 
 @app.post("/chat")
