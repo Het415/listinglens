@@ -1471,7 +1471,7 @@ record can cite a shard set by hash.
 and CORS that admits the real frontend plus Vercel previews. Nothing is deployed
 yet; this is the config, not the act.
 
-vislens is now at **243 tests** (from 223).
+vislens is now at **245 tests** (from 223).
 
 ### ⚠️ Findings that matter more than the code
 
@@ -1518,8 +1518,15 @@ hatch packages `src/vislens` while the thresholds live at the repo root. Both
 modules resolve them with `Path(__file__).resolve().parents[3]`, which is the repo
 root from a checkout and the interpreter's `lib/python3.11` from site-packages.
 Verified both ways: importing the app succeeds from a non-editable install,
-`load_rules()` then raises `FileNotFoundError`. **`render.yaml` must keep `-e`** —
-the reasoning is written at the line so nobody tidies it away.
+`load_rules()` then raises `FileNotFoundError`.
+
+~~**`render.yaml` must keep `-e`** — the reasoning is written at the line so nobody
+tidies it away.~~ **Superseded later the same day.** Both JSONs now ship as package
+data inside `vislens.rules` and are read through `importlib.resources`, which
+resolves identically from a checkout and from site-packages. The wheel went 17 → 19
+entries, `render.yaml` installs plainly, and a new CI step installs non-editable and
+loads both files from a temp directory — run from the repo root it would prove
+nothing, because a lookup that had fallen back to the checkout would still pass.
 
 **5. Vercel is the wrong host for the audit service**, checked against its docs
 rather than remembered: a **4.5 MB request body cap** against 12 files × 8 MB, a
@@ -1556,7 +1563,7 @@ putting the same pixels in two splits.
 
 ```bash
 # vislens
-cd ~/github/vislens && .venv/bin/pytest -q            # 243 tests, ~20s
+cd ~/github/vislens && .venv/bin/pytest -q            # 245 tests, ~20s
 uv venv --python 3.11 && uv pip install -e ".[dev,data]"   # note: dev,data
 
 python -m scripts.build_catalog                       # full catalog rebuild
@@ -1578,8 +1585,12 @@ python -m scripts.pack_shards --roles pairs            # training set only, 0.9 
    the image tower from CLIP's visual encoder, freeze the text tower and precompute
    its embeddings, mask false negatives on `product_id`/`title_hash`, fp16 +
    `GradScaler` on `sm_75`, `logit_scale` clamped to `log(100)`, loss in fp32.
-4. **Ship the rule JSONs as package data** behind `importlib.resources`, so
-   `pip install .` works and finding #4 stops being a comment in a yaml file.
+4. ~~**Ship the rule JSONs as package data**~~ — **done**, same day. They live at
+   `src/vislens/rules/{rules_v1.json,thresholds_v1.json}`, `render.yaml` no longer
+   pins an editable install, and `.gitignore` no longer needs its `data/` exception.
+   Moved rather than hatch `force-include`d: force-include maps repo-root files into
+   the wheel only, which fixes `pip install .` and breaks editable installs — the
+   same bug pointing the other way, needing a fallback chain to hide it.
 5. **vislens is not `ruff format` clean repo-wide** — 11 files would be
    reformatted, 15 are clean. CI runs `ruff check` only, so this is latent; but
    `.pre-commit-config.yaml` declares the `ruff-format` hook and the hook is **not
@@ -1640,8 +1651,10 @@ python -m scripts.pack_shards --roles pairs            # training set only, 0.9 
 >   after it.** The split was relabelled by the reproducibility fix.
 > - In vislens, install `.[dev,data]` — the test suite imports duckdb, and the
 >   default set no longer carries it.
-> - In vislens, `render.yaml` must install with `-e`. A non-editable install
->   cannot find the rule thresholds.
+> - In vislens, the rule thresholds are **package data** under
+>   `src/vislens/rules/`, read through `importlib.resources`. Do not move them back
+>   under `data/`; a wheel would not carry them and the service would raise
+>   `FileNotFoundError` on its first request while building and importing green.
 > - Groq's free tier is the binding constraint on ListingLens. vislens has no such
 >   constraint — its whole suite is deterministic, which is why it runs in CI.
 > - Run `scripts/predemo_check.sh` before any demo.
