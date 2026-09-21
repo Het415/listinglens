@@ -352,6 +352,12 @@ def run_full_pipeline(asin: str, max_reviews: int = 250,
         _atomic_write(nlp_csv, lambda tmp: df_enriched.to_csv(tmp, index=False))
         _atomic_write(feat_json, _write_features)
 
+    # Pre-computed caches written before `top_topics` carried an `id` store
+    # `"id": null` on every entry; recover it from the label so the API doesn't
+    # hand clients ten topics that share one identity.
+    from src.nlp_pipeline import backfill_topic_ids
+    summary = backfill_topic_ids(summary)
+
     # ── Step 2: Fusion ──
     check_cancelled(cancel)
     from src.fusion import run_fusion_pipeline

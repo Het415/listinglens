@@ -60,6 +60,25 @@ def test_analyze_known_asin_returns_cached_result(client, any_supported_asin):
     assert "summary" in body
 
 
+def test_top_topics_have_unique_ids(client, any_supported_asin):
+    """Every summary topic carries a distinct id.
+
+    Pre-computed caches predate the `id` field and store `"id": null` on all
+    ten entries. Clients keying off a single missing-id fallback then treated
+    every topic as the same one (the Topic Deep Dive cards all expanded at
+    once), so the API must hand back real, distinct ids.
+    """
+    res = client.post("/analyze", json={"asin": any_supported_asin})
+    assert res.status_code == 200
+
+    topics = res.json()["summary"]["top_topics"]
+    assert topics, "expected at least one topic"
+
+    ids = [t.get("id") for t in topics]
+    assert all(isinstance(i, int) for i in ids), f"non-integer topic ids: {ids}"
+    assert len(set(ids)) == len(ids), f"duplicate topic ids: {ids}"
+
+
 def test_get_cached_analysis_404_when_uncached(client):
     """GET /analyze/{asin} only returns results already in app_state cache.
 

@@ -322,7 +322,7 @@ function ReviewsPageInner() {
   // Section 3 topic cards
   // -----------------------
   const maxTopicCount = useMemo(() => Math.max(...topics.map((t) => t.count ?? 0), 0), [topics])
-  const [expandedTopicId, setExpandedTopicId] = useState<number | null>(null)
+  const [expandedTopicIndex, setExpandedTopicIndex] = useState<number | null>(null)
 
   // -----------------------
   // Section 5 table controls (filter/sort)
@@ -494,9 +494,11 @@ function ReviewsPageInner() {
           <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
             <h2 className="mb-4 text-sm font-medium text-foreground">Topic Deep Dive</h2>
             <div className="space-y-3">
-              {topics.map((t) => {
-                const topicId = t.id ?? -1
-                const isOpen = expandedTopicId === topicId
+              {topics.map((t, idx) => {
+                // Keyed by position, not by `t.id`: older pre-computed summaries
+                // ship `id: null` for every topic, and a shared fallback would
+                // expand every card at once.
+                const isOpen = expandedTopicIndex === idx
                 const sentiment = sentimentIndicatorEstimate({
                   topicCount: t.count,
                   maxCount: maxTopicCount,
@@ -504,10 +506,10 @@ function ReviewsPageInner() {
                   pctNegative,
                 })
                 return (
-                  <div key={`${topicId}-${t.label}`} className="rounded-xl border border-border p-4">
+                  <div key={`${idx}-${t.label}`} className="rounded-xl border border-border p-4">
                     <button
                       type="button"
-                      onClick={() => setExpandedTopicId(isOpen ? null : topicId)}
+                      onClick={() => setExpandedTopicIndex(isOpen ? null : idx)}
                       className="w-full text-left flex items-start justify-between gap-4"
                     >
                       <div>
