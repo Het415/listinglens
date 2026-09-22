@@ -1576,10 +1576,9 @@ python -m scripts.pack_shards --roles pairs            # training set only, 0.9 
 1. **Kaggle account + phone verification** — unchanged, and still the critical
    path. Gates GPU access *and* notebook internet. Select `NvidiaTeslaT4`
    explicitly; the P100 no longer runs Kaggle's own torch.
-2. **Deploy the audit service.** Create the Render service from the blueprint, set
-   `VISLENS_URL` on ListingLens' Render service, set `NEXT_PUBLIC_VISLENS_URL` on
-   its Vercel project — and **redeploy the frontend**, because `NEXT_PUBLIC_*` is
-   inlined at build time.
+2. ~~**Deploy the audit service.**~~ — **done 2026-09-21/22.** Live at
+   `https://vislens-audit.onrender.com`; both env vars set and the frontend
+   rebuilt. See the 2026-09-22 section.
 3. **Encoder training (B2/B3)** — the shards it needs now exist, so this is
    blocked on Kaggle alone. The recommendation against the spec stands: initialize
    the image tower from CLIP's visual encoder, freeze the text tower and precompute
@@ -1606,57 +1605,265 @@ python -m scripts.pack_shards --roles pairs            # training set only, 0.9 
 8. Unchanged from before: the cron-job.org warmup job (~2 min, `docs/WARMUP.md`),
    and the Executor degrade path is still unexercised because nothing has failed.
 
+## Session 2026-09-22 — the deploy, and the frontend it exposed
+
+Everything is pushed and CI-green. **vislens is unchanged** since `62508a1`; all
+of today's code is ListingLens frontend.
+
+| | |
+|---|---|
+| `abd01b33` | `feat(images): a page for the image audit, and four ASIN-state bugs it uncovered` |
+| `0a09f24c` | `fix(assistant): carry the audit id into the handed-off query, and make the audit button readable` |
+
+Plus three from parallel sessions: `55374fef` (reviews view-state reset),
+`ff18ddd0` (gate the localhost fallback on `NODE_ENV`), `a5ee20c6` (no_tool eval
+baseline).
+
+### ⚠️ Read this before touching git
+
+**`main` is checked out in a worktree** (`.claude/worktrees/admiring-carson-5176b7`),
+so git refuses to move the branch pointer from the main checkout. Today's work
+was landed with:
+
+```bash
+git push origin wip/image-audit:main
+```
+
+So `origin/main` is correct and current, local `main` is behind, and the main
+checkout is sitting on `wip/image-audit`. Once that worktree is released:
+
+```bash
+git checkout main && git pull --ff-only && git branch -d wip/image-audit
+```
+
+Three sessions committed into one working tree today. One of them committed
+another's uncommitted work under a message that described the bug fixes as
+"supporting changes … wire the route into navigation", which lost the entire
+diagnosis; it was rewritten before landing. **Stage by explicit path, never
+`git add -A`, while another session is running.**
+
+### The audit service is deployed
+
+| | |
+|---|---|
+| service | `vislens-audit` / `srv-daopfi6gekts73ehf2cg`, free, Oregon |
+| url | `https://vislens-audit.onrender.com` |
+| built from | `62508a1`, 63s, health check passed on the first try |
+
+That it reached `live` at all is the proof the package-data fix worked: the
+health check cannot answer unless both rule JSONs load from a plain
+`pip install .`.
+
+**Measured, warm, on the free instance:** ~3.5s per image (vs ~0.24s locally,
+so ~15x slower on shared CPU) — but `GET /audit/{audit_id}` is **0.2-0.34s**,
+and that is the agent's primary path. The 8s tool timeout is therefore fine:
+the browser uploads (no timeout) and the agent only ever does a cheap lookup.
+Only the ASIN-only path re-audits from scratch, and it was already the weakest.
+
+`listinglens-api` went from **4 env vars to 13**. Eight were declared in
+`render.yaml` and had never been applied — including `PYTHONUNBUFFERED=1`, whose
+absence is the logging gap this project already lost two investigation windows
+to. The four model pins were benign (identical to `DEFAULT_MODELS`), and
+`scripts.doctor` was run against Groq's live catalog before writing them.
+
+### Facts about the hosting APIs, learned the hard way
+
+- **Render's API has no blueprint endpoints.** `POST /v1/services` builds a
+  standalone service with the config inline, so an API-created service is NOT
+  linked to `render.yaml`. The blueprint flow is dashboard-only. That is why
+  the service was created by hand.
+- **`PUT /v1/services/{id}/env-vars` REPLACES the entire list.** Use
+  `PUT /v1/services/{id}/env-vars/{key}` for one variable — and note the
+  published docs index says that single-key endpoint is `POST`, which returns
+  405. It is PUT.
+- **A Render env-var change does NOT trigger a deploy.** Verified: the newest
+  deploy stayed at the pre-change commit. Variables are staged until something
+  else redeploys, so batch them and trigger once.
+- **Vercel is the wrong host for the audit service**, checked against its docs:
+  a 4.5 MB request-body cap against 12 files x 8 MB, a Python runtime offering
+  3.12/3.13/3.14 but **not 3.11**, and no state between invocations for the
+  bounded in-memory audit store.
+- **`NEXT_PUBLIC_*` cannot be a Vercel "Secret".** Vercel rejects it, correctly
+  — the value is inlined into the browser bundle. It must be type **Config**.
+- **The Vercel CLI token on this machine expired 2026-03-28** and 403s. There
+  is no `VERCEL_TOKEN` in `.env`, so Vercel work is dashboard-only unless one
+  is added.
+
+### Four ASIN-state bugs, none cosmetic
+
+Reported symptom: pick a product, visit the AI Assistant, return to Dashboard,
+and a different product is on screen.
+
+1. **`sidebar.tsx` excepted `/dashboard` from carrying `?asin=`.** Worse than a
+   wrong page: the URL is the only carrier of product identity, so once the
+   param was gone every nav link rendered bare and the selection was
+   unrecoverable for the session. **One omitted query param was an absorbing
+   state.**
+2. **`app/dashboard/page.tsx` never reset `error`.** Render order is
+   `if (loading)` then `if (error)`, so after one product failed, switching to
+   another fetched fine, stored its data, and still painted the old error box
+   forever. The only loader that forgot. **This is the part of "it breaks when
+   I click too quickly" that was real** — the Suspense-race theory was
+   disproven against the build output (0 `<a>` tags in the fallback).
+3. **`top-bar.tsx` built "Ask AI" from the demo-RESOLVED asin**, writing
+   `DEMO_ASIN` into the URL as an explicit claim, after which no `isDemo` check
+   can fire.
+4. **`demo_banner_dismissed` was one global flag.** It is the only UI that
+   announces the fallback, so one dismissal made a swapped product look like
+   correct data.
+
+Architectural root cause, **not fixed**: a single `?asin=` query param is the
+only store of product identity, with ~nine independent `|| DEMO_ASIN` fallbacks
+free to invent a product when it goes missing. The symptoms are fixed; a single
+resolution point is the durable answer.
+
+### The image audit got its own page
+
+`/dashboard/images`, sidebar entry at position 2, and a link on the landing
+page. The clicks were never the real cost: the audit needs **no ASIN and no
+backend**, yet sat behind "Analyze Product", which accepts twelve hardcoded
+ASINs and runs a multi-minute pipeline. It is the only feature that works on a
+seller's own product. 4 clicks/6-to-verdict → **1 and 3**.
+
+Also fixed in passing: the sidebar's `isActive` used a hardcoded four-path
+blocklist that double-highlights the moment a fifth route exists, and
+`MobileNav`'s `slice(0, 5)` hid the new route on phones — where the seller is
+holding the photos. (AI Assistant is still outside that slice; it predates this.)
+
+### ⚠️ The card contract, proven against live data
+
+The result card now shows a per-image strip (thumbnail, `W x H`, format, size,
+MAIN badge) and the service's own reason text verbatim. Dimensions come from
+the service, not `naturalWidth`: they are what the verdict was computed from,
+and a browser disagrees on rotated JPEGs.
+
+**The detail record's statuses are RAW.** `audit_image` downgrades a
+main-image-only check on a secondary photo by changing `tier` and leaving
+`status` as `"fail"`; neutralisation to `"measured"` happens only in
+`build_audit_payload`. Confirmed live: a compliant 1600x1600 lifestyle shot
+appears in the detail record as `white_background: fail` while the compact
+payload correctly reports no finding for it.
+
+**So `detail.images[].checks` is a lookup table, never a source of findings.**
+Verdicts stay derived from `audit.groups[].f`. Enumerating the detail array
+would stamp red FAILs on compliant photos — the 2026-09-20 finding #3 all over
+again, against a human reader instead of an LLM.
+
+### Two bugs found by using the deployed page, not reading it
+
+**The Copilot hand-off dropped the audit.** "Ask the Copilot what to do about
+this" produced `image_audit: {"status": "blocked", "reason": "Amazon served a
+bot challenge"}` — the agent had gone off to scrape the product page, having
+never seen the image just uploaded. `submit()` closes over `auditId` and the
+effect lifting `?audit=` into state had not flushed in the same commit. **This
+is the exact hazard the file already documents for `mode`** (it is why
+`overrideMode` exists) and the lesson was not applied to the new parameter.
+Fixed with an explicit `overrideAuditId` read straight off the URL; verified by
+intercepting the request body, which now carries `audit_id`.
+
+**The audit button was unreadable, and worst while working.** `text-cyan-200`
+on `bg-cyan-500/15` — dark-theme values applied unconditionally, so pale cyan
+on pale cyan in light mode — plus `disabled:opacity-50` applying while busy,
+which dimmed "Auditing…", the one state that most needs reading. Now
+`bg-accent`/`text-accent-foreground` (the pair that flips with the theme;
+hardcoded white on the dark theme's brighter teal would have been worse), 14px
+semibold, dimming withheld while busy.
+
+**Known and not fixed:** white on `#0d9f8e` is ~3.3:1, below the 4.5:1 AA
+threshold. It matches the existing "Ask AI" button, so the palette is the
+constraint — darkening `--accent-teal` for the light theme is an app-wide
+design-system change.
+
+### Unconfirmed
+
+A copilot deep-link rendered a correct copilot run under a **"Quick Q&A"**
+toggle and footer in production. Not reproducible locally. The cleanup now
+strips only `q` and keeps `mode`, which should make the toggle survive a
+remount — but that is a hardening, **not a confirmed fix**. If it recurs,
+chase it properly rather than assuming this closed it.
+
+### Verification notes
+
+- **`npm run build` does not fail on type errors.** Run `tsc --noEmit`
+  separately; it is the gate. In the main checkout `npx tsc` resolves to the
+  local binary and is fine; in a **worktree** there is no `node_modules`, so
+  use `./node_modules/.bin/tsc` from the main checkout.
+- **There is no frontend test suite and no eslint config.** `eslint .` fails
+  with "couldn't find an eslint.config.*". The build plus tsc is all there is.
+- Browser verification of an upload flow is possible without a file-picker
+  tool: build a `File` in-page, put it in a `DataTransfer`, assign
+  `input.files`, dispatch `change`. Monkey-patching `window.fetch` to delay the
+  POST is how the transient "Auditing…" state was inspected.
+
+### Not done
+
+1. **Kaggle account + phone verification** — unchanged, still the critical
+   path, still human-only. Select `NvidiaTeslaT4` explicitly.
+2. **Encoder training (B2/B3)** — blocked on Kaggle alone; the shards exist.
+3. **Two spawned tasks in flight**: reviews view-state reset (landed as
+   `55374fef`) and aborting in-flight fetches on product change (no
+   `AbortController` anywhere, so abandoned POSTs start full analysis pipelines
+   for products the user has left).
+4. **Single resolution point for the selected product**, replacing ~nine
+   `|| DEMO_ASIN` fallbacks.
+5. **Darken `--accent-teal`** for the light theme to clear WCAG AA.
+6. **vislens is not `ruff format` clean repo-wide** (11 files); the
+   `ruff-format` pre-commit hook is declared but not installed locally.
+7. **CI action versions** — `checkout@v4`/`setup-python@v5` forced onto Node 24;
+   `ubuntu-latest` moves to Ubuntu 26 on 2026-10-19.
+8. **`visual_retrieval_build_plan.md` is still committed and public**, still
+   reading as a portfolio document. Carried forward undecided since 2026-09-20.
+9. Unchanged: the cron-job.org warmup job (`docs/WARMUP.md`), and the Executor
+   degrade path is still unexercised.
+
 ## How to start the next chat
 
-> Read `HANDOFF.md` in the repo root, **starting at "Session 2026-09-21"**. Last
-> session packed the ABO images into WebDataset shards in
-> [vislens](https://github.com/Het415/vislens) and, in doing so, found two bugs in
-> the train/val/test split that every existing check had passed. Three commits,
-> pushed, CI green.
+> Read `HANDOFF.md` in the repo root, **starting at "Session 2026-09-22"**. The
+> image audit is now deployed end to end — `vislens-audit.onrender.com`, wired
+> into both the agent and a dedicated `/dashboard/images` page — and the last
+> session was mostly about the bugs that only appeared once it was reachable.
 >
-> **Carry forward two lessons, not one.** From 2026-09-20: a prompt instruction is
-> weaker than a data structure — what stopped the agent misreporting advisory
-> measurements was deleting them from its context, not instructing it better. From
-> 2026-09-21: **an invariant that reads the wrong table proves nothing.** Two leak
-> checks read `product_images` and reported zero while five images sat in two
-> splits in `catalog`, and the split assignment was non-deterministic for months
-> without a single check noticing, because components stayed intact and only their
-> labels moved. Assert on the artifact you are about to ship, not on the table it
-> came from.
+> **Check the git state first.** `main` may still be checked out in a worktree
+> under `.claude/worktrees/`, in which case the main checkout is on
+> `wip/image-audit` and local `main` is behind `origin/main`. `origin/main` is
+> the truth. Several sessions have been committing into one working tree, so
+> **stage by explicit path, never `git add -A`.**
 >
-> **One thing is waiting on a human and is still the critical path:** create a
-> Kaggle account and complete phone verification. It gates GPU access and notebook
-> internet, and nothing in the training half can start without it. Select
-> `NvidiaTeslaT4` explicitly — the P100 no longer runs Kaggle's own PyTorch.
+> **Three lessons compound, and they are the same lesson:**
+> - 2026-09-20 — a prompt instruction is weaker than a data structure. What
+>   stopped the agent misreporting advisory measurements was deleting them from
+>   its context, not instructing it better.
+> - 2026-09-21 — an invariant that reads the wrong table proves nothing. Two
+>   leak checks read `product_images` and reported zero while five images sat in
+>   two splits in `catalog`.
+> - 2026-09-22 — a hazard documented three lines away will still be walked into.
+>   `overrideMode` exists because setState has not flushed inside the submit
+>   closure; the `audit` parameter was added without applying it, and the agent
+>   silently scraped the product page instead of reading the seller's upload.
 >
-> **The shards now exist**, so encoder training (B2/B3) is blocked on Kaggle alone
-> rather than on data prep. `data/shards/` holds 42 shards, 3.86 GB, reproducible
-> and manifest-checksummed; `pairs-train-*.tar` is the contrastive set.
+> In all three, the structure was right and the reasoning about it was wrong.
+> Assert on the artifact you are about to ship.
 >
-> **The other live item is a deploy, and it is mostly dashboard work.** The audit
-> service has a `render.yaml` and CORS for the real frontend but is not deployed,
-> so the upload card on `listinglens.hetprajapati.me` errors for every visitor
-> today. Create the Render service, set `VISLENS_URL` and
-> `NEXT_PUBLIC_VISLENS_URL`, then redeploy the frontend — the Vercel variable is
-> inlined at build time, so setting it is not enough.
+> **Still waiting on a human, still the critical path:** the Kaggle account and
+> phone verification. It gates GPU access and notebook internet, and the whole
+> training half — the shards are packed, reproducible and idle.
 >
-> Standing rules, all still true:
+> Standing rules:
 > - Before anything LLM-related, run `python -m scripts.doctor`.
-> - **Groq hosts no vision model.** Verified 2026-09-20: 13 models, none
->   multimodal. For image work use a local pinned ONNX model.
+> - **Groq hosts no vision model.** For image work use a local pinned ONNX model.
 > - Before quoting an eval number, confirm `.env` has `ANTHROPIC_API_KEY`.
-> - **Budget one full eval run per day.** 200k tokens per model per day, rolling.
+> - **Budget one full eval run per day.** 200k tokens per model per day.
 > - **Do not trust a single-run eval delta smaller than ~11 rows (~37%).**
-> - **A split-dependent number from before 2026-09-21 is not comparable to one
->   after it.** The split was relabelled by the reproducibility fix.
-> - In vislens, install `.[dev,data]` — the test suite imports duckdb, and the
->   default set no longer carries it.
+> - **A split-dependent number from before 2026-09-21 is not comparable** to one
+>   after it.
+> - **`npm run build` does not fail on type errors** — run `tsc --noEmit`
+>   separately, and from the main checkout, not a worktree.
+> - In vislens, install `.[dev,data]`; the test suite imports duckdb.
 > - In vislens, the rule thresholds are **package data** under
->   `src/vislens/rules/`, read through `importlib.resources`. Do not move them back
->   under `data/`; a wheel would not carry them and the service would raise
->   `FileNotFoundError` on its first request while building and importing green.
-> - Groq's free tier is the binding constraint on ListingLens. vislens has no such
->   constraint — its whole suite is deterministic, which is why it runs in CI.
+>   `src/vislens/rules/`. Do not move them back under `data/`.
+> - **A Render env-var change does not redeploy.** Batch, then trigger once.
+> - Vercel env work is dashboard-only — the stored CLI token is expired and
+>   there is no `VERCEL_TOKEN`.
 > - Run `scripts/predemo_check.sh` before any demo.
 > - To check what is deployed, ask the Render API, not `/health`.
 
