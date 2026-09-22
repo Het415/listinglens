@@ -235,15 +235,26 @@ function AssistantPageContent() {
   }, [searchParams])
 
   const submit = useCallback(
-    (query: string, overrideMode?: Mode) => {
+    (query: string, overrideMode?: Mode, overrideAuditId?: string | null) => {
       const trimmed = query.trim()
       if (!trimmed || loading) return
       setInput('')
       // Pass the mode explicitly: deep-link auto-submit sets mode and submits
       // back-to-back, and setState hasn't flushed yet inside this closure.
-      // `auditId` rides along so the agent's image_audit tool can reference the
-      // audit the browser already ran, including which image was marked main.
-      submitAssistant(asin, trimmed, overrideMode ?? mode, API_URL, auditId)
+      //
+      // `overrideAuditId` exists for exactly the same reason, and learning it
+      // twice cost a real bug: arriving from /dashboard/images with ?audit=,
+      // the effect that lifts the id into state had not flushed by the time
+      // this closure ran, so the agent was handed `null`, fell back to the
+      // ASIN path, and came back "blocked: Amazon served a bot challenge" —
+      // having never looked at the images the seller had just uploaded.
+      submitAssistant(
+        asin,
+        trimmed,
+        overrideMode ?? mode,
+        API_URL,
+        overrideAuditId !== undefined ? overrideAuditId : auditId,
+      )
     },
     [asin, mode, loading, auditId],
   )
@@ -260,11 +271,22 @@ function AssistantPageContent() {
       setMode(prefillMode)
     }
     lastAutoSubmittedRef.current = prefillQuery
-    submit(prefillQuery, prefillMode ?? mode)
+    // Read the audit id straight off the URL rather than from state, which has
+    // not flushed yet — see the note in `submit`.
+    submit(prefillQuery, prefillMode ?? mode, searchParams.get('audit') ?? auditId)
 
+    // Only `q` is stripped. It is the replay hazard — leaving it would re-fire
+    // the question on a back-button press.
+    //
+    // `mode` is deliberately KEPT. It is a view preference, not an action, and
+    // `mode` state initialises from it (`useState(prefillMode ?? 'quick')`), so
+    // deleting it means any later remount silently snaps the toggle back to
+    // Quick Q&A — which is what a copilot deep-link looked like in production:
+    // a copilot run, correctly executed, displayed under a Quick Q&A toggle and
+    // a "Quick Q&A — grounded in…" footer. The run was right and the UI lied
+    // about it. Keeping the param makes the two agree through a remount.
     const params = new URLSearchParams(searchParams.toString())
     params.delete('q')
-    params.delete('mode')
     const cleaned = params.toString()
     router.replace(cleaned ? `${pathname}?${cleaned}` : pathname, { scroll: false })
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -268,11 +268,28 @@ export function ImageUpload({
             ))}
           </div>
 
+          {/* A solid fill, matching the "Ask AI" button, rather than a tinted
+              outline. The previous styling was `text-cyan-200` on
+              `bg-cyan-500/15` — both dark-theme values applied unconditionally,
+              so in light mode it was pale cyan on pale cyan and effectively
+              unreadable.
+              `bg-accent`/`text-accent-foreground` rather than `bg-accent-teal`
+              + `text-white`: the foreground token flips with the theme
+              (#ffffff light, #0a0a0f dark), whereas hardcoded white on the
+              dark theme's brighter teal (#2dd4bf) would have been WORSE than
+              what it replaced.
+              `disabled:opacity-50` is also deliberately NOT applied while busy.
+              The button is disabled during the audit, so the blanket rule
+              dimmed the one state the user most needs to read: "Auditing…" was
+              the faintest thing on the screen. Dimming is for an affordance
+              that is unavailable, not one that is working. */}
           <button
             type="button"
             onClick={run}
             disabled={busy || disabled}
-            className="mt-3 flex items-center gap-2 rounded-lg bg-cyan-500/15 border border-cyan-500/30 px-3 py-1.5 text-xs font-medium text-cyan-200 transition-colors hover:bg-cyan-500/25 disabled:opacity-50"
+            className={`mt-3 flex items-center gap-2 rounded-lg bg-accent px-3.5 py-2 text-sm font-semibold text-accent-foreground transition-colors hover:opacity-90 ${
+              busy ? 'cursor-wait' : 'disabled:opacity-50'
+            }`}
           >
             {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null}
             {busy

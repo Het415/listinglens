@@ -193,7 +193,7 @@ export function ImageAuditCard({
             <div
               key={i}
               className={`flex items-center gap-2.5 rounded-lg border bg-background-secondary px-2.5 py-2 ${
-                i === audit.main_index ? 'border-cyan-400/50' : 'border-border'
+                i === audit.main_index ? 'border-accent-teal/50' : 'border-border'
               }`}
             >
               {img.url ? (
@@ -210,7 +210,7 @@ export function ImageAuditCard({
                 <div className="flex items-center gap-1.5">
                   <span className="text-xs text-text-primary">image {i + 1}</span>
                   {i === audit.main_index && (
-                    <span className="text-[9px] font-semibold px-1 py-px rounded bg-cyan-500/20 text-cyan-300 border border-cyan-400/30">
+                    <span className="text-[9px] font-semibold px-1 py-px rounded bg-accent-teal/10 text-accent-teal border border-accent-teal/30">
                       MAIN
                     </span>
                   )}
@@ -254,7 +254,14 @@ export function ImageAuditCard({
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-text-primary">
                     {entry?.check ?? code}
-                    {shown && <span className="ml-2 font-mono text-xs text-cyan-300">{shown}</span>}
+                    {/* The measured value is the number the reader came for, so
+                        it uses the theme-aware accent rather than a hardcoded
+                        dark-theme cyan that washes out on a light background. */}
+                    {shown && (
+                      <span className="ml-2 font-mono text-xs font-semibold text-accent-teal">
+                        {shown}
+                      </span>
+                    )}
                   </div>
                   {/* The rule as the service stated it — never reworded here. */}
                   {entry?.rule && (
@@ -304,7 +311,9 @@ export function ImageAuditCard({
                 <span className="text-sm text-text-primary">
                   {entry?.check ?? code}
                   {value !== undefined && (
-                    <span className="ml-2 font-mono text-xs text-cyan-300">{value}</span>
+                    <span className="ml-2 font-mono text-xs font-semibold text-accent-teal">
+                      {value}
+                    </span>
                   )}
                 </span>
               </div>
