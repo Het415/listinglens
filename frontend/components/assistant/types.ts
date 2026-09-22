@@ -84,6 +84,67 @@ export type ImageAuditResult = {
   audit: ImageAudit | null
 }
 
+/** One check as the service's DETAIL record carries it (`GET /audit/{id}`).
+ *
+ * ⚠ `status` here is RAW, and that is the one thing to know about this type.
+ * When a main-image-only rule is evaluated against a secondary image, the
+ * service changes `tier` to "advisory" and leaves `status` as "fail" — the
+ * neutralisation to "measured" happens only when the compact payload is built.
+ * So this array legitimately contains `{check_id: "white_background", status:
+ * "fail", tier: "advisory"}` for a perfectly compliant lifestyle photo.
+ *
+ * NEVER render this array as findings. It is a lookup table: reason text for a
+ * code that the compact payload has ALREADY declared a verdict, plus per-image
+ * file facts. Enumerating it would put red FAILs on compliant images, which is
+ * precisely the failure the compact payload exists to prevent — see the
+ * docstring on ImageAuditCard.
+ */
+export type AuditCheckDetail = {
+  check_id: string
+  status: 'pass' | 'warn' | 'fail' | 'skipped'
+  tier: 'rule_exact' | 'measured' | 'advisory' | 'model' | 'deferred'
+  value: number | null
+  rule: string
+  reason: string
+  detail: Record<string, unknown>
+}
+
+/** Per-image facts from the detail record. `orig_width`/`orig_height` are the
+ * dimensions the audit actually measured — original, after EXIF rotation — so
+ * they are the numbers a verdict like "92px" was computed from. A browser's
+ * `naturalWidth` can disagree on a rotated JPEG, which is why these win. */
+export type AuditImageDetail = {
+  source: string
+  is_main: boolean | null
+  sha256: string
+  orig_width: number
+  orig_height: number
+  format: string
+  n_bytes: number
+  downscale: number
+  checks: AuditCheckDetail[]
+  hashes: Record<string, number | string>
+}
+
+export type AuditDetail = {
+  payload: ImageAudit
+  images: AuditImageDetail[]
+  duplicates: Record<string, unknown>
+  group_mismatches: unknown[]
+}
+
+/** What the browser knows about a file it uploaded, and the service cannot:
+ * the pixels. The service stores no image bytes, so a thumbnail can only ever
+ * come from a local blob URL. */
+export type PickedImageMeta = {
+  name: string
+  size: number
+  type: string
+  url: string
+  width: number | null
+  height: number | null
+}
+
 export type TraceStep =
   | { kind: 'node_started'; node: string; label: string; ts: number }
   | { kind: 'plan_ready'; query_type: string; plan: string[]; ts: number }

@@ -44,6 +44,13 @@ function DashboardPageContent() {
     const loadAnalysis = async () => {
       setLoading(true)
       setData(null)
+      // Reset the error too, or a failure is permanent for the rest of the
+      // session. Render order is `if (loading)` then `if (error)`, so after one
+      // product fails, switching to another fetches fine, stores its data, and
+      // still paints the previous product's error box over it. Every sibling
+      // page already does this (brief, conversations, reviews, compare); this
+      // was the only loader that forgot.
+      setError(null)
       try {
         // try sessionStorage first — set by landing page
         const cached = sessionStorage.getItem(`analysis_${asin}`)

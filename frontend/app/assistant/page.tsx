@@ -5,7 +5,11 @@ import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
-import type { ImageAudit } from '@/components/assistant/types'
+import type {
+  AuditDetail,
+  ImageAudit,
+  PickedImageMeta,
+} from '@/components/assistant/types'
 import { ImageUpload } from '@/components/assistant/ImageUpload'
 import { ImageAuditCard } from '@/components/assistant/ImageAuditCard'
 import {
@@ -181,11 +185,54 @@ function AssistantPageContent() {
   // store because it is per-session UI state, not part of a run's transcript.
   const [auditId, setAuditId] = useState<string | null>(null)
   const [uploadedAudit, setUploadedAudit] = useState<ImageAudit | null>(null)
+  // The browser's own view of the files (thumbnails, sizes) and the service's
+  // detail record (measured dimensions, reason text). Both feed the card and
+  // neither can produce a finding — see ImageAuditCard's docstring.
+  const [auditImages, setAuditImages] = useState<PickedImageMeta[]>([])
+  const [auditDetail, setAuditDetail] = useState<AuditDetail | null>(null)
 
-  const handleAudited = useCallback((id: string, audit: ImageAudit) => {
-    setAuditId(id)
-    setUploadedAudit(audit)
-  }, [])
+  const handleAudited = useCallback(
+    (id: string, audit: ImageAudit, imgs: PickedImageMeta[], detail: AuditDetail | null) => {
+      setAuditId(id)
+      setUploadedAudit(audit)
+      setAuditImages(imgs)
+      setAuditDetail(detail)
+    },
+    [],
+  )
+
+  // An audit belongs to the product that was on screen when it ran. A query-only
+  // URL change does not remount this route, so without this the card would keep
+  // rendering the previous product's audit under the new product's name — and,
+  // worse, `submit` would ship the stale `auditId` to the backend for a product
+  // those images were never from.
+  useEffect(() => {
+    setAuditId(null)
+    setUploadedAudit(null)
+    setAuditImages([])
+    setAuditDetail(null)
+  }, [asin])
+
+  // Hand-off from /dashboard/images: carry the audit id so the agent's
+  // image_audit tool can read the audit the browser already ran, including
+  // which image the seller marked as the main one. Only the id travels — the
+  // tool re-reads the payload from the service, and putting measured values in
+  // a query string would be both large and wrong. Runs after the reset above,
+  // so arriving with ?asin= and ?audit= together keeps the audit.
+  //
+  // Applied ONCE, via the ref. Keying the effect on `searchParams` alone would
+  // re-apply the URL's id every time the URL changed — and `router.replace`
+  // below rewrites it — so a fresh upload made on this page would be silently
+  // reverted to the id the link arrived with.
+  const appliedAuditRef = useRef(false)
+  useEffect(() => {
+    if (appliedAuditRef.current) return
+    const fromLink = searchParams.get('audit')
+    if (fromLink) {
+      setAuditId(fromLink)
+      appliedAuditRef.current = true
+    }
+  }, [searchParams])
 
   const submit = useCallback(
     (query: string, overrideMode?: Mode) => {
@@ -229,7 +276,7 @@ function AssistantPageContent() {
     <div className="flex flex-col w-full h-full min-h-0 p-4 md:p-6">
       <div className="flex-1 grid grid-cols-1 grid-rows-[auto_1fr] lg:grid-cols-[1fr_360px] lg:grid-rows-1 gap-4 min-h-0">
         <div className="flex flex-col min-h-0">
-          <div className="mb-4">
+          <div className="mb-4 shrink-0">
             <div className="flex items-center justify-between mb-2 gap-2">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Try a question
@@ -267,18 +314,13 @@ function AssistantPageContent() {
             {/* Copilot-only: the image audit is one of its six tools, and the
                 quick Q&A path never calls it. */}
             {mode === 'copilot' && (
-              <div className="mt-3 space-y-3">
+              <div className="mt-3">
                 <ImageUpload onAudited={handleAudited} disabled={loading} />
-                {uploadedAudit && (
-                  <ImageAuditCard
-                    result={{ asin, status: 'ok', reason: '', audit: uploadedAudit }}
-                  />
-                )}
               </div>
             )}
           </div>
 
-          {messages.length === 0 && !loading ? (
+          {messages.length === 0 && !loading && !uploadedAudit ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 min-h-0">
               <Sparkles className="w-8 h-8 text-purple-400/60 mb-3" />
               <p className="text-sm text-muted-foreground max-w-md">
@@ -344,6 +386,24 @@ function AssistantPageContent() {
                 return null
               })}
 
+              {/* Session image context rather than a transcript turn, so it
+                  renders after the messages: always in view, and never
+                  interleaved out of order when an upload happens mid-chat.
+                  Deliberately NOT added to the auto-scroll effect above — that
+                  keys on `messages.length`, and scrolling a tall card to its own
+                  bottom would hide the part the reader needs. */}
+              {uploadedAudit && (
+                <div className="flex justify-start">
+                  <div className="max-w-[95%] w-full">
+                    <ImageAuditCard
+                      result={{ asin, status: 'ok', reason: '', audit: uploadedAudit }}
+                      images={auditImages}
+                      detail={auditDetail}
+                    />
+                  </div>
+                </div>
+              )}
+
               {loading && (
                 <div className="flex justify-start">
                   <div className="bg-card border border-border rounded-xl px-4 py-3">
@@ -368,7 +428,10 @@ function AssistantPageContent() {
             </div>
           )}
 
-          <div className="border-t border-border pt-4 mt-2">
+          {/* shrink-0, or a tall audit card can push the composer past the
+              column's `overflow-hidden` and put the input off-screen. Only the
+              scroll region below is allowed to lose height. */}
+          <div className="border-t border-border pt-4 mt-2 shrink-0">
             <p className="text-xs text-muted-foreground text-center mb-2">
               {mode === 'quick'
                 ? 'Quick Q&A — grounded in '

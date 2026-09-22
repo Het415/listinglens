@@ -6,7 +6,12 @@ import { ArrowRight, Sparkles, X } from 'lucide-react'
 
 import { DEMO_PRODUCT_NAME } from '@/lib/demo-config'
 
-const DISMISS_KEY = 'demo_banner_dismissed'
+// Keyed by product name, not global. A single flag meant dismissing the banner
+// once silenced it for the whole tab — including for a DIFFERENT product later
+// falling back to the demo. This banner is the only UI that announces the
+// fallback, so a stale dismissal is what made a silently swapped product look
+// like correct data.
+const dismissKey = (productName?: string) => `demo_banner_dismissed:${productName ?? 'default'}`
 
 /**
  * Onboarding banner shown at the top of /dashboard and /dashboard/reviews when
@@ -26,19 +31,19 @@ export function DemoModeBanner({ productName }: { productName?: string }) {
 
   useEffect(() => {
     try {
-      setDismissed(sessionStorage.getItem(DISMISS_KEY) === '1')
+      setDismissed(sessionStorage.getItem(dismissKey(productName)) === '1')
     } catch {
       // sessionStorage may throw in private-mode browsers; default to showing.
     }
     setHydrated(true)
-  }, [])
+  }, [productName])
 
   if (!hydrated || dismissed) return null
 
   const handleDismiss = () => {
     setDismissed(true)
     try {
-      sessionStorage.setItem(DISMISS_KEY, '1')
+      sessionStorage.setItem(dismissKey(productName), '1')
     } catch {
       // ignore
     }

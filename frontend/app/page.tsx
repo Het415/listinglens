@@ -1,9 +1,20 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
-import { Check, Cpu, Shield, Eye, MessageSquare, TrendingUp, ArrowRight, Sparkles } from 'lucide-react'
+import {
+  Check,
+  Cpu,
+  Shield,
+  Eye,
+  MessageSquare,
+  TrendingUp,
+  ArrowRight,
+  Sparkles,
+  ImageIcon,
+} from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 
@@ -255,6 +266,25 @@ export default function LandingPage() {
                 <span>No account required</span>
               </div>
             </div>
+
+            {/* The one exit from this page that is not "Analyze Product".
+                That button runs the review pipeline against one of twelve
+                supported ASINs and takes minutes uncached; the image audit
+                needs neither an ASIN nor the pipeline, and it is the only
+                feature here that works on the visitor's own product. Leaving it
+                four clicks away behind a mode toggle meant a first-time seller
+                never found the thing most likely to be useful to them. */}
+            <Link
+              href="/dashboard/images"
+              className="inline-flex items-center gap-2 text-sm text-text-secondary hover:text-text-primary transition-colors group"
+            >
+              <ImageIcon className="w-4 h-4 text-cyan-400" />
+              <span>
+                Or check <span className="text-text-primary">your own product photos</span> against
+                Amazon&apos;s main-image rules — no ASIN needed
+              </span>
+              <ArrowRight className="w-3.5 h-3.5 transition-transform group-hover:translate-x-0.5" />
+            </Link>
 
             {/* Feature Cards */}
             <div className="grid sm:grid-cols-3 gap-4 pt-4">
