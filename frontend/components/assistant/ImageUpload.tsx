@@ -20,8 +20,17 @@ import type { ImageAudit } from './types'
  * produces real verdicts on them.
  */
 
+// `NEXT_PUBLIC_*` is inlined at build time, so an unset variable here means the
+// bundle the visitor downloaded has no audit service to talk to. Falling back to
+// localhost in that case aims the upload at the visitor's OWN machine, where it
+// stalls against a port nothing is listening on instead of failing — the worst
+// of both worlds. Keep the dev fallback for `next dev` only, and treat a
+// production build without a URL as plainly unavailable.
 const VISLENS_URL =
-  process.env.NEXT_PUBLIC_VISLENS_URL?.replace(/\/$/, '') || 'http://localhost:8100'
+  process.env.NEXT_PUBLIC_VISLENS_URL?.replace(/\/$/, '') ||
+  (process.env.NODE_ENV === 'development' ? 'http://localhost:8100' : '')
+
+const AUDIT_AVAILABLE = VISLENS_URL !== ''
 
 const MAX_IMAGES = 12
 
@@ -72,6 +81,10 @@ export function ImageUpload({
 
   const run = useCallback(async () => {
     if (!picked.length) return
+    if (!AUDIT_AVAILABLE) {
+      setError('Image audit is unavailable in this deployment.')
+      return
+    }
     setBusy(true)
     setError(null)
     try {
@@ -117,7 +130,7 @@ export function ImageUpload({
         <button
           type="button"
           onClick={() => inputRef.current?.click()}
-          disabled={disabled || busy}
+          disabled={disabled || busy || !AUDIT_AVAILABLE}
           className="flex items-center gap-1.5 shrink-0 rounded-lg border border-border bg-background-secondary px-3 py-1.5 text-xs text-text-primary transition-colors hover:border-cyan-500/40 disabled:opacity-50"
         >
           <Upload className="w-3.5 h-3.5" />
@@ -196,9 +209,9 @@ export function ImageUpload({
 
       {picked.length === 0 && !error && (
         <p className="text-xs text-muted-foreground">
-          Without uploads the audit falls back to reading the product page, which usually
-          cannot tell which image is the main one — so those rules get measured but not
-          judged.
+          {AUDIT_AVAILABLE
+            ? 'Without uploads the audit falls back to reading the product page, which usually cannot tell which image is the main one — so those rules get measured but not judged.'
+            : 'Image audit is unavailable in this deployment — no audit service is configured, so there is nowhere to send these images.'}
         </p>
       )}
     </div>
