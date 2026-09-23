@@ -2,12 +2,16 @@ name: Copilot eval (smoke)
 
 on:
   pull_request:
+    # Everything the agent's answers depend on. The filter used to skip app.py,
+    # most of src/ (including src/llm_config.py, the model pins) and
+    # requirements.txt, so changes that could break the agent never ran it.
     paths:
+      - 'app.py'
       - 'backend/**'
       - 'eval/**'
-      - 'requirements-agent.txt'
-      - 'src/rag_chatbot.py'
-      - 'src/fusion.py'
+      - 'src/**'
+      - 'requirements*.txt'
+      - 'data/processed/**'
       - '.github/workflows/eval-on-pr.yml'
 
 permissions:
@@ -16,6 +20,10 @@ permissions:
 
 jobs:
   smoke-eval:
+    # Fork PRs get no secrets, so every row would error and the gate below
+    # would fail for a reason unrelated to the change. They are gated instead
+    # by tests/test_graph_smoke.py in ci.yml, which needs no key.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -39,6 +47,8 @@ jobs:
           # requirements.txt installs cleanly on every platform as-is.
           pip install --prefer-binary -r requirements.txt -r requirements-agent.txt
 
+      # Exits 2 when any row errors or degrades, which fails this job
+      # (eval/run_eval.py). The 5 rows are a stratified pick, not the first 5.
       - name: Run 5-query smoke eval (no judge — cost-free)
         env:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}

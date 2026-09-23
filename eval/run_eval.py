@@ -17,10 +17,21 @@ Usage:
 The runner outputs:
   - eval/reports/YYYY-MM-DD-{variant}.md (summary report)
   - eval/reports/YYYY-MM-DD-{variant}.jsonl (per-query raw results)
+
+Both are stamped with the git SHA (and whether tracked files were modified),
+the sha256 of the gold set and of backend/agent/prompts.py, and the deepeval
+version, so a number can be traced to exactly what produced it.
+
+Exit status: 0 when every row produced a model decision; 2 when any row
+errored or degraded (the eval gate, audit E-10); 1 for a configuration error
+such as a missing judge key. `--limit N` runs a stratified smoke subset, not
+the first N rows (see SMOKE_STRATA).
 """
 import argparse
+import hashlib
 import json
 import os
+import subprocess
 import sys
 import time
 import traceback
@@ -95,6 +106,67 @@ REPORTS_DIR = REPO_ROOT / "eval" / "reports"
 DECISION_SCORED_TYPES = frozenset({"launch"})
 
 
+def _is_image_negative(row: dict) -> bool:
+    """An images_* row whose answer must NOT involve the image tool."""
+    return row["id"].startswith("images_") and "image_audit" not in row["expected_tools"]
+
+
+# Every smoke run must contain at least one row of each. The old smoke was
+# `queries[:5]`: launch_001..005, all expected `needs_more_data`, so an agent
+# that always hedged scored 100% and a constant predictor passed (audit E-10).
+SMOKE_STRATA: tuple[tuple[str, object], ...] = (
+    ("go", lambda r: r["expected_decision"] == "go"),
+    ("no_go", lambda r: r["expected_decision"] == "no_go"),
+    ("needs_more_data", lambda r: r["expected_decision"] == "needs_more_data"),
+    ("returns", lambda r: r["query_type"] == "returns"),
+    ("improve", lambda r: r["query_type"] == "improve"),
+    ("image_negative", _is_image_negative),
+)
+
+
+def _stratified_sample(queries: list[dict], limit: int) -> list[dict]:
+    """A deterministic `limit`-row subset that covers every SMOKE_STRATA entry.
+
+    Greedy cover: repeatedly take the row (in gold order) meeting the most
+    still-uncovered strata; then fill any remaining slots with one row per
+    (query_type, expected_decision) pair not yet present, in gold order. The
+    result is returned in gold order, so reports stay comparable run to run.
+    With too small a limit the cover is truncated and a warning printed.
+    """
+    picked: list[int] = []
+    uncovered = [name for name, _ in SMOKE_STRATA]
+    tests = dict(SMOKE_STRATA)
+    while uncovered and len(picked) < limit:
+        best, best_hits = None, []
+        for i, row in enumerate(queries):
+            if i in picked:
+                continue
+            hits = [name for name in uncovered if tests[name](row)]
+            if len(hits) > len(best_hits):
+                best, best_hits = i, hits
+        if best is None:
+            break  # the gold set has no row for what is left
+        picked.append(best)
+        uncovered = [name for name in uncovered if name not in best_hits]
+    if uncovered:
+        print(f"  [smoke] warning: --limit {limit} does not cover {uncovered}")
+
+    seen = {(queries[i]["query_type"], queries[i]["expected_decision"]) for i in picked}
+    for i, row in enumerate(queries):
+        if len(picked) >= limit:
+            break
+        key = (row["query_type"], row["expected_decision"])
+        if i not in picked and key not in seen:
+            picked.append(i)
+            seen.add(key)
+    for i in range(len(queries)):  # still short: plain gold order
+        if len(picked) >= limit:
+            break
+        if i not in picked:
+            picked.append(i)
+    return [queries[i] for i in sorted(picked)]
+
+
 def _load_gold(path: Path, limit: int | None = None) -> list[dict]:
     queries = []
     with open(path) as f:
@@ -104,8 +176,62 @@ def _load_gold(path: Path, limit: int | None = None) -> list[dict]:
                 continue
             queries.append(json.loads(line))
     if limit:
-        queries = queries[:limit]
+        queries = _stratified_sample(queries, limit)
     return queries
+
+
+PROMPTS_PATH = REPO_ROOT / "backend" / "agent" / "prompts.py"
+
+
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _git(*args: str) -> str | None:
+    try:
+        return subprocess.run(["git", *args], cwd=REPO_ROOT, capture_output=True,
+                              text=True, timeout=10, check=True).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _provenance(gold_path: Path) -> dict:
+    """What produced this run, recorded on the report and on every row.
+
+    The README's headline eval recorded none of this and could not be re-run
+    at HEAD (audit E-13). `git_dirty` counts modified tracked files only, so
+    local scratch files do not mark every run dirty.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+        deepeval_version = version("deepeval")
+    except PackageNotFoundError:
+        deepeval_version = "not installed"
+    status = _git("status", "--porcelain", "--untracked-files=no")
+    return {
+        "git_sha": _git("rev-parse", "HEAD") or "unknown",
+        "git_dirty": None if status is None else bool(status),
+        "gold_sha256": _sha256(gold_path),
+        "prompts_sha256": _sha256(PROMPTS_PATH),
+        "deepeval": deepeval_version,
+    }
+
+
+def _display_path(path: Path) -> str:
+    try:
+        return str(path.relative_to(REPO_ROOT))
+    except ValueError:  # a --gold or reports dir outside the repo
+        return str(path)
+
+
+def _provenance_line(prov: dict) -> str:
+    dirty = {True: " (dirty: modified tracked files)", False: "", None: " (dirty: unknown)"}
+    return (
+        f"- **Commit:** `{prov['git_sha']}`{dirty[prov['git_dirty']]} · "
+        f"**gold** sha256 `{prov['gold_sha256'][:12]}` · "
+        f"**prompts.py** sha256 `{prov['prompts_sha256'][:12]}` · "
+        f"**deepeval** `{prov['deepeval']}`"
+    )
 
 
 def _judge_label() -> str:
@@ -191,7 +317,14 @@ def _per_query_result(gold: dict, out: dict | None, err: Exception | None, laten
     #
     # So a degraded row is recorded explicitly, never matches, and is counted
     # separately in the summary.
-    degraded = bool(out["trace"].get("synthesis_degraded"))
+    #
+    # The same holds when the Executor gave up on a tool call. It tells the
+    # Synthesizer to "note the missing step as an evidence gap", which forces
+    # needs_more_data, so a budget-exhausted run used to be credited as a
+    # correct hedge on every launch row expecting one (audit E-12, CMD-06).
+    synthesis_degraded = bool(out["trace"].get("synthesis_degraded"))
+    executor_degraded = bool(out["trace"].get("executor_degraded"))
+    degraded = synthesis_degraded or executor_degraded
     decision_match = (not degraded) and rec["decision"] == gold["expected_decision"]
 
     base.update({
@@ -201,7 +334,9 @@ def _per_query_result(gold: dict, out: dict | None, err: Exception | None, laten
         "n_tool_calls": out["trace"]["n_tool_calls"],
         "trajectory": traj,
         "decision_match": decision_match,
-        "synthesis_degraded": degraded,
+        "degraded": degraded,
+        "synthesis_degraded": synthesis_degraded,
+        "executor_degraded": executor_degraded,
         "recommendation_summary": rec["summary"][:300],
         "evidence_count": len(rec["evidence"]),
         "_full_output": out,  # kept for judges; stripped before JSONL write
@@ -326,6 +461,11 @@ def _decision_breakdown(per_query: list[dict]) -> dict:
     }
 
 
+def _row_degraded(q: dict) -> bool:
+    # Rows written before `degraded` existed carry only synthesis_degraded.
+    return bool(q.get("degraded") or q.get("synthesis_degraded") or q.get("executor_degraded"))
+
+
 def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
     """Compute aggregate metrics over the per-query list."""
     n = len(per_query)
@@ -334,7 +474,7 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
     # Tracked apart from both buckets so a drop in error_rate cannot be read as
     # an improvement when it is really a reclassification. n_success counts only
     # runs that actually produced a model-generated recommendation.
-    n_degraded = sum(1 for q in per_query if q.get("synthesis_degraded"))
+    n_degraded = sum(1 for q in per_query if _row_degraded(q))
     n_success = n - n_errors - n_degraded
 
     decision = _decision_breakdown(per_query)
@@ -361,7 +501,7 @@ def _summarize(per_query: list[dict], variant: str, with_judges: bool) -> dict:
             [
                 q for q in per_query
                 if not q.get("error")
-                and not q.get("synthesis_degraded")
+                and not _row_degraded(q)
                 and "decision_correctness" in q
             ]
         )
@@ -433,6 +573,7 @@ def _write_report(summary: dict, per_query: list[dict], path: Path, variant: str
         f"- **Executor model:** `{executor_model()}`",
         f"- **RAG model:** `{rag_model()}`",
         f"- **Judge:** {_judge_line(summary.get('with_judges', True))}",
+        *([_provenance_line(summary["provenance"])] if summary.get("provenance") else []),
         "",
         "## Summary",
         "",
@@ -553,7 +694,9 @@ def main() -> int:
     print(f"Loading gold set: {gold_path}")
     gold = _load_gold(gold_path, limit=args.limit)
     gold_by_id = {g["id"]: g for g in gold}
-    print(f"  -> {len(gold)} queries")
+    print(f"  -> {len(gold)} queries" + (f": {', '.join(g['id'] for g in gold)}" if args.limit else ""))
+    provenance = _provenance(gold_path)
+    print(f"  -> {_provenance_line(provenance)}")
 
     # Resolved before the loop so results can be flushed as they are produced.
     date_str = date.today().isoformat()
@@ -573,7 +716,9 @@ def main() -> int:
             match = "✓" if actual == g["expected_decision"] else "✗"
             n_tools = out["trace"]["n_tool_calls"]
             print(f"{actual} {match}  [{n_tools} tools, {latency:.1f}s]")
-        per_query.append(_per_query_result(g, out, err, latency))
+        row = _per_query_result(g, out, err, latency)
+        row["provenance"] = provenance
+        per_query.append(row)
         # Flush after every query. A full run is ~20 minutes of paid API calls;
         # previously a crash at gold query 11, returns_001 (see the OMP_NUM_THREADS note
         # above) left no artefact at all and threw away ten completed queries.
@@ -583,6 +728,7 @@ def main() -> int:
         _judge_all(per_query, gold_by_id, jsonl_path)
 
     summary = _summarize(per_query, variant, with_judges)
+    summary["provenance"] = provenance
 
     _write_jsonl(per_query, jsonl_path)
     _write_report(summary, per_query, md_path, variant)
@@ -593,9 +739,21 @@ def main() -> int:
     print("=" * 70)
     print(json.dumps(summary, indent=2))
     print()
-    print(f"  Report:  {md_path.relative_to(REPO_ROOT)}")
-    print(f"  Raw:     {jsonl_path.relative_to(REPO_ROOT)}")
+    print(f"  Report:  {_display_path(md_path)}")
+    print(f"  Raw:     {_display_path(jsonl_path)}")
     print()
+
+    # The gate. Row errors used to become results and main() returned 0, so
+    # the PR smoke was green with 5/5 NameErrors (audit E-10). Every row must
+    # now yield a model decision: an error or a degraded run fails the job.
+    failures = [
+        f"{name}={summary[name]:.1%}"
+        for name in ("error_rate", "no_decision_rate")
+        if summary[name] > 0
+    ]
+    if failures:
+        print(f"  EVAL GATE FAILED: {', '.join(failures)} — every row must produce a model decision")
+        return 2
     return 0
 
 

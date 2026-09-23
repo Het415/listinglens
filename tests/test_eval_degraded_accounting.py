@@ -86,3 +86,41 @@ def test_no_decision_rate_is_the_comparable_headline():
 
     assert s["error_rate"] == 0.0, "nothing raised"
     assert s["no_decision_rate"] == 0.5, "but half the runs produced no decision"
+
+
+# ── Executor degradation (audit E-12, CMD-06) ─────────────────────────────────
+#
+# The Executor tells the Synthesizer to "note the missing step as an evidence
+# gap" when it gives up on a tool call, which forces needs_more_data. With no
+# flag, CMD-06 showed that run scoring decision_match=True on a launch row.
+
+def _executor_degraded_out(decision="needs_more_data"):
+    out = _out(decision, degraded=False, tools=())
+    out["trace"]["executor_degraded"] = True
+    return out
+
+
+def test_executor_degraded_row_never_counts_as_correct():
+    """CMD-06 inverted: the forced hedge matches gold, and must still be False."""
+    row = _per_query_result(GOLD_NMD, _executor_degraded_out(), None, 20.0)
+    assert row["actual_decision"] == GOLD_NMD["expected_decision"]
+    assert row["decision_match"] is False
+    assert row["executor_degraded"] is True
+    assert row["degraded"] is True
+
+
+def test_executor_degraded_rows_count_as_no_decision():
+    rows = [
+        _per_query_result(GOLD_GO, _out("go", degraded=False), None, 10.0),
+        _per_query_result(GOLD_NMD, _executor_degraded_out(), None, 20.0),
+    ]
+    s = _summarize(rows, variant="full", with_judges=False)
+    assert s["n_degraded"] == 1
+    assert s["no_decision_rate"] == 0.5
+
+
+def test_a_flagless_row_still_scores_as_before():
+    """The CMD-06 input without the new flag is an ordinary row."""
+    row = _per_query_result(GOLD_NMD, _out("needs_more_data", degraded=False), None, 20.0)
+    assert row["decision_match"] is True
+    assert row["executor_degraded"] is False

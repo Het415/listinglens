@@ -185,11 +185,18 @@ def make_executor_node(tools):
                     new_plan.remove(tc["name"])
                 new_iterations += 1
 
-        return {
+        update = {
             "messages": [response],
             "tools_called": new_tools_called,
             "plan": new_plan,
             "iterations": new_iterations,
         }
+        # The degrade message alone was invisible downstream: the Synthesizer
+        # hedges to needs_more_data as told, and the eval scored that hedge as
+        # a correct answer (audit E-12). Only ever set, never cleared, so a
+        # later successful turn in the same run cannot hide it.
+        if isinstance(response, AIMessage) and getattr(response, "name", None) == "executor_degraded":
+            update["executor_degraded"] = True
+        return update
 
     return execute_node
