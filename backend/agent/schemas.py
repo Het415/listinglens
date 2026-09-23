@@ -180,6 +180,11 @@ class AgentState(TypedDict, total=False):
                               # confidence 0.0 by design, and re-looping would
                               # spend another Executor pass against the same rate
                               # limits that caused the degrade.
+    executor_degraded: bool  # True when the Executor gave up on a tool call
+                             # (model chain exhausted or unparseable tool calls)
+                             # and handed the Synthesizer whatever evidence it
+                             # had. The Recommendation is a real model output,
+                             # but made with a research step missing.
 
 
 # ── CLI / API shape ───────────────────────────────────────────────────────────
@@ -203,6 +208,14 @@ class AgentTrace(BaseModel):
             "structured output. The answer is real evidence but the "
             "decision/confidence are not model judgements, so the UI must "
             "label it rather than present it as a normal recommendation."
+        ),
+    )
+    executor_degraded: bool = Field(
+        default=False,
+        description=(
+            "True when the Executor could not issue a tool call it needed and "
+            "the run continued without it. The eval scores such a run as "
+            "not matching, so a forced hedge is never credited as an answer."
         ),
     )
 

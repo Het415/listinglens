@@ -13,7 +13,8 @@ export type BriefResponse = {
   asin: string
   product_name?: string
   metrics?: {
-    total_reviews?: number
+    reviews_sampled?: number
+    ratings_total?: number | null
     avg_rating?: number
     pct_negative?: number
     return_risk?: { risk_pct?: number; risk_label?: string } | null

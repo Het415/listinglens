@@ -12,9 +12,14 @@ export type TopicItem = {
   id?: number
   label: string
   keywords?: string[]
+  /** Sampled reviews that mention it (the sample holds 50 per star). */
   count?: number
+  /** Estimated share of ALL the product's reviews that mention it (0–100). */
+  mention_pct?: number
   pct_negative?: number
   pct_positive?: number
+  /** pct_negative ÷ the product's overall 1–2★ share; complaint_level comes from it. */
+  negative_lift?: number | null
   complaint_level?: 'HIGH' | 'MEDIUM' | 'LOW'
 }
 
@@ -37,6 +42,8 @@ type TopicRow = {
   positive: number
   negative: number
   count?: number
+  mentionPct?: number
+  negativeLift?: number | null
   keywords?: string[]
   complaint_level?: 'HIGH' | 'MEDIUM' | 'LOW'
   /** True when values come from per-category API (not legacy heuristic) */
@@ -123,6 +130,8 @@ function buildTopicRows(
         positive: clampPct(t.pct_positive!),
         negative: clampPct(t.pct_negative!),
         count: t.count,
+        mentionPct: t.mention_pct,
+        negativeLift: t.negative_lift,
         keywords: t.keywords,
         complaint_level: t.complaint_level,
         usesRealRatings: true,
@@ -261,8 +270,10 @@ export function TopicAnalysis({
           </TooltipTrigger>
           <TooltipContent className="max-w-xs">
             Categories come from keywords in your reviews. Each row shows the stronger signal: either the share of mentions
-            from 1–2★ reviews (Negative) or from 4–5★ reviews (Positive). 3★ reviews are not counted. Rows are sorted with the
-            highest complaint share first.
+            from 1–2★ reviews (Negative) or from 4–5★ reviews (Positive). 3★ reviews are not counted. Shares are weighted to
+            the product&apos;s real star mix. The complaint level compares a category&apos;s 1–2★ share with the product&apos;s
+            overall 1–2★ share: HIGH at 1.5× or more, LOW at 0.67× or less. Rows are sorted with the highest complaint share
+            first.
           </TooltipContent>
         </Tooltip>
       </div>
@@ -354,8 +365,16 @@ function TopicRowBlock({ topic }: { topic: TopicRow }) {
           <div className="font-medium text-text-primary">{topic.name}</div>
           {topic.complaint_level ? (
             <div className="text-xs text-text-secondary">
-              Complaint level: <span className="font-semibold text-text-primary">{topic.complaint_level}</span> (from 1–2★
-              share among mentions)
+              Complaint level: <span className="font-semibold text-text-primary">{topic.complaint_level}</span>
+              {typeof topic.negativeLift === 'number' ? (
+                <>
+                  {' '}({negLabel} of its mentions are 1–2★,{' '}
+                  <span className="font-mono text-text-primary">{topic.negativeLift.toFixed(2)}×</span>{' '}
+                  the product&apos;s overall 1–2★ share)
+                </>
+              ) : (
+                <> (from 1–2★ share among mentions)</>
+              )}
             </div>
           ) : null}
           <div className="text-xs text-text-secondary">
@@ -372,12 +391,18 @@ function TopicRowBlock({ topic }: { topic: TopicRow }) {
               </>
             )}
           </div>
-          {typeof topic.count === 'number' && !Number.isNaN(topic.count) && (
+          {typeof topic.mentionPct === 'number' ? (
             <div className="text-xs text-text-secondary">
-              Reviews mentioning this category:{' '}
+              Mentioned in <span className="font-mono text-text-primary">{formatTopicPct(topic.mentionPct)}</span> of
+              reviews
+              {typeof topic.count === 'number' ? ` (${topic.count} in the sample)` : ''}
+            </div>
+          ) : typeof topic.count === 'number' && !Number.isNaN(topic.count) ? (
+            <div className="text-xs text-text-secondary">
+              Sampled reviews mentioning this category:{' '}
               <span className="font-mono text-text-primary">{topic.count}</span>
             </div>
-          )}
+          ) : null}
           {topic.keywords?.length ? (
             <div className="text-xs text-text-secondary">
               Sample keywords:{' '}

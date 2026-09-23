@@ -41,6 +41,7 @@ against the 8000 TPM cap. Tool selection and summarization don't need deep
 reasoning; the user-facing recommendation does, so those stages get "medium".
 """
 import os
+import time
 
 from dotenv import load_dotenv
 
@@ -78,8 +79,9 @@ REASONING_EFFORT = {
 # A single pinned model is always one deprecation away from a production
 # outage; that is exactly how this app broke three times. Each stage instead
 # gets an ordered list: the configured/default model first, then alternates.
-# `resilient_call` walks the chain when a model is GONE (404) or RATE-LIMITED
-# (429), so a deprecation degrades quality instead of taking the app down.
+# `resilient_call` walks the chain when a model is GONE (404), RATE-LIMITED
+# (429) or UNAVAILABLE (timeout, dropped connection, 5xx), so a deprecation or
+# a one-model outage degrades quality instead of taking the app down.
 #
 # Only these four Groq models support BOTH tool-calling and structured output
 # (surveyed live — allam-2-7b, groq/compound and groq/compound-mini reject
@@ -162,6 +164,50 @@ _TOOL_CALL_MALFORMED = (
 )
 
 
+def _provider_unavailable(err: Exception) -> bool:
+    """True for a timeout, a dropped connection or a 5xx from Groq (audit E-19).
+
+    Matched by exception TYPE, not message: their messages are generic ("Request
+    timed out.", "Connection error.", whatever body a 5xx carries), so a
+    substring would either miss them or match unrelated errors. The types come
+    from the groq SDK, which langchain_groq raises unwrapped; instructor wraps
+    them in `InstructorRetryException(...) from err`, so the `__cause__` chain
+    is walked too. `APITimeoutError` subclasses `APIConnectionError`, and the SDK
+    raises `InternalServerError` for every status >= 500.
+
+    A 401 is an `AuthenticationError`, which is none of these, so a bad key
+    still re-raises at once.
+
+    So does a request the HTTP layer refuses to SEND. An empty GROQ_API_KEY
+    makes the SDK write the header `Authorization: Bearer `, which h11 rejects
+    as illegal before any connection is made. The SDK wraps that
+    `httpx.LocalProtocolError` in an `APIConnectionError`, which would read as
+    "Groq is down" and quietly degrade every run. It is our own bad request, so
+    it must stay loud. Seen in CI on PR #9, where the repo had no secret.
+    A server-side `RemoteProtocolError` is still the provider's problem.
+    """
+    try:
+        import groq
+        import httpx
+    except ImportError:  # pragma: no cover — groq is a hard dependency
+        return False
+    unavailable = (groq.APIConnectionError, groq.InternalServerError)
+    found = False
+    seen: set[int] = set()
+    e: BaseException | None = err
+    while e is not None and id(e) not in seen:
+        if isinstance(e, httpx.LocalProtocolError):
+            return False
+        if isinstance(e, unavailable):
+            found = True
+        seen.add(id(e))
+        e = e.__cause__
+    return found
+
+
+_UNAVAILABLE = "unavailable (timeout, connection or 5xx)"
+
+
 def _failover_reason(err: Exception) -> str | None:
     """Return why `err` warrants trying the next model, or None to re-raise."""
     # Opt-out for callers that run their own retry policy for a signature we
@@ -178,6 +224,8 @@ def _failover_reason(err: Exception) -> str | None:
         return "rate-limited"
     if any(sig in text for sig in _TOOL_CALL_MALFORMED):
         return "emitting malformed tool calls"
+    if _provider_unavailable(err):
+        return _UNAVAILABLE
     return None
 
 
@@ -197,12 +245,89 @@ def _failover_reason(err: Exception) -> str | None:
 _SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
 
 
+# Wall-clock bounds for the failover T-04 added (timeouts, dropped connections,
+# 5xx). Every other reason fails over as it always has.
+#
+# A provider that HANGS, rather than refusing, is the slow case: each attempt
+# first waits out the client's read timeout once per SDK try, and walking the
+# chain multiplies that by three. With the old 60 s timeout, a Groq that
+# accepted connections and never answered cost about 24 min per agent run
+# before the degraded answer, and the frontend has no timeout of its own
+# (audit E-21). Two knobs bound it. Either one alone still leaves about 8 min;
+# together they give about 3.9 min (planner 61.5 s + executor 81 s +
+# synthesizer 90.5 s), against about 5 min to an outright error before
+# timeouts failed over at all:
+#
+# - `stage_deadline_s()`: once a stage has spent this long in `resilient_call`,
+#   an unavailable model is terminal instead of a reason to try the next one.
+#   It re-raises, and the caller's existing degrade path takes over (fallback
+#   plan, executor hand-off, locally assembled recommendation, tool-error
+#   message). It is only checked between attempts, so the in-flight one still
+#   runs to its own timeout.
+# - `request_timeout()`: the read timeout for one HTTP attempt, in two profiles.
+#   - Default, 20 s (`LLM_REQUEST_TIMEOUT_S`): the planner, executor, RAG and
+#     intent, which return short answers. Unthrottled calls take about 1-3 s
+#     (the fastest no_tool eval row made two calls in 2.65 s, and a 4-tool
+#     agent run finished in 10.05 s). The slow eval rows are 429 `retry-after`
+#     sleeps, which the SDK takes BETWEEN attempts, so this timeout doesn't
+#     shorten them and rate-limit handling is unchanged.
+#   - `long_output=True`, 45 s (`LLM_AGENT_REQUEST_TIMEOUT_S`): the synthesizer
+#     and the Executive Brief, which run gpt-oss-120b at medium reasoning with
+#     no max_tokens and write a long structured answer, so a healthy call can
+#     take 20-40 s. Under the shared 20 s, such a call timed out on every SDK
+#     try (3 x 20 s + 1.5 s = 61.5 s), was past the stage deadline, and came
+#     back degraded every time, with up to three abandoned generations billed.
+#     This profile also makes 1 SDK retry instead of 2, so a call that outlasts
+#     45 s is regenerated once, not twice: one hung model costs 2 x 45 s +
+#     0.5 s = 90.5 s, not 136.5 s. It keeps one same-model retry for 429, 5xx
+#     and dropped connections; after that the chain moves to another model's
+#     bucket, which is the policy for rate limits anyway.
+#   Raising the agent stage's deadline instead (to fit a whole 136.5 s model
+#   and fail over after it) was rejected: it would bound a hung synthesizer at
+#   273 s or more rather than 90.5 s. A healthy call never meets the deadline,
+#   which is only checked after a failure.
+#
+# All three are read at call time, so an operator can widen them with an env
+# change and tests can patch them.
+DEFAULT_STAGE_DEADLINE_S = 45.0
+DEFAULT_REQUEST_TIMEOUT_S = 20.0
+DEFAULT_AGENT_REQUEST_TIMEOUT_S = 45.0
+LONG_OUTPUT_SDK_RETRIES = 1
+_CONNECT_TIMEOUT_S = 5.0   # the groq SDK's own default, kept
+
+
+def stage_deadline_s() -> float:
+    return float(os.getenv("LLM_STAGE_DEADLINE_S", DEFAULT_STAGE_DEADLINE_S))
+
+
+def request_timeout(long_output: bool = False):
+    """The `httpx.Timeout` a production Groq client is built with.
+
+    `long_output=True` is the synthesizer and Brief profile (see above). It is
+    a flag on the answer's size rather than a `resilient_call` stage name,
+    because the planner shares the "agent" chain and must stay on the fast
+    profile.
+    """
+    import httpx
+
+    if long_output:
+        read = float(os.getenv("LLM_AGENT_REQUEST_TIMEOUT_S", DEFAULT_AGENT_REQUEST_TIMEOUT_S))
+    else:
+        read = float(os.getenv("LLM_REQUEST_TIMEOUT_S", DEFAULT_REQUEST_TIMEOUT_S))
+    return httpx.Timeout(read, connect=_CONNECT_TIMEOUT_S)
+
+
+# Indirection so tests can drive `resilient_call` with a fake clock.
+_now = time.monotonic
+
+
 def is_provider_capacity_error(err: Exception) -> bool:
     """True when `err` means the provider cannot serve us, not that we asked wrong.
 
-    Covers exactly the two conditions `resilient_call` walks the chain for —
-    every model decommissioned, or every model rate-limited — and nothing else.
-    A bad API key, a schema we built wrong, or a plain bug returns False.
+    Covers exactly the three conditions `resilient_call` walks the chain for —
+    every model decommissioned, rate-limited, or unavailable (timeout, dropped
+    connection, 5xx) — and nothing else. A bad API key, a schema we built
+    wrong, or a plain bug returns False.
 
     Exposed for callers that must decide whether to degrade or fail loudly once
     `resilient_call` has already exhausted the chain and re-raised. The
@@ -217,17 +342,17 @@ def is_provider_capacity_error(err: Exception) -> bool:
     before this question arises (see backend/agent/nodes/executor.py).
     """
     text = str(err).lower()
-    return any(sig in text for sig in _MODEL_GONE + _RATE_LIMITED)
+    return any(sig in text for sig in _MODEL_GONE + _RATE_LIMITED) or _provider_unavailable(err)
 
 
 def resilient_call(stage: str, fn):
     """Run `fn(model_id)` against the stage's chain until one succeeds.
 
-    `fn` takes a model id and performs the actual LLM call. On a decommissioned
-    or rate-limited model, or one that returned an unusable tool call, we move
-    to the next candidate; any other exception propagates untouched. If every
-    model fails, the LAST exception is raised so the caller sees a real
-    provider error rather than a synthetic one.
+    `fn` takes a model id and performs the actual LLM call. On a decommissioned,
+    rate-limited or unavailable model, or one that returned an unusable tool
+    call, we move to the next candidate; any other exception propagates
+    untouched. If every model fails, the LAST exception is raised so the caller
+    sees a real provider error rather than a synthetic one.
 
     This is what keeps a Groq deprecation from becoming an outage: the app
     silently degrades to the next model and logs loudly enough that
@@ -236,11 +361,18 @@ def resilient_call(stage: str, fn):
     Worst case is bounded by `len(chain)` attempts plus one extra per model for
     a malformed tool call — 6 calls for a 3-model chain. That ceiling is only
     reached on a path that would otherwise have failed outright.
+
+    Timeouts are the slow case: each attempt first waits out the read timeout
+    once per SDK try (x 2 for the executor, RAG and the long-output clients,
+    x 3 for the planner and intent). So an unavailable model only advances the
+    chain while the stage is inside `stage_deadline_s()`; see the comment above
+    it.
     """
     chain = model_chain(stage)
     last: Exception | None = None
     i = 0
     retries_used = 0
+    started = _now()
     while i < len(chain):
         model = chain[i]
         try:
@@ -260,6 +392,15 @@ def resilient_call(stage: str, fn):
             if i == len(chain) - 1:
                 raise
             nxt = chain[i + 1]
+            if reason == _UNAVAILABLE:
+                elapsed, budget = _now() - started, stage_deadline_s()
+                if elapsed >= budget:
+                    print(
+                        f"[llm_config] {stage}: {model} is {reason} after "
+                        f"{elapsed:.0f}s, past the {budget:.0f}s stage deadline; "
+                        f"not trying {nxt}."
+                    )
+                    raise
             print(
                 f"[llm_config] {stage}: {model} is {reason}; "
                 f"falling back to {nxt}. Run `python -m scripts.doctor`."
@@ -316,17 +457,25 @@ def configured_models() -> dict[str, str]:
     }
 
 
-def groq_client():
+def groq_client(long_output: bool = False):
     """Shared `instructor`-wrapped Groq client for structured-output calls.
 
     Previously duplicated in six places. Not cached — instructor wraps a
     thread-safe httpx client, but callers that want a singleton still apply
     their own lru_cache.
+
+    Default: the 20 s read timeout and the SDK's own 2 retries, so 429 handling
+    doesn't change. `long_output=True` (the synthesizer and the Brief, and the
+    eval and doctor calls that stand in for the synthesizer): the 45 s read
+    timeout and 1 retry. See `request_timeout`.
     """
     import instructor
     from groq import Groq
 
-    return instructor.from_groq(Groq(api_key=api_key()))
+    kwargs = {"api_key": api_key(), "timeout": request_timeout(long_output)}
+    if long_output:
+        kwargs["max_retries"] = LONG_OUTPUT_SDK_RETRIES
+    return instructor.from_groq(Groq(**kwargs))
 
 
 def thought_text(message) -> str:

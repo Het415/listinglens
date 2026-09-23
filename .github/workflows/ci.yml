@@ -50,6 +50,15 @@ jobs:
           pip install --upgrade pip
           pip install --prefer-binary -r requirements-dev.txt
 
+      # Undefined names (F821) and syntax errors (E9) in every backend path.
+      # `run_agent` referenced three names it never received and raised
+      # NameError on every call for days with CI green (audit E-11), because
+      # no test imported that path. This finds that class of bug statically,
+      # in about a second, before the suite runs. ruff is pinned in
+      # requirements-dev.txt.
+      - name: Lint (ruff F821, E9)
+        run: ruff check --select F821,E9 app.py backend eval src scripts tests
+
       - name: Run pytest
         env:
           # ENV_MODE=production matches conftest.py — tests assert

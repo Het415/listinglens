@@ -20,7 +20,10 @@ export type AnalyzeResponse = {
       id?: number
       label: string
       keywords?: string[]
+      /** Sampled reviews that mention it. */
       count?: number
+      /** Estimated share of all the product's reviews that mention it (0–100). */
+      mention_pct?: number
       complaint_level?: 'HIGH' | 'MEDIUM' | 'LOW' | string
     }>
     total_reviews?: number
@@ -380,7 +383,8 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
       doc.setTextColor(15, 23, 42)
       doc.text(label, marginX + 16, y)
 
-      const countStr = `${count} reviews`
+      const countStr =
+        typeof t.mention_pct === 'number' ? `${t.mention_pct}% of reviews` : `${count} sampled reviews`
       doc.setFont('helvetica', 'bold')
       doc.text(countStr, pageW - marginX - doc.getTextWidth(countStr), y)
 
@@ -399,7 +403,7 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
 
   const riskNegLine =
     pctNegative > 30
-      ? `Address negative review patterns — ${pctNegative.toFixed(1)}% of reviews are negative. Focus on resolving the most common complaints.`
+      ? `Address negative review patterns — ${pctNegative.toFixed(1)}% of reviews read as negative. Focus on resolving the most common complaints.`
       : `Keep improving — negative sentiment is ${formatPercent(pctNegative)}.`
 
   const ratingLine =

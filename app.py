@@ -2,12 +2,14 @@ import os
 import json
 import pandas as pd
 from contextlib import asynccontextmanager
-from typing import Callable
+from typing import Annotated, Callable, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, StreamingResponse
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+
+from backend.http_limits import BodySizeLimitMiddleware, Denial, RequestLimits, client_ip
 
 from src.cancellation import AnalysisCancelled, CancelToken, check_cancelled
 
@@ -99,11 +101,19 @@ async def preload_cache():
 
 # ── FastAPI App ────────────────────────────────────────────────────────────────
 
+# The interactive docs are a free map of every Groq-spending route, so they are
+# served only off production. ENV_MODE defaults to production, so an unset
+# Render env hides them too.
+_PUBLIC_DOCS = ENV_MODE != "production"
+
 app = FastAPI(
     title="ListingLens API",
     description="Amazon product intelligence platform",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if _PUBLIC_DOCS else None,
+    redoc_url="/redoc" if _PUBLIC_DOCS else None,
+    openapi_url="/openapi.json" if _PUBLIC_DOCS else None,
 )
 
 # CORS: browser blocks cross-origin API calls unless the API echoes the request Origin.
@@ -140,51 +150,145 @@ _cors_kw: dict = {
 if _cors_regex:
     _cors_kw["allow_origin_regex"] = _cors_regex
 
+# Body cap first, so CORS (added next, therefore outermost) wraps it and the
+# 413 reaches the browser with its CORS headers. See backend/http_limits.py.
+app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
 # ── Request/Response Models ────────────────────────────────────────────────────
+#
+# Every field is bounded. The body cap in backend/http_limits.py stops memory
+# exhaustion; these stop a within-cap body from buying an oversized prompt,
+# which the agent re-sends on every executor turn. Out-of-bounds input is a 422
+# before any handler, cache or LLM runs.
+
+# Every catalog ASIN has this shape. Applied only to `asin` fields:
+# `url_or_asin` also accepts a full Amazon URL and is parsed by extract_asin.
+ASIN_PATTERN = r"^[A-Z0-9]{10}$"
+# A seller question, or a support message for the intent classifier. About
+# 500 tokens, which is generous for a question and keeps the executor's
+# repeated prompt well inside the free tier's per-request token limit.
+MAX_QUERY_CHARS = 2000
+# Matches MAX_IMAGES in frontend/components/assistant/ImageUpload.tsx.
+MAX_IMAGE_URLS = 12
+MAX_URL_CHARS = 2048
+
+Asin = Annotated[str, Field(pattern=ASIN_PATTERN)]
+Query = Annotated[str, Field(min_length=1, max_length=MAX_QUERY_CHARS)]
+ImageUrl = Annotated[str, Field(max_length=MAX_URL_CHARS)]
+# vislens issues `uuid4().hex[:12]`. The id is joined into a vislens URL path
+# (image_audit.py), so path characters are refused here, not just its length.
+AuditId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+
+
 class AnalyzeRequest(BaseModel):
-    url_or_asin: str | None = None
-    asin: str | None = None
-    max_reviews: int = 250
+    url_or_asin: str | None = Field(default=None, max_length=MAX_URL_CHARS)
+    asin: Asin | None = None
+    max_reviews: int = Field(default=250, ge=1, le=1000)
 
 class ChatRequest(BaseModel):
-    asin: str
-    question: str
+    asin: Asin
+    question: Query
 
 
 class AgentQueryRequest(BaseModel):
-    asin: str
-    query: str
+    asin: Asin
+    query: Query
     # Image context from the UI. `audit_id` refers to an audit the browser
     # already ran by uploading files straight to the audit service — so the
     # bytes never pass through this process, which keeps this backend off the
     # image path entirely.
-    audit_id: str | None = None
-    image_urls: list[str] | None = None
-    main_index: int | None = None
+    audit_id: AuditId | None = None
+    image_urls: list[ImageUrl] | None = Field(default=None, max_length=MAX_IMAGE_URLS)
+    main_index: int | None = Field(default=None, ge=0, lt=MAX_IMAGE_URLS)
 
 
 class AssistantQueryRequest(BaseModel):
-    asin: str
-    query: str
-    audit_id: str | None = None
-    image_urls: list[str] | None = None
-    main_index: int | None = None
+    asin: Asin
+    query: Query
+    audit_id: AuditId | None = None
+    image_urls: list[ImageUrl] | None = Field(default=None, max_length=MAX_IMAGE_URLS)
+    main_index: int | None = Field(default=None, ge=0, lt=MAX_IMAGE_URLS)
     # User explicitly picks the mode via the segmented toggle on /assistant.
     # "quick"   → review_qa only (fast grounded Q&A)
     # "copilot" → full Planner→Executor→Synthesizer agent
-    mode: str = "copilot"
+    # A Literal, not a str: an unknown mode used to fall through to copilot,
+    # silently upgrading a typo to the most expensive path.
+    mode: Literal["quick", "copilot"] = "copilot"
 
 
 class WarmupRequest(BaseModel):
-    asin: str | None = None
+    asin: Asin | None = None
 
 
 class IntentClassifyRequest(BaseModel):
-    text: str
-    # When true, low-confidence sklearn guesses defer to the Groq LLM fallback.
-    allow_llm: bool = True
+    text: str = Field(max_length=MAX_QUERY_CHARS)
+    # There is deliberately no `allow_llm` here any more. The caller used to
+    # choose whether its request spent Groq tokens; now the server decides,
+    # from the budget (see classify_intent).
+
+
+# ── Rate and budget limits ─────────────────────────────────────────────────────
+#
+# Per-IP request rate, per-IP LLM allowance and a global daily LLM budget; the
+# reasoning is in backend/http_limits.py. /health and /warmup are deliberately
+# not limited: the uptime pingers and the warmup cron depend on them, and
+# neither spends LLM tokens.
+
+limits = RequestLimits.from_env()
+
+# Estimated LLM calls per request, charged before the first one is made. A
+# Copilot run is a planner call, several executor turns and a synthesizer call:
+# 4-8 in practice (HANDOFF.md), so 8. The others are one call each.
+LLM_COST = {"copilot": 8, "quick": 1, "chat": 1, "brief": 1, "intent": 1}
+
+
+class RateLimited(Exception):
+    def __init__(self, denial: Denial) -> None:
+        self.denial = denial
+
+
+@app.exception_handler(RateLimited)
+async def _rate_limited(request: Request, exc: RateLimited) -> JSONResponse:
+    # Registered handlers run inside the middleware stack, so this 429 goes
+    # out through CORSMiddleware and the browser can read it.
+    return JSONResponse(
+        status_code=429,
+        content={"detail": exc.denial.message, **exc.denial.as_payload()},
+        headers={"Retry-After": str(exc.denial.retry_after)},
+    )
+
+
+def _ip(request: Request) -> str:
+    return client_ip(
+        request.client.host if request.client else None,
+        request.headers.get("x-forwarded-for"),
+    )
+
+
+def _admit(request: Request, llm_cost: int = 0) -> Denial | None:
+    """Layer 1 for every request; layers 2-3 too when it will call an LLM."""
+    ip = _ip(request)
+    return limits.check_request(ip) or (
+        limits.reserve_llm(ip, llm_cost) if llm_cost else None
+    )
+
+
+def _sse_refusal(denial: Denial) -> StreamingResponse:
+    """A throttled SSE route answers 200 with one `error` frame, not a 429.
+
+    The frontend's stream reader turns any non-2xx into a generic network
+    failure, but it renders an `error` frame's `kind` (ErrorBubble). The frame
+    bypasses the Redis cache wrapper, so a refusal is never replayed.
+    """
+    async def stream():
+        yield f"event: error\ndata: {json.dumps(denial.as_payload())}\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Retry-After": str(denial.retry_after)},
+    )
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────────
@@ -203,8 +307,18 @@ class IntentClassifyRequest(BaseModel):
 # Render API can query it), so nothing is lost for debugging. Only the browser
 # gets the short version.
 _ERROR_SIGNATURES = (
+    # Before the rate-limit entry: Groq's 413 "Request too large" body also
+    # carries `code: rate_limit_exceeded`, but waiting a minute will not shrink
+    # the prompt, so it must not get the "try again" copy.
     (
-        ("rate_limit_exceeded", "rate limit reached", "request too large"),
+        ("request too large",),
+        "too_large",
+        "The question and the evidence gathered for it came to more than the "
+        "language model accepts in one request. A shorter or narrower question "
+        "should fit.",
+    ),
+    (
+        ("rate_limit_exceeded", "rate limit reached"),
         "rate_limited",
         "The language model is temporarily out of request budget. This frees up "
         "continuously — try again in a minute.",
@@ -476,7 +590,9 @@ async def analyze_product(request: AnalyzeRequest, http_request: Request):
 
 
 @app.post("/chat")
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, http_request: Request):
+    if denial := _admit(http_request):
+        raise RateLimited(denial)
     chain_key = f"chain_{request.asin}"
 
     if chain_key not in app_state:
@@ -494,6 +610,11 @@ def chat(request: ChatRequest):
         app_state[chain_key] = rag["chain"]
 
     chain = app_state[chain_key]
+
+    # Charged here, after the unknown-ASIN 404 above, so a bad ASIN costs
+    # nothing against the budget.
+    if denial := limits.reserve_llm(_ip(http_request), LLM_COST["chat"]):
+        raise RateLimited(denial)
 
     from src.rag_chatbot import ask_question
     result = ask_question(chain, request.question)
@@ -595,28 +716,48 @@ def get_conversation_analytics(asin: str):
 
 
 @app.post("/intent/classify")
-def classify_intent(request: IntentClassifyRequest):
+def classify_intent(request: IntentClassifyRequest, http_request: Request):
     """Live single-message intent classification (trained model + LLM fallback).
 
     Powers the interactive 'try the classifier' box on the conversations view.
+
+    The server decides whether to spend an LLM call: only when the trained
+    model is under-confident, and only if the budget has room. Otherwise the
+    model's own guess is returned. The classifier degrades; it never 429s on
+    budget.
     """
-    from src.intent_classifier import predict_intent
+    if denial := _admit(http_request):
+        raise RateLimited(denial)
+    from src.intent_classifier import CONFIDENCE_THRESHOLD, predict_intent
     text = (request.text or "").strip()
     if not text:
         raise HTTPException(status_code=422, detail="text must not be empty")
-    return predict_intent(text, allow_llm=request.allow_llm)
+    result = predict_intent(text, allow_llm=False)
+    if (result["confidence"] < CONFIDENCE_THRESHOLD
+            and limits.reserve_llm(_ip(http_request), LLM_COST["intent"]) is None):
+        result = predict_intent(text, allow_llm=True)
+    return result
 
 
 @app.get("/brief/{asin}")
-def get_executive_brief(asin: str):
+def get_executive_brief(asin: str, http_request: Request):
     """LLM-generated executive brief for an ASIN (cached in-memory).
 
     Synthesizes review summary + return-risk + conversation analytics into a
     quantified, decision-oriented one-pager.
+
+    A cache hit costs a request token but no LLM budget.
     """
+    if denial := _admit(http_request):
+        raise RateLimited(denial)
     cache = app_state.setdefault("brief_cache", {})
     if asin in cache:
         return cache[asin]
+    if asin not in app_state.get("supported_asins", {}):
+        # Same 404 generate_brief would raise, but before the budget is charged.
+        raise HTTPException(status_code=404, detail=f"No data for ASIN {asin}.")
+    if denial := limits.reserve_llm(_ip(http_request), LLM_COST["brief"]):
+        raise RateLimited(denial)
     from backend.brief.generate import generate_brief
     try:
         result = generate_brief(asin)
@@ -627,7 +768,7 @@ def get_executive_brief(asin: str):
 
 
 @app.post("/agent/query")
-async def agent_query(request: AgentQueryRequest):
+async def agent_query(request: AgentQueryRequest, http_request: Request):
     """Stage 5: streaming agent endpoint.
 
     Returns Server-Sent Events as the multi-node agent progresses:
@@ -637,6 +778,8 @@ async def agent_query(request: AgentQueryRequest):
     failure in backend.agent.* doesn't take down the existing /analyze
     and /chat endpoints during a Render cold start.
     """
+    if denial := _admit(http_request, LLM_COST["copilot"]):
+        return _sse_refusal(denial)
     try:
         from backend.agent.graph import run_agent_streaming
     except Exception as e:
@@ -704,7 +847,7 @@ async def agent_query_mock(request: AgentQueryRequest):
 
 
 @app.post("/assistant/query")
-async def assistant_query(request: AssistantQueryRequest):
+async def assistant_query(request: AssistantQueryRequest, http_request: Request):
     """Unified entry point for any seller question.
 
     The user picks the mode explicitly via the /assistant segmented toggle:
@@ -716,7 +859,9 @@ async def assistant_query(request: AssistantQueryRequest):
     is reusable. The quick path adds a terminal `answer` event (the quick
     analogue of `recommendation`).
     """
-    mode = request.mode if request.mode in ("quick", "copilot") else "copilot"
+    mode = request.mode
+    if denial := _admit(http_request, LLM_COST[mode]):
+        return _sse_refusal(denial)
 
     async def event_stream():
         # First event echoes the routed mode so the frontend can confirm.
@@ -880,6 +1025,7 @@ def health():
         "cached_asins": list(app_state.get("cache", {}).keys()),
         "supported_asins": len(app_state.get("supported_asins", {})),
         "models": configured_models(),
+        "limits": limits.status(),
     }
 
 

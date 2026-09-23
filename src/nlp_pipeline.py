@@ -1,10 +1,17 @@
 import os
-import time
+import re
 import requests
-import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from src.cancellation import CancelToken, check_cancelled, cancellable_sleep
+from src.features import (
+    MODEL_FEATURES,
+    post_stratified_mean,
+    post_stratified_share,
+    rating_sentiment_gap,
+    rating_stats,
+    star_weights,
+)
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -20,11 +27,13 @@ load_dotenv()
 
 HF_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
-# set HF token for authenticated downloads
-import huggingface_hub
-hf_token = os.getenv("HF_TOKEN")
-if hf_token:
-    huggingface_hub.login(token=hf_token, add_to_git_credential=False)
+# No huggingface_hub.login() here. It used to run at import, and importing this
+# module is on the production /analyze path (backfill_topic_ids), so every cold
+# dashboard load made a blocking `whoami` request with no timeout that raised
+# on failure: an HF stall, 429 or revoked token hung or 500'd /analyze for all
+# 12 products (audit E-08). Serving never needs an HF identity, and dev ingest
+# still authenticates: huggingface_hub and datasets read HF_TOKEN from the
+# environment by themselves.
 
 # ── HuggingFace Inference API setup ───────────────────────────────────────────
 # We use the API instead of loading models locally
@@ -157,17 +166,37 @@ def parse_sentiment_results(raw_results: list) -> pd.DataFrame:
 # ── Keyword category analysis ───────────────────────────────────────────────────
 
 # Fixed review themes: first matching category wins per review (order matters for overlaps).
+#
+# Matched as whole words plus inflections (see _keyword_pattern), not
+# substrings. Reviewed 2026-09-23 against the 12 shipped products (audit T-09):
+# dropped words whose other senses dominated, measured as the share of
+# non-wearable reviews each one matched:
+#   "works" 34%, "easy" 30% ("works great", "easy to set up")  -> "easy to use"
+#   "quality" 33% ("sound/picture quality" under Build)       -> "build quality"
+#   "support" 26% ("supports 4K")                              -> "customer service/support"
+#   "last" 20%, "hours" 16% ("last week", "hours on hold")     -> "battery life"
+#   "music" 28% (a use, not a sound-quality judgement), "fast" 16% ("fast shipping")
+#   "connect", "wifi" moved out of Setup: they are Connectivity's words
+#   "remote" moved from Connectivity to Features: it is the device's controller
+# The first three keywords of each list are what the dashboard shows.
 CATEGORY_KEYWORDS: list[tuple[str, list[str]]] = [
-    ("Battery Life", ["battery", "charge", "charging", "dies", "drain", "last", "hours"]),
-    ("Sound Quality", ["sound", "audio", "bass", "volume", "loud", "noise", "music"]),
-    ("Build Quality", ["broke", "broken", "cheap", "flimsy", "durable", "quality", "material"]),
-    ("Setup & Installation", ["setup", "install", "connect", "pairing", "pair", "wifi", "configure"]),
-    ("Performance & Speed", ["slow", "fast", "lag", "freeze", "crash", "buffer", "loading"]),
-    ("Customer Service", ["return", "refund", "support", "replaced", "warranty", "defective"]),
-    ("Value for Money", ["worth", "expensive", "cheap", "price", "value", "money", "cost"]),
+    ("Battery Life", ["battery", "charge", "drain", "battery life", "dies", "died", "recharge"]),
+    ("Sound Quality", ["sound", "audio", "bass", "volume", "loud", "noise", "treble"]),
+    ("Build Quality", ["broke", "broken", "flimsy", "durable", "build quality", "material",
+                       "cheaply made", "poorly made", "well made", "sturdy"]),
+    ("Setup & Installation", ["setup", "set up", "install", "installation", "pairing", "pair",
+                              "configure"]),
+    ("Performance & Speed", ["slow", "lag", "freeze", "froze", "crash", "buffer", "loading",
+                             "sluggish"]),
+    ("Customer Service", ["customer service", "return", "refund", "customer support",
+                          "tech support", "replaced", "replacement", "warranty", "defective"]),
+    ("Value for Money", ["price", "worth", "expensive", "cheap", "value", "money", "cost",
+                         "overpriced"]),
     ("Comfort & Fit", ["comfortable", "uncomfortable", "fit", "ear", "wear", "tight", "loose"]),
-    ("Connectivity", ["bluetooth", "wifi", "connection", "disconnect", "drops", "signal", "remote"]),
-    ("Features & Usability", ["feature", "button", "app", "easy", "difficult", "interface", "works"]),
+    ("Connectivity", ["bluetooth", "wifi", "wi-fi", "connection", "connect", "disconnect",
+                      "drops", "signal"]),
+    ("Features & Usability", ["feature", "button", "app", "easy to use", "difficult",
+                              "interface", "remote", "user friendly"]),
 ]
 
 _CATEGORY_INDEX_BY_NAME = {name: i for i, (name, _) in enumerate(CATEGORY_KEYWORDS)}
@@ -205,25 +234,114 @@ def backfill_topic_ids(summary: dict) -> dict:
     return summary
 
 
-def _review_matches_keywords(text_lower: str, keywords: list[str]) -> bool:
-    return any(kw in text_lower for kw in keywords)
+def _word_forms(word: str) -> set[str]:
+    """A keyword plus its common inflections, so a word-boundary match still
+    finds "batteries", "returned", "apps" and "fitting".
+
+    Deliberately small and rule-based: plurals and verb forms, e-drop
+    (charge -> charging), y -> ies (battery -> batteries), and a doubled final
+    consonant for short consonant-vowel-consonant words (fit -> fitting,
+    lag -> laggy). A form that isn't a real word just never matches.
+    """
+    forms = {word, word + "s", word + "es", word + "ed", word + "ing", word + "er", word + "ers"}
+    if word.endswith("e"):
+        forms |= {word + "d", word + "r", word + "rs", word[:-1] + "ing"}
+    if len(word) > 2 and word.endswith("y") and word[-2] not in "aeiou":
+        forms |= {word[:-1] + "ies", word[:-1] + "ied"}
+    if (len(word) in (3, 4) and word[-1] not in "aeiouwxy"
+            and word[-2] in "aeiou" and word[-3] not in "aeiou"):
+        forms |= {word + word[-1] + suffix for suffix in ("ed", "ing", "er", "y")}
+    return forms
 
 
-def _complaint_level(pct_negative: float) -> str:
-    if pct_negative > 50:
+def _keyword_pattern(keywords: list[str]) -> re.Pattern:
+    """One regex per category, matched on WORD boundaries.
+
+    This used to be `any(kw in text_lower ...)`, a raw substring test: "ear"
+    matched "year", "hear" and "near", "app" matched "happy" and "apple", "fit"
+    matched "benefit". Every category then covered 55-99% of reviews, so the
+    topic and complaint numbers said nothing (audit E-03). A multi-word keyword
+    ("set up") matches with any whitespace between its words.
+    """
+    alternatives: list[str] = []
+    for kw in keywords:
+        words = kw.split()
+        if len(words) > 1:
+            alternatives.append(r"\s+".join(re.escape(w) for w in words))
+        else:
+            alternatives.extend(re.escape(f) for f in _word_forms(kw))
+    # Longest first, so an alternation never stops at a shorter prefix.
+    alternatives.sort(key=len, reverse=True)
+    return re.compile(r"\b(?:" + "|".join(alternatives) + r")\b")
+
+
+_CATEGORY_PATTERNS: list[re.Pattern] = [_keyword_pattern(kws) for _, kws in CATEGORY_KEYWORDS]
+
+
+def _review_matches_keywords(text_lower: str, pattern: re.Pattern) -> bool:
+    return pattern.search(text_lower) is not None
+
+
+# A category's complaint level compares the 1-2 star share of its mentions with
+# the product's own 1-2 star share, so it says whether unhappy reviewers raise
+# the topic more or less often than the product's reviews overall:
+#     negative_lift = category pct_negative / product 1-2 star share
+# HIGH at 1.5x or more, LOW at 1/1.5x or less, MEDIUM in between: a band
+# symmetric on the ratio scale around 1.0, "as often as the product overall".
+#
+# The old thresholds were absolute (> 50% HIGH, > 30% MEDIUM). They were set
+# against the ~40% baseline that a sample holding 50 reviews per star builds
+# in, which is gone now that the shares are post-stratified (audit T-09).
+COMPLAINT_HIGH_LIFT = 1.5
+COMPLAINT_LOW_LIFT = 1 / COMPLAINT_HIGH_LIFT
+
+
+def _complaint_level(negative_lift: float | None) -> str:
+    # None: the product has no 1-2 star reviews at all, so no topic can be
+    # over-represented among them.
+    if negative_lift is None:
+        return "LOW"
+    if negative_lift >= COMPLAINT_HIGH_LIFT:
         return "HIGH"
-    if pct_negative > 30:
-        return "MEDIUM"
-    return "LOW"
+    if negative_lift <= COMPLAINT_LOW_LIFT:
+        return "LOW"
+    return "MEDIUM"
+
+
+def _star_of(rating) -> int | None:
+    """The whole star a review's rating falls on, or None if it has none."""
+    if pd.isna(rating):
+        return None
+    star = int(round(float(rating)))
+    return star if 1 <= star <= 5 else None
 
 
 def _build_category_outputs(
     texts: pd.Series,
     ratings: pd.Series,
+    raw_distribution: dict | None = None,
 ) -> tuple[list[int], dict, list[dict]]:
     """
     Internal: per-review topic ids, full topic_info for features, and the public
-    category list (count >= 5, sorted by count desc) for dashboards.
+    category list (count >= 5, sorted by sample count desc) for dashboards.
+
+    Each row:
+        count            SAMPLED reviews that mention the category
+        mention_pct      share of the product's reviews that mention it: what
+                         the UI and Brief show as "mentioned in X% of reviews"
+        pct_negative /   share of those mentions from 1-2 / 4-5 star reviews
+        pct_positive
+        negative_lift    pct_negative / the product's own 1-2 star share
+        complaint_level  from negative_lift (see COMPLAINT_HIGH_LIFT)
+
+    With `raw_distribution`, every share is post-stratified: it describes the
+    product's real star mix rather than a sample that is 40% 1-2 star by
+    construction. Without it (ad-hoc callers) they are plain sample shares, and
+    the baseline for the lift is the sample's own 1-2 star share, so the level
+    means the same thing either way.
+
+    Still a sample of the LONGEST reviews at each star (ingest), which touch
+    more topics than a typical review, so mention_pct runs high.
     """
     print("Running category analysis...")
 
@@ -236,8 +354,8 @@ def _build_category_outputs(
     texts_lower = [t.lower() if isinstance(t, str) else "" for t in texts]
 
     mention_sets: list[list[bool]] = []
-    for _name, kws in CATEGORY_KEYWORDS:
-        mention_sets.append([_review_matches_keywords(t, kws) for t in texts_lower])
+    for pattern in _CATEGORY_PATTERNS:
+        mention_sets.append([_review_matches_keywords(t, pattern) for t in texts_lower])
 
     topics: list[int] = []
     for i in range(n):
@@ -251,25 +369,45 @@ def _build_category_outputs(
     topic_info: dict = {}
     category_rows: list[dict] = []
 
+    stars = [_star_of(r) for r in ratings]
+    sampled_per_star: dict[int, int] = {}
+    for star in stars:
+        if star is not None:
+            sampled_per_star[star] = sampled_per_star.get(star, 0) + 1
+
+    weighted = bool(raw_distribution and sampled_per_star)
+    # The product's own 1-2 star share: the baseline a category is compared to.
+    if weighted:
+        weights = star_weights(raw_distribution, sampled_per_star)
+        baseline_neg_pct = (weights.get(1, 0.0) + weights.get(2, 0.0)) * 100
+    else:
+        rated = sum(sampled_per_star.values())
+        low = sampled_per_star.get(1, 0) + sampled_per_star.get(2, 0)
+        baseline_neg_pct = (low / rated) * 100 if rated else 0.0
+
     for cat_idx, ((label, trigger_keywords), mentions) in enumerate(
         zip(CATEGORY_KEYWORDS, mention_sets)
     ):
         count = int(sum(mentions))
-        neg = 0
-        pos = 0
-        for i, hit in enumerate(mentions):
-            if not hit:
-                continue
-            r = float(ratings.iloc[i]) if not pd.isna(ratings.iloc[i]) else 3.0
-            if 1 <= r <= 2:
-                neg += 1
-            elif 4 <= r <= 5:
-                pos += 1
+        hits_per_star: dict[int, int] = {star: 0 for star in sampled_per_star}
+        for hit, star in zip(mentions, stars):
+            if hit and star is not None:
+                hits_per_star[star] += 1
 
-        raw_neg_pct = (neg / count) * 100 if count else 0.0
-        raw_pos_pct = (pos / count) * 100 if count else 0.0
+        if weighted:
+            rates = {s: hits_per_star[s] / sampled_per_star[s] for s in sampled_per_star}
+            raw_mention_pct = post_stratified_mean(rates, raw_distribution) * 100
+            raw_neg_pct = post_stratified_share(rates, raw_distribution, (1, 2)) * 100
+            raw_pos_pct = post_stratified_share(rates, raw_distribution, (4, 5)) * 100
+        else:
+            neg = hits_per_star.get(1, 0) + hits_per_star.get(2, 0)
+            pos = hits_per_star.get(4, 0) + hits_per_star.get(5, 0)
+            raw_mention_pct = (count / n) * 100
+            raw_neg_pct = (neg / count) * 100 if count else 0.0
+            raw_pos_pct = (pos / count) * 100 if count else 0.0
         pct_negative = float(round(raw_neg_pct, 1))
         pct_positive = float(round(raw_pos_pct, 1))
+        negative_lift = raw_neg_pct / baseline_neg_pct if baseline_neg_pct > 0 else None
 
         topic_info[cat_idx] = {
             "label": label,
@@ -282,77 +420,121 @@ def _build_category_outputs(
                 "label": label,
                 "keywords": trigger_keywords[:3],
                 "count": count,
+                "mention_pct": float(round(raw_mention_pct, 1)),
                 "pct_negative": pct_negative,
                 "pct_positive": pct_positive,
-                "complaint_level": _complaint_level(raw_neg_pct),
+                "negative_lift": None if negative_lift is None else round(negative_lift, 2),
+                "complaint_level": _complaint_level(negative_lift),
             })
 
+    # Ranked by SAMPLE count, which decides the six `top_topics` the dashboard
+    # and the Brief see. Ranking by `mention_pct` instead was tried and pushes
+    # Customer Service out of the top six on 7 of the 12 products, and it is the
+    # category rated HIGH on 10 of them: its mentions come mostly from 1-2 star
+    # reviewers, who are few among real reviews but a fifth of the sample each.
+    # Displays that show "mentioned in X%" sort by mention_pct themselves.
     category_rows.sort(key=lambda row: row["count"], reverse=True)
     print(f"Category mentions (>=5 in output): {len(category_rows)}")
     return topics, topic_info, category_rows
 
 
-def run_category_analysis(texts: pd.Series, ratings: pd.Series) -> list[dict]:
+def run_category_analysis(texts: pd.Series, ratings: pd.Series,
+                          raw_distribution: dict | None = None) -> list[dict]:
     """
-    Keyword-based category detection (case-insensitive substring match).
+    Keyword-based category detection (case-insensitive, whole words; see
+    _keyword_pattern).
 
     For each category, counts reviews with at least one trigger keyword and
-    computes the share of those mentions from 1–2★ vs 4–5★ reviews (3★ excluded).
+    computes the share of those mentions from 1–2★ vs 4–5★ reviews (3★ excluded),
+    post-stratified by `raw_distribution` when given.
 
     Returns:
-        Sorted list (count descending) of dicts with label, keywords (3 strings),
-        count, pct_negative, pct_positive, complaint_level — only categories with
-        count >= 5.
+        Sorted list (count descending) of dicts with label, keywords (3
+        strings), count, mention_pct, pct_negative, pct_positive, negative_lift,
+        complaint_level — only categories with count >= 5. See
+        _build_category_outputs for what each field means.
     """
-    _, _, rows = _build_category_outputs(texts, ratings)
+    _, _, rows = _build_category_outputs(texts, ratings, raw_distribution)
     return rows
 
 
 # ── Feature Engineering ────────────────────────────────────────────────────────
 
-def engineer_features(df: pd.DataFrame, 
+def engineer_features(df: pd.DataFrame,
                       topics: list[int],
-                      topic_info: dict) -> pd.DataFrame:
+                      raw_distribution: dict | None) -> tuple[pd.DataFrame, dict]:
     """
     Combines sentiment scores + topic assignments into features for XGBoost.
 
     This is the bridge between NLP outputs and the prediction model.
-    Each row = one product's aggregated signal (not per-review).
+    Each row = one product's aggregated signal (not per-review). The keys are
+    exactly src.features.MODEL_FEATURES; the definitions shared with training
+    live in src/features.py.
 
     Features created:
-        - avg_compound_score: mean sentiment across all reviews
-        - pct_negative: what % of reviews are negative
-        - pct_positive: what % of reviews are positive
-        - negative_topic_score: sentiment of reviews in negative topics
-        - rating_sentiment_gap: do ratings match sentiment? (signal for fake reviews)
-        - review_length_avg: longer reviews = more engaged customers
+        - avg_compound_score: mean sentiment
+        - pct_negative / pct_positive: share of reviews by sentiment label
+        - avg_positive_score / avg_negative_score: mean class probabilities
+        - rating_avg: the product's REAL mean star rating
+        - rating_sentiment_gap: do ratings match sentiment?
+
+    Everything is taken from `raw_distribution`, the star counts ingest captured
+    before it balanced the sample to 50 reviews per star:
+        - `rating_avg` is its mean. The balanced sample's own mean is 3.0 for
+          every product (audit E-01).
+        - the five sentiment features are post-stratified: computed per star on
+          the sample, then weighted by the real star mix (src/features.py). A
+          plain mean over the balanced sample is 40% 1-2 star by construction,
+          and it put a real rating beside sample-biased sentiment in the gap.
+    Without a distribution (ad-hoc callers only) all of them fall back to the
+    analysed sample, loudly.
     """
     df = df.copy()
     df["topic_id"] = topics
 
-    # per-review features
+    # per-review columns, kept in the enriched CSV
     df["review_length"] = df["body"].str.len()
     df["is_negative"] = (df["sentiment_label"] == "negative").astype(int)
     df["is_positive"] = (df["sentiment_label"] == "positive").astype(int)
 
-    # aggregate to product level
-    features = {
-        "avg_compound_score":   df["compound_score"].mean(),
-        "pct_negative":         df["is_negative"].mean(),
-        "pct_positive":         df["is_positive"].mean(),
-        "avg_positive_score":   df["positive_score"].mean(),
-        "avg_negative_score":   df["negative_score"].mean(),
-        "review_length_avg":    df["review_length"].mean(),
-        "rating_avg":           df["rating"].mean(),
-        "rating_std":           df["rating"].std(),
-        # how many reviews give low rating but positive sentiment?
-        # high value = product has real issues despite good reviews
-        "rating_sentiment_gap": abs(
-            df["rating"].mean() / 5 - df["positive_score"].mean()
-        ),
-        "n_topics":             len(topic_info),
-        "pct_outlier_reviews":  (pd.Series(topics) == -1).mean(),
+    sentiment_columns = {
+        "avg_compound_score": "compound_score",
+        "pct_negative":       "is_negative",
+        "pct_positive":       "is_positive",
+        "avg_positive_score": "positive_score",
+        "avg_negative_score": "negative_score",
     }
+    if raw_distribution:
+        rating_avg, _ = rating_stats(raw_distribution)
+        by_star = df.assign(_star=df["rating"].map(_star_of)).dropna(subset=["_star"])
+        per_star = by_star.groupby("_star")[list(sentiment_columns.values())].mean()
+        sentiment = {
+            name: float(post_stratified_mean(
+                {int(star): mean for star, mean in per_star[column].items()},
+                raw_distribution,
+            ))
+            for name, column in sentiment_columns.items()
+        }
+    else:
+        # Only ad-hoc callers get here: ingest always returns a distribution.
+        # Say so loudly, because on a star-balanced sample this is the 3.0 bug.
+        print("[features] no raw_star_distribution; rating_avg and sentiment fall "
+              "back to the analysed sample, which is biased if the sample was "
+              "star-balanced")
+        rating_avg = float(df["rating"].mean())
+        sentiment = {name: float(df[column].mean()) for name, column in sentiment_columns.items()}
+
+    avg_compound = sentiment["avg_compound_score"]
+    features = {
+        "avg_compound_score":   avg_compound,
+        "pct_negative":         sentiment["pct_negative"],
+        "pct_positive":         sentiment["pct_positive"],
+        "avg_positive_score":   sentiment["avg_positive_score"],
+        "avg_negative_score":   sentiment["avg_negative_score"],
+        "rating_avg":           rating_avg,
+        "rating_sentiment_gap": rating_sentiment_gap(rating_avg, avg_compound),
+    }
+    assert tuple(features) == MODEL_FEATURES, "served features drifted from MODEL_FEATURES"
 
     return df, features
 
@@ -393,18 +575,34 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None,
         axis=1
     )
 
+    return analyze_scored_reviews(df_enriched, raw_distribution, cancel=cancel)
+
+
+def analyze_scored_reviews(df_enriched: pd.DataFrame,
+                           raw_distribution: dict | None = None,
+                           cancel: CancelToken | None = None) -> dict:
+    """Everything after sentiment scoring: categories, features and summary.
+
+    Split out of run_nlp_pipeline so scripts/recompute_features.py can rebuild
+    the cached features_*.json from the committed nlp_*.csv (which already
+    holds the sentiment columns) through exactly this code, instead of
+    re-running the HF sentiment model. Same return shape as run_nlp_pipeline.
+    """
+    df = df_enriched
+
     # ── Step 2: Category analysis ──
     check_cancelled(cancel)
     print("\nStep 2/3: Category analysis...")
     topics, topic_info, categories = _build_category_outputs(
         df["body"],
         df["rating"],
+        raw_distribution,
     )
 
     # ── Step 3: Feature engineering ──
     check_cancelled(cancel)
     print("\nStep 3/3: Feature engineering...")
-    df_enriched, features = engineer_features(df_enriched, topics, topic_info)
+    df_enriched, features = engineer_features(df_enriched, topics, raw_distribution)
 
     # build monthly sentiment timeline from enriched df
     if "timestamp" in df_enriched.columns:
@@ -432,8 +630,12 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None,
 
     # ── Summary stats for dashboard ──
     summary = {
+        # The SAMPLE size (up to 50 per star), not the product's review count,
+        # which is sum(raw_star_distribution). Shown as "reviews sampled".
         "total_reviews":    len(df),
-        "avg_rating":       round(df["rating"].mean(), 2),
+        # The product's real mean, not the balanced sample's 3.0 (audit E-01).
+        "avg_rating":       round(features["rating_avg"], 2),
+        # Post-stratified to the real star mix, like the features they come from.
         "pct_negative":     round(features["pct_negative"] * 100, 1),
         "pct_positive":     round(features["pct_positive"] * 100, 1),
         "categories":       categories,
@@ -444,8 +646,10 @@ def run_nlp_pipeline(df: pd.DataFrame, raw_distribution: dict | None = None,
                 "label":           cat["label"],
                 "keywords":        cat["keywords"],
                 "count":           cat["count"],
+                "mention_pct":     cat["mention_pct"],
                 "pct_negative":    cat["pct_negative"],
                 "pct_positive":    cat["pct_positive"],
+                "negative_lift":   cat["negative_lift"],
                 "complaint_level": cat["complaint_level"],
             }
             for cat in categories[:6]

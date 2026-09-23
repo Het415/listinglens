@@ -14,8 +14,9 @@ export interface ChatMessage {
   recommendation?: Recommendation
   error?: string
   /**
-   * Error class from the backend (`rate_limited`, `malformed_output`,
-   * `model_gone`, `auth`, `unknown`). Drives the retry hint — suggesting
+   * Error class from the backend (`rate_limited`, `quota_exhausted`,
+   * `too_large`, `malformed_output`, `model_gone`, `auth`, `unknown`).
+   * Drives the retry hint — suggesting
    * "try again" on a decommissioned model would be wrong.
    */
   errorKind?: string
@@ -33,11 +34,15 @@ export type Recommendation = {
   suggested_next_actions: string[]
   /**
    * True when the backend assembled this from tool results because the
-   * Synthesizer LLM failed. The evidence is real; `decision` and `confidence`
-   * are placeholders, so the card must say so rather than render 0% next to a
-   * confident-looking verdict.
+   * Synthesizer LLM failed, or when the Executor gave up on a research step
+   * so the verdict is a forced hedge. The evidence is real; `decision` and
+   * `confidence` are not judgements, so the card must say so rather than
+   * render 0% next to a confident-looking verdict.
    */
   degraded?: boolean
+  /** Which stage degraded; both are set by the streaming endpoint. */
+  synthesis_degraded?: boolean
+  executor_degraded?: boolean
 }
 
 /** The `image_audit` tool's payload, as the vislens service emits it.

@@ -41,7 +41,6 @@ def _fallback_plan(query: str) -> Plan:
 
 def plan_node(state: AgentState) -> dict:
     """Classify the query and pick the initial tool sequence."""
-    client = groq_client()
     product_name = state.get("product_name") or state["asin"]
 
     user_msg = (
@@ -51,6 +50,9 @@ def plan_node(state: AgentState) -> dict:
     )
 
     try:
+        # Built inside the try so a client that cannot be constructed takes the
+        # fallback plan like any other planner failure (audit E-19).
+        client = groq_client()
         plan: Plan = resilient_call("agent", lambda model: client.chat.completions.create(
             model=model,
             response_model=Plan,

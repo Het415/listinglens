@@ -20,9 +20,12 @@ export function RecommendationCard({
 }) {
   const style = decisionStyle(rec.decision)
   const [copied, setCopied] = useState(false)
-  // Assembled from tool results because the Synthesizer LLM failed. The
-  // evidence below is real; the verdict and confidence are placeholders.
+  // Either the Synthesizer LLM failed and this was assembled from tool
+  // results, or the Executor gave up on a research step and the verdict is a
+  // forced hedge. Either way the evidence below is real and the verdict and
+  // confidence are not to be read as judgements.
   const degraded = rec.degraded === true
+  const executorOnly = degraded && rec.executor_degraded === true && rec.synthesis_degraded !== true
 
   const handleCopy = async () => {
     try {
@@ -47,8 +50,9 @@ export function RecommendationCard({
           <div className="text-xs leading-relaxed">
             <span className="font-medium text-amber-400">Partial answer.</span>{' '}
             <span className="text-foreground">
-              The research below completed, but the model could not produce a
-              final verdict — so there is no decision or confidence score here.
+              {executorOnly
+                ? 'A research step could not run (the language model was out of budget), so the verdict would rest on missing evidence and is not shown.'
+                : 'The research below completed, but the model could not produce a final verdict — so there is no decision or confidence score here.'}{' '}
               The evidence is real and can be read directly.
             </span>
           </div>
@@ -71,7 +75,11 @@ export function RecommendationCard({
             {degraded ? 'No verdict' : style.label}
           </div>
           <div className="text-xs text-muted-foreground">
-            {degraded ? 'Synthesis step failed — evidence only' : style.tagline}
+            {degraded
+              ? executorOnly
+                ? 'Research incomplete — evidence only'
+                : 'Synthesis step failed — evidence only'
+              : style.tagline}
           </div>
         </div>
         <button

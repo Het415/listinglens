@@ -9,16 +9,14 @@ Two baselines:
 Both produce an AgentOutput matching the full agent's shape so the eval
 pipeline can treat them uniformly.
 """
-import os
 
-import instructor
-from groq import Groq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import ToolNode
 
+from backend.agent.graph import handle_tool_error
 from backend.agent.nodes.synthesizer import synthesize_node
 from backend.agent.prompts import SYNTHESIZER_SYSTEM_PROMPT
 from backend.agent.schemas import (
@@ -57,8 +55,9 @@ def run_no_tool(asin: str, query: str) -> AgentOutput:
         HumanMessage(content=f"Product: {product_name} (ASIN: {asin})\nQuestion: {query}"),
     ])
 
-    # Synthesize to the Recommendation shape directly via instructor.
-    client = groq_client()
+    # Synthesize to the Recommendation shape directly via instructor, on the
+    # synthesizer's client profile so the baseline times out like the agent.
+    client = groq_client(long_output=True)
     recommendation = client.chat.completions.create(
         model=agent_model(),
         response_model=Recommendation,
@@ -152,7 +151,9 @@ def run_single_tool(asin: str, query: str) -> AgentOutput:
 
     graph = StateGraph(AgentState)
     graph.add_node("agent", agent_node)
-    graph.add_node("tools", ToolNode(tools))
+    # Same handler as the full agent, so a raising tool degrades the baseline
+    # the same way instead of aborting only this variant's row.
+    graph.add_node("tools", ToolNode(tools, handle_tool_errors=handle_tool_error))
     graph.add_node("synthesizer", synthesize_node)
     graph.add_edge(START, "agent")
     graph.add_conditional_edges("agent", route, {"tools": "tools", "synthesizer": "synthesizer"})

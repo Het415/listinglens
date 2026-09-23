@@ -17,6 +17,7 @@ The DB is the substrate for notebooks/eda.ipynb and (optionally) the runtime
 loader. It is rebuilt from files, so it is safe to delete and regenerate.
 """
 import json
+import os
 from pathlib import Path
 
 import duckdb
@@ -55,7 +56,7 @@ def _load_products():
             "avg_rating": summ.get("avg_rating"),
             "pct_negative": summ.get("pct_negative"),
             "pct_positive": summ.get("pct_positive"),
-            "n_topics": feats.get("n_topics"),
+            "rating_avg": feats.get("rating_avg"),
             "avg_compound_score": feats.get("avg_compound_score"),
         })
         for t in summ.get("top_topics", []) or []:
@@ -64,8 +65,10 @@ def _load_products():
                 "label": t.get("label"),
                 "keywords": ", ".join(t.get("keywords", []) or []),
                 "count": t.get("count"),
+                "mention_pct": t.get("mention_pct"),
                 "pct_negative": t.get("pct_negative"),
                 "pct_positive": t.get("pct_positive"),
+                "negative_lift": t.get("negative_lift"),
                 "complaint_level": t.get("complaint_level"),
             })
     return (pd.DataFrame(metrics), pd.DataFrame(summaries),
@@ -129,7 +132,14 @@ def main() -> int:
     metrics, summaries, features, topics = _load_products()
     convos, turns, intents = _load_conversations()
 
-    con = duckdb.connect(str(DB_PATH))
+    # Build a fresh file and swap it in. Rebuilding in place kept every dropped
+    # table's blocks (the file doubled on one rebuild, 14.7 -> 29.4 MB), and a
+    # build that died halfway would leave a partial DB for the runtime loader,
+    # which reads this file BEFORE the JSON it was built from
+    # (backend/mcp_server/tools/_loader.py).
+    tmp = DB_PATH.with_name(f"{DB_PATH.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    con = duckdb.connect(str(tmp))
     try:
         _write(con, "reviews", reviews)
         _write(con, "product_metrics", metrics)
@@ -139,8 +149,12 @@ def main() -> int:
         _write(con, "conversations", convos)
         _write(con, "conversation_turns", turns)
         _write(con, "conversation_intents", intents)
-    finally:
+    except BaseException:
         con.close()
+        tmp.unlink(missing_ok=True)
+        raise
+    con.close()
+    os.replace(tmp, DB_PATH)
     print("Done.")
     return 0
 

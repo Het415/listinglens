@@ -47,7 +47,7 @@ def _state(messages):
 @pytest.fixture
 def failing_synthesis(monkeypatch):
     """Make the structured call fail the way production did."""
-    monkeypatch.setattr(synth, "groq_client", lambda: object())
+    monkeypatch.setattr(synth, "groq_client", lambda **_: object())
 
     def _boom(stage, fn):
         raise GROQ_400
@@ -136,7 +136,7 @@ def test_success_path_is_untouched(monkeypatch):
         decision="go", confidence=0.85, summary="Buy it now.",
         evidence=[Evidence(tool="price_history", snippet="$24.99", relevance=0.9)],
     )
-    monkeypatch.setattr(synth, "groq_client", lambda: object())
+    monkeypatch.setattr(synth, "groq_client", lambda **_: object())
     monkeypatch.setattr(synth, "resilient_call", lambda stage, fn: good)
 
     out = synth.synthesize_node(_state([

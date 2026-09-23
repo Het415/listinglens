@@ -54,6 +54,8 @@ You'll see the planner pick tools, the executor run them with live results, and 
 
 ## Headline numbers
 
+> **Dated note, 2026-09-23: these numbers describe an earlier agent.** The table comes from the 2026-09-20 run of the agent as it was then: 5 tools, a 33-row gold set, and code from before `c5aabe80` (the synthesizer's tool-result cap raised from 1500 to 3000 characters), `38415d87` (`image_audit` added as a sixth tool) and the 2026-09-23 fixes (a failing tool or model now degrades the answer instead of ending the run; return-risk features use each product's real ratings; sentiment is weighted to the real star mix). That run recorded no commit. A re-run on the current code is pending, so read the table as that agent's numbers, not this one's.
+
 Evaluated on a 33-query benchmark, judged by Claude Haiku 4.5 (different LLM family from the agent, so no same-family bias). Full report: [eval/reports/2026-09-20-goldv2-judged.md](eval/reports/2026-09-20-goldv2-judged.md).
 
 | Metric | Score | What it means |
@@ -77,9 +79,9 @@ What is genuinely new evidence: the three added `no_go` cases were answered corr
 
 The failure mode is **under-commitment, not over-confidence** — a correction to what this README previously claimed. Measured again on the 33-query set: 8 hedges (committal gold answered `needs_more_data`) against 2 over-commits. One launch row (`launch_007`) is still wrongly answered `go`, so the over-confidence the README used to describe is real but rare — it is now a single isolated case rather than the dominant pattern. The root cause is a contradiction in the synthesizer prompt: it is told to always populate `evidence_gaps`, *and* that a non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` logically unreachable for launch queries. That is a fix with a known mechanism, not a tuning guess.
 
-**And a caveat on reading any single run:** two runs of *identical* code flipped 11 of 24 comparable rows in opposite directions. This benchmark has a **~11-row (~37%) noise floor**, so a single-run delta smaller than that is meaningless. Detecting the prompt fix above needs repeated runs, or a narrower metric (per-type hedge-error count) as the primary signal. Knowing that a benchmark cannot resolve your change is more useful than a number that moves.
+**And a caveat on reading any single run:** two runs flipped 11 of 24 comparable rows in opposite directions. This README used to call them runs of *identical* code; they were not, since 384 lines of agent code changed between them, and a 2026-09-23 re-measurement on a truly identical pair flipped 7 of 25. This benchmark has a **~11-row (~37%) noise floor**, so a single-run delta smaller than that is meaningless. Detecting the prompt fix above needs repeated runs, or a narrower metric (per-type hedge-error count) as the primary signal. Knowing that a benchmark cannot resolve your change is more useful than a number that moves.
 
-**Weakest dimension, and what it actually is.** `evidence_relevance` at 0.545 reads like a retrieval-ranking problem. It is not — the judge never once complains about ranking. The synthesizer truncates each tool result at 1500 characters while `review_qa`'s payload measures 2019–2218, so **3 of 5 retrieved review snippets are discarded before the synthesizer sees them**, on essentially every call. That is why answers stay thorough (completeness 0.870) while their citations go vague. Confirmed by the latest run: repairing four gold rows that demanded unreachable percentages left `evidence_relevance` flat at 0.548, because the truncation causing it is still there.
+**Weakest dimension, and what it actually is.** `evidence_relevance` at 0.545 reads like a retrieval-ranking problem. It is not — the judge never once complains about ranking. In that run the synthesizer truncated each tool result at 1500 characters while `review_qa`'s payload measured 2019–2218, so **3 of 5 retrieved review snippets were discarded before the synthesizer saw them**, on essentially every call. That is why answers stayed thorough (completeness 0.870) while their citations went vague. Confirmed by that run: repairing four gold rows that demanded unreachable percentages left `evidence_relevance` flat at 0.548, because the truncation causing it was still there. `c5aabe80` has since raised the cap to 3000 characters; whether that moves `evidence_relevance` is for the pending re-run to show.
 
 The eval is the dev loop, not the scoreboard.
 
@@ -132,9 +134,10 @@ synthesizer prompt's worked examples anchor hedged answers at 0.55. Recorded her
 than quietly listed as a feature; re-arming it means gating on missing tools instead of
 on self-reported confidence.
 
-Two of the five tools are real:
+Two of the five tools run on real review data:
 - **`review_qa`** — semantic search over actual Amazon reviews using vector embeddings, then an LLM answers grounded in what it found
-- **`predict_return_risk`** — an XGBoost classifier trained on engineered review features (96.5% accuracy on held-out data)
+- **`predict_return_risk`** — an XGBoost classifier over engineered review features (sentiment mix, the product's real average rating, a rating–sentiment gap). There is no return data behind it: it is trained on synthetic product profiles against a *proxy* label, a fixed threshold of three of its own inputs, so the score it reports is the probability of that proxy label, not a predicted return rate. Its held-out accuracy only measures how well it re-learns the threshold, so none is quoted here; the training record is `data/processed/xgboost_metrics.json`.
+  - **It scores all 12 catalog products LOW, and that is not a bug.** Since the 2026-09-23 fixes (real average ratings, and sentiment weighted to each product's real star mix), every product scores 0.0–0.4%. That is what its own label definition says: the proxy score, 0.4 × negative share + 0.4 × (1 − rating/5) + 0.2 × rating–sentiment gap, is 0.09–0.17 for these 4.1–4.6★ products, against a 0.30 cut. A catalog of well-rated products is low-risk by the definition the model learns. The old HIGH scores came from reading every product as 3.0★.
 
 The other three (competitor, price, trend) are deterministic synthetic data — the agent doesn't know the difference, which means the architecture is real even where the data isn't yet. Wiring real market data in is a tool-layer swap, not an agent change.
 
@@ -222,7 +225,7 @@ The judgment section — deliberate omissions, not oversights. The first two are
 
 1. **Resolve the synthesizer prompt contradiction.** Always populate `evidence_gaps` + non-empty `evidence_gaps` forces `needs_more_data` = `go` is unreachable for launch queries. Fixing it has to be per-query-type: the hedging bias is *load-bearing* for launch, where gold is 6/10 `needs_more_data`, so a global de-hedge would trade 5 correct answers for 3. Verification needs repeated runs, per the noise floor above.
 
-2. **Raise the 1500-char tool-result cap** in the synthesizer, which currently deletes 3 of 5 review snippets before they are ever seen. Measured cost of the fix: ~175 extra tokens per run, since `review_qa` is the only tool whose payload exceeds the cap.
+2. **Measure the raised tool-result cap.** The synthesizer's 1500-char cap deleted 3 of 5 review snippets before they were ever seen; `c5aabe80` raised it to 3000, at a measured ~175 extra tokens per run, since `review_qa` is the only tool whose payload exceeded the cap. Whether it lifts `evidence_relevance` waits on the re-run of the current code.
 
 3. **Scale past 12 products.** FAISS indexes are memory-mapped from disk on first use (eager preload is opt-in via `PRELOAD_CACHE=1`). Fine for ~50 products on the free tier; for ≥100, swap FAISS for a managed vector DB (Pinecone, Qdrant, or pgvector). The `review_qa` tool interface doesn't change — only what's underneath. Don't migrate before there's a reason.
 
@@ -246,7 +249,7 @@ The judgment section — deliberate omissions, not oversights. The first two are
 
 **I was wrong about my own agent, and the data said so.** This README used to claim the failure mode was over-confidence on launch queries. Measuring it properly showed the opposite — 8 hedges against 3 over-commits, and zero wrong `go`s on launch. A fix had already landed months earlier and overshot, and the stale diagnosis survived because nobody re-derived it. Acting on the old story would have made the agent worse.
 
-**Know what your benchmark cannot see.** Two runs of identical code disagreed on 11 of 24 rows. Any single-run improvement smaller than that is noise, which means the honest next step is a repeated-runs design, not another prompt tweak measured once. A benchmark you trust past its resolution is worse than no benchmark.
+**Know what your benchmark cannot see.** Two runs I took for identical code disagreed on 11 of 24 rows (they weren't identical: 384 lines of agent code differed). Any single-run improvement smaller than that is noise, which means the honest next step is a repeated-runs design, not another prompt tweak measured once. A benchmark you trust past its resolution is worse than no benchmark.
 
 ---
 

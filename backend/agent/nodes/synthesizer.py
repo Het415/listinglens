@@ -192,8 +192,6 @@ def _degraded_recommendation(state: AgentState, err: Exception) -> Recommendatio
 
 def synthesize_node(state: AgentState) -> dict:
     """Produce the Recommendation, degrading to local assembly on failure."""
-    client = groq_client()
-
     transcript = _build_transcript(
         messages=state.get("messages", []),
         query=state["query"],
@@ -203,6 +201,11 @@ def synthesize_node(state: AgentState) -> dict:
 
     degraded = False
     try:
+        # Inside the try, so a client that cannot be built degrades like any
+        # other synthesis failure instead of discarding the gathered evidence.
+        # long_output: a healthy Recommendation can take 20-40 s, past the
+        # 20 s default read timeout (src/llm_config.py, request_timeout).
+        client = groq_client(long_output=True)
         recommendation: Recommendation = resilient_call("agent", lambda model: client.chat.completions.create(
             model=model,
             response_model=Recommendation,

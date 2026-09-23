@@ -16,7 +16,6 @@ Output: data/processed/transcripts_{asin}.jsonl
 """
 import argparse
 import json
-import os
 import random
 import time
 from datetime import datetime, timedelta, timezone

@@ -71,3 +71,38 @@ services:
       # absence reads as "that code path did not run".
       - key: PYTHONUNBUFFERED
         value: "1"
+      # ── Abuse limits (backend/http_limits.py) ───────────────────────────
+      # NOTE: the live service is not linked to this file (HANDOFF.md), so
+      # these must also be set on the service itself.
+      #
+      # The client IP is read from X-Forwarded-For, counted this many entries
+      # from the RIGHT (the ones our proxy wrote). The code already defaults
+      # to 1 when RENDER is set; pinned here so it is explicit. Do NOT use
+      # uvicorn's --forwarded-allow-ips='*' instead: it takes the LEFTMOST
+      # entry, which the client controls, so rotating a fake header would buy
+      # a fresh rate limit on every request.
+      - key: TRUSTED_PROXY_HOPS
+        value: "1"
+      # Requests per minute per client IP on the LLM routes.
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "20"
+      # Estimated LLM calls per client IP, refilling over 24h. A Copilot run
+      # counts as 8, so 48 is 6 runs up front.
+      - key: LLM_CALLS_PER_IP_PER_DAY
+        value: "48"
+      # Estimated LLM calls per UTC day for the whole service. Groq's free tier
+      # is ~30 Copilot runs per model per day, and the eval shares the key.
+      - key: LLM_DAILY_BUDGET
+        value: "300"
+      # ── LLM wall-clock bounds (src/llm_config.py) ───────────────────────
+      # Read timeout per Groq HTTP attempt (20 s; 45 s for the synthesizer and
+      # the Executive Brief, which write a long structured answer), and how
+      # long one stage may keep failing over on timeouts, dropped connections
+      # or 5xx before it degrades. The code defaults are the same; pinned here
+      # to be explicit.
+      - key: LLM_REQUEST_TIMEOUT_S
+        value: "20"
+      - key: LLM_AGENT_REQUEST_TIMEOUT_S
+        value: "45"
+      - key: LLM_STAGE_DEADLINE_S
+        value: "45"

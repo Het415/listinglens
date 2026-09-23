@@ -24,12 +24,18 @@ type AnalyzeResponse = {
     total_reviews?: number
     pct_positive?: number
     pct_negative?: number
+    raw_star_distribution?: Record<string, number>
     sentiment_by_rating?: Record<string, number> | Record<number, number>
     top_topics?: Array<{
       id?: number
       label: string
       keywords?: string[]
+      /** Sampled reviews that mention it. */
       count?: number
+      /** Estimated share of all the product's reviews that mention it (0–100). */
+      mention_pct?: number
+      pct_negative?: number
+      pct_positive?: number
     }>
     avg_rating?: number
   }
@@ -283,7 +289,10 @@ function ReviewsPageInner() {
   const features = analysis?.features
   const risk = analysis?.risk
 
+  // The analysed sample (50 per star), not the product's review count.
   const totalReviews = reviews.length || summary?.total_reviews || 0
+  const totalRatings = Object.values(summary?.raw_star_distribution || {})
+    .reduce((n, c) => n + Number(c || 0), 0)
   const pctPositive = summary?.pct_positive ?? 0
   const pctNegative = summary?.pct_negative ?? 0
   const avgCompound = typeof features?.avg_compound_score === 'number' ? features.avg_compound_score : undefined
@@ -306,7 +315,9 @@ function ReviewsPageInner() {
     const best = [...entries].sort((a, b) => b.compound - a.compound)[0]
     const worst = [...entries].sort((a, b) => a.compound - b.compound)[0]
 
-    const topicMost = [...topics].sort((a, b) => (b.count ?? 0) - (a.count ?? 0))[0]
+    const topicMost = [...topics].sort(
+      (a, b) => (b.mention_pct ?? b.count ?? 0) - (a.mention_pct ?? a.count ?? 0),
+    )[0]
 
     const alignmentGap = typeof (features as any)?.rating_sentiment_gap === 'number' ? (features as any).rating_sentiment_gap : undefined
 
@@ -325,7 +336,9 @@ function ReviewsPageInner() {
     return [
       `Best star sentiment: ${best.star}-star reviews (${best.compound >= 0 ? '+' : ''}${best.compound.toFixed(3)}).`,
       `Worst star sentiment: ${worst.star}-star reviews (${worst.compound >= 0 ? '+' : ''}${worst.compound.toFixed(3)}).`,
-      `Most discussed topic: “${topicMost?.label || 'N/A'}” with ${topicMost?.count ?? 0} reviews.`,
+      typeof topicMost?.mention_pct === 'number'
+        ? `Most discussed topic: “${topicMost.label}”, mentioned in ${topicMost.mention_pct}% of reviews.`
+        : `Most discussed topic: “${topicMost?.label || 'N/A'}” in ${topicMost?.count ?? 0} sampled reviews.`,
       `Overall sentiment classification: ${classifyOverallSentiment(avgCompound)}.`,
       `Rating vs sentiment alignment: ${alignmentText} Return risk: ${riskLabel}${riskPct != null ? ` (${Math.round(riskPct)}%)` : ''}.`,
     ]
@@ -347,6 +360,14 @@ function ReviewsPageInner() {
   // Section 3 topic cards
   // -----------------------
   const maxTopicCount = useMemo(() => Math.max(...topics.map((t) => t.count ?? 0), 0), [topics])
+  // The API ranks topics by sample count, which decides which six appear. The
+  // cards show "mentioned in X% of reviews", a weighted share whose order can
+  // differ, so they are listed by that share. Older payloads have no
+  // mention_pct, and the sort then keeps the API order.
+  const topicsByMention = useMemo(
+    () => [...topics].sort((a, b) => (b.mention_pct ?? -1) - (a.mention_pct ?? -1)),
+    [topics],
+  )
 
   // -----------------------
   // Section 5 table controls (filter/sort)
@@ -438,11 +459,17 @@ function ReviewsPageInner() {
           <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
             <h2 className="mb-4 text-sm font-medium text-foreground">Sentiment Overview</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard label="Total Reviews" value={`${totalReviews}`} />
+              <StatCard label="Reviews sampled" value={`${totalReviews}`} />
               <StatCard label="Positive %" value={`${pctPositive}%`} color="text-accent-teal" />
               <StatCard label="Negative %" value={`${pctNegative}%`} color="text-accent-red" />
               <StatCard label="Average Compound Score" value={`${avgCompound != null ? avgCompound.toFixed(3) : 'N/A'}`} />
             </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              The sample holds an equal number of reviews per star. The shares and the compound
+              score are weighted to the product&apos;s real star mix
+              {totalRatings ? ` (${totalRatings.toLocaleString()} ratings)` : ''}, so they
+              describe all of its reviews, not the sample.
+            </p>
           </section>
 
           {/* SECTION 2 — Sentiment by Star Rating */}
@@ -513,17 +540,24 @@ function ReviewsPageInner() {
           <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
             <h2 className="mb-4 text-sm font-medium text-foreground">Topic Deep Dive</h2>
             <div className="space-y-3">
-              {topics.map((t, idx) => {
+              {topicsByMention.map((t, idx) => {
                 // Keyed by position, not by `t.id`: older pre-computed summaries
                 // ship `id: null` for every topic, and a shared fallback would
                 // expand every card at once.
                 const isOpen = expandedTopicIndex === idx
-                const sentiment = sentimentIndicatorEstimate({
-                  topicCount: t.count,
-                  maxCount: maxTopicCount,
-                  pctPositive,
-                  pctNegative,
-                })
+                // The API's per-category star mix when it has one. The estimate
+                // (from the count's rank and the overall totals) is only for
+                // older payloads that lack it.
+                const hasRealMix =
+                  typeof t.pct_positive === 'number' && typeof t.pct_negative === 'number'
+                const sentiment = hasRealMix
+                  ? { positive: t.pct_positive!, negative: t.pct_negative! }
+                  : sentimentIndicatorEstimate({
+                      topicCount: t.count,
+                      maxCount: maxTopicCount,
+                      pctPositive,
+                      pctNegative,
+                    })
                 return (
                   <div key={`${idx}-${t.label}`} className="rounded-xl border border-border p-4">
                     <button
@@ -535,7 +569,9 @@ function ReviewsPageInner() {
                         <div className="flex items-center gap-2">
                           <h3 className="text-sm font-medium text-foreground">{t.label}</h3>
                           <span className="rounded border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                            {t.count ?? 0} reviews
+                            {typeof t.mention_pct === 'number'
+                              ? `mentioned in ${t.mention_pct}% of reviews`
+                              : `${t.count ?? 0} sampled reviews`}
                           </span>
                         </div>
                         <div className="mt-3 flex items-center gap-3">
@@ -569,7 +605,9 @@ function ReviewsPageInner() {
                           ))}
                         </div>
                         <div className="text-xs text-muted-foreground">
-                          Sentiment bar estimates positive vs complaint-heavy mention share using overall sentiment totals.
+                          {hasRealMix
+                            ? `Bar: ${t.pct_positive}% of these mentions are from 4–5★ reviews (teal) and ${t.pct_negative}% from 1–2★ (red), weighted to the real star mix; the rest are 3★.${typeof t.count === 'number' ? ` ${t.count} sampled reviews mention it.` : ''}`
+                            : 'Sentiment bar estimates positive vs complaint-heavy mention share using overall sentiment totals.'}
                         </div>
                       </div>
                     )}

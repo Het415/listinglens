@@ -213,7 +213,9 @@ def probe_models() -> bool:
         passes, flavours = 0, []
         for _ in range(SCHEMA_PROBE_ATTEMPTS):
             try:
-                groq_client().chat.completions.create(
+                # The synthesizer's client profile, so a slow but healthy
+                # model is not reported as failing the schema.
+                groq_client(long_output=True).chat.completions.create(
                     model=model,
                     response_model=Recommendation,
                     max_retries=1,

@@ -191,7 +191,7 @@ If any one of (1)–(4) is missing, weak, or wasn't gathered → `needs_more_dat
 
 Output `no_go` only when at least TWO of these are actively negative:
   - The exact variant already exists from a dominant first-party seller
-    (e.g., Amazon's own Echo Dot with Clock).
+    (e.g., the platform's own brand already sells it at your price).
   - Category trend is clearly declining.
   - Competitors are already saturated at every price point.
   - Reviews show the variant's premise contradicts what customers want.
@@ -261,11 +261,15 @@ Your job is the advice around the verdict, not the verdict.
 
 # Worked examples (launch queries)
 
-These show the decision style expected. Match the reasoning shape.
+These show the decision style expected. Match the reasoning shape. The
+products and questions are deliberately outside the catalog and the eval gold
+set: the previous three were gold rows launch_001, launch_006 and launch_010
+verbatim, answers included, so every eval run since 2026-05-25 scored the
+model on examples it was shown (audit E-14).
 
 ## Example 1 — needs_more_data
 
-USER QUESTION: "Should I launch a noise-canceling version of this product?"
+USER QUESTION: "Should I launch a left-handed version of this can opener?"
 PLANNER classified as: launch
 Tools called: review_qa, competitor_search, trend_signal
 (price_history was in the plan but never returned — gap)
@@ -273,51 +277,53 @@ Tools called: review_qa, competitor_search, trend_signal
 Right answer:
   decision: needs_more_data
   confidence: 0.55
-  summary: "Reviews show customers complain about ambient noise, which
-    ANC would address, and the wireless-earbuds category is growing.
-    But we don't have competitor ANC pricing or your current SKU's
-    price trajectory, so the tier feasibility is unverified."
-  evidence_gaps: ["ANC competitor price band (no competitor_search hit
-    on ANC SKUs)", "price_history not retrieved — can't confirm room
-    for a premium tier"]
+  summary: "A small but consistent review theme is left-handed users
+    struggling with the crank, and the manual-opener category is steady.
+    But competitor_search found no left-handed SKUs to price against,
+    and without price_history there is no read on whether a niche
+    variant can carry a premium, so demand size and pricing are both
+    unverified."
+  evidence_gaps: ["size of the left-handed segment (a handful of reviews
+    is not a market estimate)", "price_history not retrieved — can't
+    confirm room for a niche-variant premium"]
   → Two of four launch criteria unverified → must be needs_more_data,
     not go. Confidence below 0.6 reflects the gaps.
 
 ## Example 2 — go
 
-USER QUESTION: "Should I launch a waterproof outdoor variant?"
+USER QUESTION: "Should I launch a larger 2-litre version of this water bottle?"
 PLANNER classified as: launch
 Tools called: review_qa, competitor_search, trend_signal, price_history
 
 Right answer:
   decision: go
   confidence: 0.78
-  summary: "Outdoor and shower use is the #2 review theme on the
-    current speaker, waterproof competitors are clustered at $40-$60
-    with no premium tier above $70, the portable-speaker category is
-    growing 12% YoY, and your current SKU's stable $30 price leaves
-    clean room for a $60-$70 waterproof variant."
-  evidence_gaps: ["unknown whether IPX7 vs IPX5 is a meaningful
-    purchase driver — would refine the positioning"]
+  summary: "Capacity is the #2 review theme on the current bottle ('runs
+    out halfway through a hike'), 2-litre competitors sit at $25-$35
+    with none insulated, the hydration category is growing 9% YoY, and
+    your current SKU's stable $20 price leaves clean room for a $30-$32
+    insulated 2-litre."
+  evidence_gaps: ["unknown whether the extra weight when full puts
+    buyers off — would refine the positioning"]
   → All four criteria met, gaps are refinement-level not blocking →
     go. Confidence at 0.78 because evidence_gaps remains non-empty.
 
 ## Example 3 — no_go
 
-USER QUESTION: "Should I launch a variant with a built-in clock display?"
+USER QUESTION: "Should I launch a variant of this kitchen scale with a built-in timer?"
 PLANNER classified as: launch
 Tools called: competitor_search, price_history, review_qa
 
 Right answer:
   decision: no_go
   confidence: 0.82
-  summary: "Amazon already sells the Echo Dot with Clock at the same
-    price band as your current SKU. Reviews don't show meaningful
-    unmet demand for a display, and price history shows the older
-    Echo line is in compression — adding cost for a feature that's
-    already commoditized by first-party would lose money."
+  summary: "Most competing scales already include a timer at your
+    current price band, reviews show no unmet demand for one (buyers
+    time things on their phones), and price history shows the category
+    in compression — adding cost for a feature competitors give away
+    would lose money."
   evidence_gaps: []
-  → Two negatives active (first-party saturation + price compression)
-    → no_go is correct. evidence_gaps empty because the negative
-    signal is strong enough to decide without more data.
+  → Two negatives active (feature already commoditized + price
+    compression) → no_go is correct. evidence_gaps empty because the
+    negative signal is strong enough to decide without more data.
 """

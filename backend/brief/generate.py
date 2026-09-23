@@ -19,8 +19,10 @@ load_dotenv()
 
 @lru_cache(maxsize=1)
 def _client():
-    # Narrative quality matters here — runs on the flagship agent model.
-    return groq_client()
+    # Narrative quality matters here — runs on the flagship agent model, and
+    # the brief is a long structured answer, so it gets the long-output read
+    # timeout (src/llm_config.py, request_timeout).
+    return groq_client(long_output=True)
 
 
 BRIEF_SYSTEM_PROMPT = (
@@ -40,17 +42,40 @@ def _gather_metrics(asin: str) -> dict:
     from backend.mcp_server.tools import return_risk as rr
 
     summary = asin_summary(asin)
+    raw = summary.get("raw_star_distribution") or {}
     metrics = {
         "asin": asin,
-        "total_reviews": summary.get("total_reviews"),
+        # The model reads these keys, so they say what they are: the analysed
+        # sample is 50 reviews per star, while the rating and the shares
+        # describe every rating the product has. Under the old `total_reviews`
+        # name, a brief could write "21% of the 250 reviews".
+        "reviews_sampled": summary.get("total_reviews"),
+        "ratings_total": sum(int(n) for n in raw.values()) or None,
+        "sentiment_basis": (
+            "avg_rating is the mean of all ratings_total ratings. pct_negative and "
+            "pct_positive estimate the share of all reviews whose text reads as "
+            "negative or positive: measured on reviews_sampled reviews (an equal "
+            "number per star), then weighted to the real star mix."
+        ),
         "avg_rating": summary.get("avg_rating"),
         "pct_negative": summary.get("pct_negative"),
         "pct_positive": summary.get("pct_positive"),
         "top_topics": [
-            {"label": t.get("label"), "pct_negative": t.get("pct_negative"),
+            {"label": t.get("label"),
+             "mentioned_in_pct_of_reviews": t.get("mention_pct"),
+             "pct_negative": t.get("pct_negative"),
+             "negative_lift": t.get("negative_lift"),
              "complaint_level": t.get("complaint_level")}
             for t in (summary.get("top_topics", []) or [])[:5]
         ],
+        "topics_basis": (
+            "Topics are keyword categories. mentioned_in_pct_of_reviews is the "
+            "estimated share of all reviews that mention the topic; a review can "
+            "mention several, so these do not sum to 100. pct_negative is the share "
+            "of those mentions from 1-2 star reviews. negative_lift divides it by "
+            "the product's overall 1-2 star share: complaint_level is HIGH at 1.5 "
+            "or more, LOW at 0.67 or less, otherwise MEDIUM."
+        ),
     }
     try:
         risk = rr.predict_return_risk(asin)

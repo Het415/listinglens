@@ -155,7 +155,12 @@ function DashboardPageContent() {
   const sentimentAvg    = features.rating_avg || 0
   const pctNegative     = summary.pct_negative || 0
   const pctPositive     = summary.pct_positive || 0
+  // `total_reviews` is the analysed SAMPLE (50 per star). The rating on the
+  // card below is the mean of every rating the product has, so its subtext
+  // counts those instead.
   const totalReviews    = summary.total_reviews || 0
+  const totalRatings    = Object.values(summary.raw_star_distribution || {})
+    .reduce((n: number, c) => n + Number(c || 0), 0)
   const sentimentRating = summary.avg_rating || features.rating_avg || 0
 
   return (
@@ -190,7 +195,9 @@ function DashboardPageContent() {
           suffix="/5.0"
           color="default"
           stars={sentimentAvg}
-          subtext={`from ${totalReviews} reviews`}
+          subtext={totalRatings
+            ? `from ${totalRatings.toLocaleString()} ratings`
+            : `${totalReviews} reviews sampled`}
           delay={3}
         />
         <ScoreCard

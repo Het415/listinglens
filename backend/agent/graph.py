@@ -24,7 +24,7 @@ suitable for Server-Sent Events. The frontend subscribes to these and
 animates the trace panel as the agent progresses.
 """
 import json
-import os
+import traceback
 from typing import Annotated, AsyncIterator
 
 from dotenv import load_dotenv
@@ -36,6 +36,7 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import InjectedState, ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
 
 from ..mcp_server.tools import (
     competitor as competitor_tool,
@@ -142,6 +143,34 @@ def _build_tools_for_asin(asin: str) -> list:
     ]
 
 
+def handle_tool_error(e: Exception) -> str:
+    """ToolNode's error handler: a failed tool becomes an evidence gap.
+
+    ToolNode's default re-raises anything but an argument ValidationError, so a
+    single raising tool (a rate-limited RAG chain, a FAISS load failure, a
+    vislens timeout) aborted the whole run: the evidence already streamed was
+    orphaned and no recommendation was produced (audit E-09, CMD-03).
+
+    The returned string becomes the ToolMessage content, which the synthesizer
+    reads as LLM context and the UI shows as the tool's result, so it carries
+    the exception CLASS only. Provider bodies can hold an org id or quota
+    details, and they belong in the server log, never in a prompt or a browser.
+    ToolNode labels the message with the tool's name, and the synthesizer's
+    transcript prints it (`TOOL RESULT [review_qa]: ...`), so it is not repeated
+    here.
+    """
+    if isinstance(e, ToolInvocationError):
+        # The model passed arguments the tool's schema rejects. ToolNode's own
+        # message says which ones, so the executor can correct the call.
+        return e.message
+    print(f"[tool-error] {type(e).__name__}: {e}")
+    print("".join(traceback.format_exception(e)).rstrip())
+    return (
+        f"Tool failed ({type(e).__name__}). Continue without this result and "
+        f"list it under evidence_gaps."
+    )
+
+
 # ── Routing edges ─────────────────────────────────────────────────────────────
 
 
@@ -212,7 +241,7 @@ def build_graph(asin: str):
     graph = StateGraph(AgentState)
     graph.add_node("planner", plan_node)
     graph.add_node("executor", make_executor_node(tools))
-    graph.add_node("tools", ToolNode(tools))
+    graph.add_node("tools", ToolNode(tools, handle_tool_errors=handle_tool_error))
     graph.add_node("synthesizer", synthesize_node)
     graph.add_node("bump_replan", _bump_replan_counter)
 
@@ -239,23 +268,22 @@ def build_graph(asin: str):
 # ── Top-level entry ───────────────────────────────────────────────────────────
 
 
-def run_agent(asin: str, query: str) -> AgentOutput:
-    """Run the multi-node agent end-to-end and return AgentOutput.
+def _initial_state(
+    asin: str,
+    query: str,
+    product_name: str,
+    *,
+    audit_id: str | None = None,
+    image_urls: list[str] | None = None,
+    main_index: int | None = None,
+) -> AgentState:
+    """The graph's starting state, shared by both entries.
 
-    Same external signature as Stage 2 so the CLI and (future) API endpoint
-    don't need to change.
+    `run_agent` used to build its own copy, which referenced image arguments it
+    never received, so every call raised NameError (audit E-11). One builder
+    means the two entries cannot drift again.
     """
-    catalog = supported_asins()
-    if asin not in catalog:
-        raise ValueError(
-            f"ASIN {asin} is not in the supported catalog. "
-            f"Known: {sorted(catalog.keys())}"
-        )
-    product_name = catalog[asin]
-
-    compiled, _ = build_graph(asin)
-
-    initial_state: AgentState = {
+    return {
         "asin": asin,
         "query": query,
         "product_name": product_name,
@@ -269,6 +297,35 @@ def run_agent(asin: str, query: str) -> AgentOutput:
         "audit_id": audit_id,
     }
 
+
+def run_agent(
+    asin: str,
+    query: str,
+    audit_id: str | None = None,
+    image_urls: list[str] | None = None,
+    main_index: int | None = None,
+) -> AgentOutput:
+    """Run the multi-node agent end-to-end and return AgentOutput.
+
+    Same external signature as Stage 2 so the CLI and (future) API endpoint
+    don't need to change; the image context is optional, as it is for
+    run_agent_streaming.
+    """
+    catalog = supported_asins()
+    if asin not in catalog:
+        raise ValueError(
+            f"ASIN {asin} is not in the supported catalog. "
+            f"Known: {sorted(catalog.keys())}"
+        )
+    product_name = catalog[asin]
+
+    compiled, _ = build_graph(asin)
+
+    initial_state = _initial_state(
+        asin, query, product_name,
+        audit_id=audit_id, image_urls=image_urls, main_index=main_index,
+    )
+
     final_state = compiled.invoke(initial_state, config={"recursion_limit": 50})
 
     recommendation = final_state.get("recommendation")
@@ -280,6 +337,7 @@ def run_agent(asin: str, query: str) -> AgentOutput:
         n_tool_calls=len(final_state.get("tools_called", [])),
         iterations=final_state.get("iterations", 0),
         synthesis_degraded=bool(final_state.get("synthesis_degraded")),
+        executor_degraded=bool(final_state.get("executor_degraded")),
     )
 
     return AgentOutput(
@@ -393,7 +451,18 @@ def _delta_to_events(node_name: str, delta: dict) -> list[dict]:
             # model, so the schema the LLM has to fill stays exactly as it is.
             # The UI needs this to label a locally-assembled answer instead of
             # presenting placeholder decision/confidence as real judgements.
-            rec_data = {**rec_data, "degraded": bool(delta.get("synthesis_degraded"))}
+            #
+            # `degraded` covers both stages: a run whose Executor gave up is
+            # handed a forced hedge, which must not read as a real verdict
+            # either. The per-stage flags say which one happened.
+            synthesis_degraded = bool(delta.get("synthesis_degraded"))
+            executor_degraded = bool(delta.get("executor_degraded"))
+            rec_data = {
+                **rec_data,
+                "degraded": synthesis_degraded or executor_degraded,
+                "synthesis_degraded": synthesis_degraded,
+                "executor_degraded": executor_degraded,
+            }
             out.append({"event": "recommendation", "data": rec_data})
         out.append({"event": "node_completed", "data": {"node": "synthesizer"}})
 
@@ -438,20 +507,12 @@ async def run_agent_streaming(
     }
 
     compiled, _ = build_graph(asin)
-    initial_state: AgentState = {
-        "asin": asin,
-        "query": query,
-        "product_name": product_name,
-        "messages": [HumanMessage(content=query)],
-        "iterations": 0,
-        "tools_called": [],
-        "plan": [],
-        "replans_done": 0,
-        "image_urls": image_urls or [],
-        "main_index": main_index,
-        "audit_id": audit_id,
-    }
+    initial_state = _initial_state(
+        asin, query, product_name,
+        audit_id=audit_id, image_urls=image_urls, main_index=main_index,
+    )
 
+    executor_degraded = False
     try:
         async for chunk in compiled.astream(
             initial_state,
@@ -460,6 +521,13 @@ async def run_agent_streaming(
         ):
             # chunk is {node_name: state_delta}
             for node_name, delta in chunk.items():
+                # A delta holds only what that node wrote, and the Executor's
+                # degrade flag is written turns before the Synthesizer runs,
+                # so it is carried across to the Synthesizer's delta here.
+                if delta and delta.get("executor_degraded"):
+                    executor_degraded = True
+                if node_name == "synthesizer" and delta:
+                    delta = {**delta, "executor_degraded": executor_degraded}
                 for event in _delta_to_events(node_name, delta):
                     yield event
     except Exception as e:
