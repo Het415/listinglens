@@ -204,3 +204,83 @@ def test_served_negative_shares_left_the_sampling_baseline():
     """Every product sat at 27-38% because 40% of each sample is 1-2 star."""
     shown = [json.loads(Path(p).read_text())["summary"]["pct_negative"] for p in FEATURE_FILES]
     assert shown and max(shown) < 27.0
+
+
+# ── complaint levels are relative to the product (Step 3, audit T-09 (a)) ─────
+
+@pytest.mark.parametrize("lift,level", [
+    (6.0, "HIGH"), (1.5, "HIGH"), (1.49, "MEDIUM"), (1.0, "MEDIUM"),
+    (0.67, "MEDIUM"), (1 / 1.5, "LOW"), (0.3, "LOW"), (None, "LOW"),
+])
+def test_complaint_level_is_a_symmetric_band_around_the_product(lift, level):
+    assert nlp._complaint_level(lift) == level
+
+
+def _battery_rows(raw):
+    texts = ["battery died", "battery bad", "battery meh", "fine",
+             "ok", "ok", "battery good", "great", "battery great", "great"]
+    ratings = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5]
+    with redirect_stdout(io.StringIO()):
+        rows = nlp.run_category_analysis(pd.Series(texts), pd.Series(ratings), raw)
+    return next(r for r in rows if r["label"] == "Battery Life")
+
+
+def test_lift_and_mention_share_on_a_fixture():
+    battery = _battery_rows(RAW)
+    # The product's own 1-2 star share is (10 + 10) / 400 = 5%.
+    assert battery["negative_lift"] == round((0.0375 / 0.4875) / 0.05, 2) == 1.54
+    assert battery["complaint_level"] == "HIGH"
+    # Mention share: sum of weight x rate = 0.4875, against 5/10 in the sample.
+    assert battery["mention_pct"] == 48.8
+
+
+def test_the_level_means_the_same_thing_without_a_distribution():
+    """Unweighted, both the category share and the baseline are sample shares
+    (60% against 40%), so the lift is the same 1.5 and so is the level."""
+    battery = _battery_rows(None)
+    assert battery["negative_lift"] == 1.5
+    assert battery["complaint_level"] == "HIGH"
+    assert battery["mention_pct"] == 50.0
+
+
+def test_a_topic_everyone_raises_equally_is_medium():
+    """Mentioned at the same rate at every star: unhappy reviewers are not
+    over-represented, whatever the sample design."""
+    texts = ["the battery"] * 5 + ["nothing"] * 5
+    ratings = [1, 2, 3, 4, 5] * 2
+    for raw in (RAW, None):
+        with redirect_stdout(io.StringIO()):
+            rows = nlp.run_category_analysis(pd.Series(texts), pd.Series(ratings), raw)
+        battery = next(r for r in rows if r["label"] == "Battery Life")
+        assert battery["negative_lift"] == pytest.approx(1.0)
+        assert battery["complaint_level"] == "MEDIUM"
+
+
+@pytest.mark.parametrize("path", FEATURE_FILES, ids=lambda p: Path(p).stem)
+def test_cached_levels_follow_the_lift_against_the_real_low_star_share(path):
+    summary = json.loads(Path(path).read_text())["summary"]
+    weights = star_weights(summary["raw_star_distribution"], [1, 2, 3, 4, 5])
+    baseline = 100 * (weights[1] + weights[2])
+    for row in summary["categories"]:
+        # pct_negative is stored to 1 dp, so allow for the rounding.
+        assert row["negative_lift"] == pytest.approx(row["pct_negative"] / baseline, abs=0.02), row["label"]
+        assert row["complaint_level"] == nlp._complaint_level(row["negative_lift"]), row["label"]
+        assert 0 < row["mention_pct"] <= 100
+
+
+# ── the Brief is told what each number is ─────────────────────────────────────
+
+def test_brief_metrics_label_the_sample_and_the_topic_shares():
+    from backend.brief.generate import _gather_metrics
+
+    with redirect_stdout(io.StringIO()):
+        m = _gather_metrics("B08XPWDSWW")
+    assert "total_reviews" not in m
+    assert m["reviews_sampled"] == 250
+    assert m["ratings_total"] == 72566
+    assert "weighted to the real star mix" in m["sentiment_basis"]
+    assert m["top_topics"], "no topics"
+    for t in m["top_topics"]:
+        assert set(t) == {"label", "mentioned_in_pct_of_reviews", "pct_negative",
+                          "negative_lift", "complaint_level"}
+    assert "HIGH at 1.5" in m["topics_basis"]

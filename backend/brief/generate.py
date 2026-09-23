@@ -59,10 +59,21 @@ def _gather_metrics(asin: str) -> dict:
         "pct_negative": summary.get("pct_negative"),
         "pct_positive": summary.get("pct_positive"),
         "top_topics": [
-            {"label": t.get("label"), "pct_negative": t.get("pct_negative"),
+            {"label": t.get("label"),
+             "mentioned_in_pct_of_reviews": t.get("mention_pct"),
+             "pct_negative": t.get("pct_negative"),
+             "negative_lift": t.get("negative_lift"),
              "complaint_level": t.get("complaint_level")}
             for t in (summary.get("top_topics", []) or [])[:5]
         ],
+        "topics_basis": (
+            "Topics are keyword categories. mentioned_in_pct_of_reviews is the "
+            "estimated share of all reviews that mention the topic; a review can "
+            "mention several, so these do not sum to 100. pct_negative is the share "
+            "of those mentions from 1-2 star reviews. negative_lift divides it by "
+            "the product's overall 1-2 star share: complaint_level is HIGH at 1.5 "
+            "or more, LOW at 0.67 or less, otherwise MEDIUM."
+        ),
     }
     try:
         risk = rr.predict_return_risk(asin)

@@ -12,6 +12,7 @@ from src.features import (
     post_stratified_share,
     rating_sentiment_gap,
     rating_stats,
+    star_weights,
 )
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -283,12 +284,30 @@ def _review_matches_keywords(text_lower: str, pattern: re.Pattern) -> bool:
     return pattern.search(text_lower) is not None
 
 
-def _complaint_level(pct_negative: float) -> str:
-    if pct_negative > 50:
+# A category's complaint level compares the 1-2 star share of its mentions with
+# the product's own 1-2 star share, so it says whether unhappy reviewers raise
+# the topic more or less often than the product's reviews overall:
+#     negative_lift = category pct_negative / product 1-2 star share
+# HIGH at 1.5x or more, LOW at 1/1.5x or less, MEDIUM in between: a band
+# symmetric on the ratio scale around 1.0, "as often as the product overall".
+#
+# The old thresholds were absolute (> 50% HIGH, > 30% MEDIUM). They were set
+# against the ~40% baseline that a sample holding 50 reviews per star builds
+# in, which is gone now that the shares are post-stratified (audit T-09).
+COMPLAINT_HIGH_LIFT = 1.5
+COMPLAINT_LOW_LIFT = 1 / COMPLAINT_HIGH_LIFT
+
+
+def _complaint_level(negative_lift: float | None) -> str:
+    # None: the product has no 1-2 star reviews at all, so no topic can be
+    # over-represented among them.
+    if negative_lift is None:
+        return "LOW"
+    if negative_lift >= COMPLAINT_HIGH_LIFT:
         return "HIGH"
-    if pct_negative > 30:
-        return "MEDIUM"
-    return "LOW"
+    if negative_lift <= COMPLAINT_LOW_LIFT:
+        return "LOW"
+    return "MEDIUM"
 
 
 def _star_of(rating) -> int | None:
@@ -306,14 +325,25 @@ def _build_category_outputs(
 ) -> tuple[list[int], dict, list[dict]]:
     """
     Internal: per-review topic ids, full topic_info for features, and the public
-    category list (count >= 5, sorted by count desc) for dashboards.
+    category list (count >= 5, sorted by sample count desc) for dashboards.
 
-    `count` is the number of SAMPLED reviews that mention the category. Its
-    `pct_negative` / `pct_positive` are the shares of those mentions that come
-    from 1-2 and 4-5 star reviews. With `raw_distribution` they are
-    post-stratified, so they describe the product's real star mix rather than a
-    sample that is 40% 1-2 star by construction; without it (ad-hoc callers)
-    they are plain sample shares.
+    Each row:
+        count            SAMPLED reviews that mention the category
+        mention_pct      share of the product's reviews that mention it: what
+                         the UI and Brief show as "mentioned in X% of reviews"
+        pct_negative /   share of those mentions from 1-2 / 4-5 star reviews
+        pct_positive
+        negative_lift    pct_negative / the product's own 1-2 star share
+        complaint_level  from negative_lift (see COMPLAINT_HIGH_LIFT)
+
+    With `raw_distribution`, every share is post-stratified: it describes the
+    product's real star mix rather than a sample that is 40% 1-2 star by
+    construction. Without it (ad-hoc callers) they are plain sample shares, and
+    the baseline for the lift is the sample's own 1-2 star share, so the level
+    means the same thing either way.
+
+    Still a sample of the LONGEST reviews at each star (ingest), which touch
+    more topics than a typical review, so mention_pct runs high.
     """
     print("Running category analysis...")
 
@@ -347,6 +377,16 @@ def _build_category_outputs(
         if star is not None:
             sampled_per_star[star] = sampled_per_star.get(star, 0) + 1
 
+    weighted = bool(raw_distribution and sampled_per_star)
+    # The product's own 1-2 star share: the baseline a category is compared to.
+    if weighted:
+        weights = star_weights(raw_distribution, sampled_per_star)
+        baseline_neg_pct = (weights.get(1, 0.0) + weights.get(2, 0.0)) * 100
+    else:
+        rated = sum(sampled_per_star.values())
+        low = sampled_per_star.get(1, 0) + sampled_per_star.get(2, 0)
+        baseline_neg_pct = (low / rated) * 100 if rated else 0.0
+
     for cat_idx, ((label, trigger_keywords), mentions) in enumerate(
         zip(CATEGORY_KEYWORDS, mention_sets)
     ):
@@ -356,17 +396,20 @@ def _build_category_outputs(
             if hit and star is not None:
                 hits_per_star[star] += 1
 
-        if raw_distribution and sampled_per_star:
+        if weighted:
             rates = {s: hits_per_star[s] / sampled_per_star[s] for s in sampled_per_star}
+            raw_mention_pct = post_stratified_mean(rates, raw_distribution) * 100
             raw_neg_pct = post_stratified_share(rates, raw_distribution, (1, 2)) * 100
             raw_pos_pct = post_stratified_share(rates, raw_distribution, (4, 5)) * 100
         else:
             neg = hits_per_star.get(1, 0) + hits_per_star.get(2, 0)
             pos = hits_per_star.get(4, 0) + hits_per_star.get(5, 0)
+            raw_mention_pct = (count / n) * 100
             raw_neg_pct = (neg / count) * 100 if count else 0.0
             raw_pos_pct = (pos / count) * 100 if count else 0.0
         pct_negative = float(round(raw_neg_pct, 1))
         pct_positive = float(round(raw_pos_pct, 1))
+        negative_lift = raw_neg_pct / baseline_neg_pct if baseline_neg_pct > 0 else None
 
         topic_info[cat_idx] = {
             "label": label,
@@ -379,11 +422,19 @@ def _build_category_outputs(
                 "label": label,
                 "keywords": trigger_keywords[:3],
                 "count": count,
+                "mention_pct": float(round(raw_mention_pct, 1)),
                 "pct_negative": pct_negative,
                 "pct_positive": pct_positive,
-                "complaint_level": _complaint_level(raw_neg_pct),
+                "negative_lift": None if negative_lift is None else round(negative_lift, 2),
+                "complaint_level": _complaint_level(negative_lift),
             })
 
+    # Ranked by SAMPLE count, which decides the six `top_topics` the dashboard
+    # and the Brief see. Ranking by `mention_pct` instead was tried and pushes
+    # Customer Service out of the top six on 7 of the 12 products, and it is the
+    # category rated HIGH on 10 of them: its mentions come mostly from 1-2 star
+    # reviewers, who are few among real reviews but a fifth of the sample each.
+    # Displays that show "mentioned in X%" sort by mention_pct themselves.
     category_rows.sort(key=lambda row: row["count"], reverse=True)
     print(f"Category mentions (>=5 in output): {len(category_rows)}")
     return topics, topic_info, category_rows
@@ -400,9 +451,10 @@ def run_category_analysis(texts: pd.Series, ratings: pd.Series,
     post-stratified by `raw_distribution` when given.
 
     Returns:
-        Sorted list (count descending) of dicts with label, keywords (3 strings),
-        count, pct_negative, pct_positive, complaint_level — only categories with
-        count >= 5.
+        Sorted list (count descending) of dicts with label, keywords (3
+        strings), count, mention_pct, pct_negative, pct_positive, negative_lift,
+        complaint_level — only categories with count >= 5. See
+        _build_category_outputs for what each field means.
     """
     _, _, rows = _build_category_outputs(texts, ratings, raw_distribution)
     return rows
@@ -596,8 +648,10 @@ def analyze_scored_reviews(df_enriched: pd.DataFrame,
                 "label":           cat["label"],
                 "keywords":        cat["keywords"],
                 "count":           cat["count"],
+                "mention_pct":     cat["mention_pct"],
                 "pct_negative":    cat["pct_negative"],
                 "pct_positive":    cat["pct_positive"],
+                "negative_lift":   cat["negative_lift"],
                 "complaint_level": cat["complaint_level"],
             }
             for cat in categories[:6]

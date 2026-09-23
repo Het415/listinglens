@@ -65,8 +65,10 @@ def _load_products():
                 "label": t.get("label"),
                 "keywords": ", ".join(t.get("keywords", []) or []),
                 "count": t.get("count"),
+                "mention_pct": t.get("mention_pct"),
                 "pct_negative": t.get("pct_negative"),
                 "pct_positive": t.get("pct_positive"),
+                "negative_lift": t.get("negative_lift"),
                 "complaint_level": t.get("complaint_level"),
             })
     return (pd.DataFrame(metrics), pd.DataFrame(summaries),

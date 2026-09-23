@@ -20,10 +20,12 @@ GROUP BY rating
 ORDER BY rating;
 
 -- 3. Most complaint-heavy topics across the catalog (HIGH complaint level).
-SELECT asin, label, count, pct_negative, complaint_level
+-- negative_lift = the topic's 1-2 star share of mentions / the product's own
+-- 1-2 star share, so it compares across products; pct_negative alone does not.
+SELECT asin, label, mention_pct, pct_negative, negative_lift, complaint_level
 FROM topics
 WHERE complaint_level = 'HIGH'
-ORDER BY pct_negative DESC
+ORDER BY negative_lift DESC
 LIMIT 20;
 
 -- 4. Support intent mix per product (what customers contact about).
