@@ -323,3 +323,107 @@ def test_api_docs_are_served_only_off_production(env_mode, expected):
                          capture_output=True, text=True, timeout=60)
     assert out.returncode == 0, out.stderr
     assert out.stdout.strip().splitlines()[-1] == expected
+
+
+# ── the visitor's address behind Render and Cloudflare (T-02 step 3) ─────────
+# The live chain, logged 2026-09-23: visitor, Cloudflare edge, Render internal.
+# With a fixed count of 1, every visitor resolved to the internal proxy, so the
+# per-IP limits were one bucket for everybody.
+
+import backend.http_limits as http_limits  # noqa: E402
+
+VISITOR = "155.33.132.27"
+CF_EDGE = "172.71.150.145"
+RENDER_HOP = "10.192.163.192"
+LIVE_CHAIN = f"{VISITOR}, {CF_EDGE}, {RENDER_HOP}"
+
+
+def test_the_test_addresses_are_what_they_claim():
+    """Documentation ranges such as 203.0.113.0/24 are not global, so they
+    would read as internal hops and pass the tests below by the wrong path."""
+    for public in ("8.8.8.8", "8.8.4.4", "9.9.9.9", "208.67.222.222", "6.6.6.6", VISITOR, "2a01:4f8::1"):
+        assert http_limits._hop_kind(public) == "public", public
+    for edge in (CF_EDGE, "172.64.0.1", "2606:4700::6810:1"):
+        assert http_limits._hop_kind(edge) == "cloudflare", edge
+    for internal in (RENDER_HOP, "10.1.1.1", "100.64.3.4", "203.0.113.9"):
+        assert http_limits._hop_kind(internal) == "internal", internal
+
+
+def test_a_fixed_count_of_one_picked_the_internal_proxy():
+    """The bug, pinned: what hops=1 returns on the live chain."""
+    assert client_ip(VISITOR, LIVE_CHAIN, hops=1) == RENDER_HOP
+
+
+@pytest.mark.parametrize("xff, expected", [
+    (LIVE_CHAIN, VISITOR),
+    (f"6.6.6.6, {LIVE_CHAIN}", VISITOR),                          # spoofed public entry
+    (f"10.0.0.1, 172.64.0.1, {LIVE_CHAIN}", VISITOR),             # spoofed proxy-looking entries
+    (f"8.8.8.8, {CF_EDGE}, 10.1.1.1, 10.2.2.2", "8.8.8.8"),  # an extra internal hop
+    (f"8.8.8.8, {RENDER_HOP}", "8.8.8.8"),                # no Cloudflare hop
+    ("8.8.8.8, 100.64.3.4", "8.8.8.8"),                   # CGNAT-range internal hop
+    ("2a01:4f8::1, 2606:4700::6810:1", "2a01:4f8::1"),            # IPv6 visitor and Cloudflare edge
+    (f"8.8.8.8:51234, {CF_EDGE}", "8.8.8.8:51234"),       # an entry with a port
+    (f"{CF_EDGE}, {RENDER_HOP}", CF_EDGE),                        # only proxies: the origin
+])
+def test_the_visitor_is_the_rightmost_address_outside_the_edge(xff, expected):
+    assert client_ip("peer", xff, skip_edge=True) == expected
+
+
+def test_without_a_header_the_peer_is_used():
+    assert client_ip("10.0.0.5", None, skip_edge=True) == "10.0.0.5"
+    assert client_ip(None, "", skip_edge=True) == "unknown"
+
+
+def test_on_render_the_default_skips_the_edge(monkeypatch):
+    monkeypatch.setattr(http_limits, "BEHIND_RENDER", True)
+    monkeypatch.setattr(http_limits, "TRUSTED_PROXY_HOPS", None)
+    assert client_ip(VISITOR, LIVE_CHAIN) == VISITOR
+
+
+@pytest.mark.parametrize("hops, expected", [(3, VISITOR), (1, RENDER_HOP)])
+def test_an_explicit_hop_count_still_overrides(monkeypatch, hops, expected):
+    monkeypatch.setattr(http_limits, "BEHIND_RENDER", True)
+    monkeypatch.setattr(http_limits, "TRUSTED_PROXY_HOPS", hops)
+    assert client_ip(VISITOR, LIVE_CHAIN) == expected
+
+
+def test_off_render_the_peer_is_the_client(monkeypatch):
+    monkeypatch.setattr(http_limits, "BEHIND_RENDER", False)
+    monkeypatch.setattr(http_limits, "TRUSTED_PROXY_HOPS", None)
+    assert client_ip("10.0.0.5", LIVE_CHAIN) == "10.0.0.5"
+
+
+def test_each_new_header_shape_is_logged_once(monkeypatch, capsys):
+    monkeypatch.setattr(http_limits, "_logged_shapes", set())
+    client_ip("p", LIVE_CHAIN, skip_edge=True)
+    client_ip("p", "9.9.9.9, 172.71.1.1, 10.0.0.9", skip_edge=True)   # same shape
+    client_ip("p", "9.9.9.9, 10.0.0.9", skip_edge=True)               # new shape
+    lines = [l for l in capsys.readouterr().out.splitlines() if "client IP resolution" in l]
+    assert len(lines) == 2
+    assert "chain public,cloudflare,internal" in lines[0] and f"-> {VISITOR}" in lines[0]
+    assert "chain public,internal" in lines[1]
+
+
+def test_the_shape_log_is_capped(monkeypatch, capsys):
+    monkeypatch.setattr(http_limits, "_logged_shapes", set())
+    for n in range(1, 40):
+        client_ip("p", ", ".join(["10.0.0.1"] * n), skip_edge=True)
+    lines = [l for l in capsys.readouterr().out.splitlines() if "client IP resolution" in l]
+    assert len(lines) == http_limits._MAX_LOGGED_SHAPES
+
+
+def test_two_visitors_behind_the_same_proxies_get_separate_buckets(client, tight, monkeypatch):
+    """End to end: before the fix both resolved to the internal proxy, so the
+    second visitor was refused on the first visitor's budget."""
+    monkeypatch.setattr(http_limits, "BEHIND_RENDER", True)
+    monkeypatch.setattr(http_limits, "TRUSTED_PROXY_HOPS", None)
+    app_module.app_state.setdefault("brief_cache", {})[ASIN] = {"asin": ASIN}
+
+    def get(visitor):
+        return client.get(f"/brief/{ASIN}", headers={
+            "x-forwarded-for": f"{visitor}, {CF_EDGE}, {RENDER_HOP}"}).status_code
+
+    assert [get("8.8.4.4") for _ in range(3)] == [200, 200, 200]
+    assert get("8.8.4.4") == 429          # that visitor's minute is spent
+    assert get("208.67.222.222") == 200          # someone else is not refused
+    app_module.app_state["brief_cache"].pop(ASIN)

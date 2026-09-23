@@ -75,14 +75,15 @@ services:
       # NOTE: the live service is not linked to this file (HANDOFF.md), so
       # these must also be set on the service itself.
       #
-      # The client IP is read from X-Forwarded-For, counted this many entries
-      # from the RIGHT (the ones our proxy wrote). The code already defaults
-      # to 1 when RENDER is set; pinned here so it is explicit. Do NOT use
-      # uvicorn's --forwarded-allow-ips='*' instead: it takes the LEFTMOST
-      # entry, which the client controls, so rotating a fake header would buy
-      # a fresh rate limit on every request.
-      - key: TRUSTED_PROXY_HOPS
-        value: "1"
+      # The client IP is read from X-Forwarded-For. On Render the code takes the
+      # rightmost entry that isn't a Render-internal or Cloudflare address: the
+      # live chain is visitor, Cloudflare edge, Render internal (2026-09-23), and
+      # a fixed count of 1 keyed every visitor on the internal proxy. So
+      # TRUSTED_PROXY_HOPS is deliberately NOT set here. Setting it forces a
+      # fixed count from the right again. Do NOT use uvicorn's
+      # --forwarded-allow-ips='*' either: it takes the LEFTMOST entry, which the
+      # client controls, so rotating a fake header would buy a fresh rate limit
+      # on every request.
       # Requests per minute per client IP on the LLM routes.
       - key: RATE_LIMIT_PER_MINUTE
         value: "20"
