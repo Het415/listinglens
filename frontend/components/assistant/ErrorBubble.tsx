@@ -29,6 +29,10 @@ const HEADINGS: Record<string, string> = {
   model_gone: 'Language model unavailable',
   auth: 'Provider authentication failed',
   network: "Couldn't reach the backend",
+  // Not retryable: the per-visitor limits say `rate_limited`, but the global
+  // daily budget only frees up at 00:00 UTC, and the message says when.
+  quota_exhausted: 'Daily demo quota reached',
+  too_large: 'Question too long for the model',
 }
 
 export function ErrorBubble({ message, kind }: { message: string; kind?: string }) {

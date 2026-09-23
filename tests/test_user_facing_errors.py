@@ -26,6 +26,14 @@ TOOL_USE_FAILED = RuntimeError(
 MODEL_GONE = RuntimeError(
     "Error code: 404 - {'error': {'code': 'model_not_found'}}"
 )
+# Groq's 413 carries the rate-limit code too, which is why ordering matters.
+TOO_LARGE = RuntimeError(
+    "Error code: 413 - {'error': {'message': 'Request too large for model "
+    f"`openai/gpt-oss-120b` in organization `{ORG}` service tier `on_demand` "
+    "on tokens per minute (TPM): Limit 8000, Requested 12045, please reduce "
+    "your message size and try again.', 'type': 'tokens', "
+    "'code': 'rate_limit_exceeded'}}"
+)
 
 
 def _msg(e):
@@ -44,6 +52,14 @@ def test_malformed_output_is_explained_as_transient():
     assert "format" in out["message"].lower()
 
 
+def test_oversized_prompt_is_not_reported_as_a_rate_limit():
+    """Waiting a minute will not shrink the prompt, so no "try again" copy."""
+    out = app_module.user_facing_error(TOO_LARGE)
+    assert out["kind"] == "too_large"
+    assert "try again" not in out["message"].lower()
+    assert "shorter" in out["message"].lower()
+
+
 def test_decommissioned_model_is_not_presented_as_retryable():
     """Retrying a 404 is pointless; the copy must not suggest it."""
     out = app_module.user_facing_error(MODEL_GONE)
@@ -60,7 +76,7 @@ def test_unknown_errors_name_the_type_but_not_the_message():
 
 def test_no_payload_leaks_provider_internals():
     """The regression that motivated all of this."""
-    for e in (RATE_LIMIT, TOOL_USE_FAILED, MODEL_GONE):
+    for e in (RATE_LIMIT, TOOL_USE_FAILED, MODEL_GONE, TOO_LARGE):
         message = _msg(e)
         for leak in (ORG, "failed_generation", "<tool_call>", "Error code:",
                      "Used 199130", "openai/gpt-oss-120b"):
@@ -68,7 +84,7 @@ def test_no_payload_leaks_provider_internals():
 
 
 def test_messages_are_short_enough_to_render_in_a_chat_bubble():
-    for e in (RATE_LIMIT, TOOL_USE_FAILED, MODEL_GONE, ValueError("x")):
+    for e in (RATE_LIMIT, TOOL_USE_FAILED, MODEL_GONE, TOO_LARGE, ValueError("x")):
         assert len(_msg(e)) < 200
 
 

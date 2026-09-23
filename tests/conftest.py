@@ -114,6 +114,11 @@ def production_mode(monkeypatch):
 
     monkeypatch.setattr(app, "ENV_MODE", "production")
 
+    # A fresh rate/budget limiter per test, so no test inherits another's
+    # spent allowance. Every TestClient request comes from one "IP".
+    from backend.http_limits import RequestLimits
+    monkeypatch.setattr(app, "limits", RequestLimits())
+
     # Regression tripwire. If this ever fails, the suite is about to
     # run the heavy NLP path: network egress, HuggingFace downloads,
     # and 500s where the production guardrail should return 404.
