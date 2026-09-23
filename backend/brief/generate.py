@@ -19,8 +19,10 @@ load_dotenv()
 
 @lru_cache(maxsize=1)
 def _client():
-    # Narrative quality matters here — runs on the flagship agent model.
-    return groq_client()
+    # Narrative quality matters here — runs on the flagship agent model, and
+    # the brief is a long structured answer, so it gets the long-output read
+    # timeout (src/llm_config.py, request_timeout).
+    return groq_client(long_output=True)
 
 
 BRIEF_SYSTEM_PROMPT = (

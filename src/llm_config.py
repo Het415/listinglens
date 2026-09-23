@@ -242,8 +242,8 @@ _SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
 # accepted connections and never answered cost about 24 min per agent run
 # before the degraded answer, and the frontend has no timeout of its own
 # (audit E-21). Two knobs bound it. Either one alone still leaves about 8 min;
-# together they give about 3.4 min (planner 61.5 s + executor 81 s +
-# synthesizer 61.5 s), against about 5 min to an outright error before
+# together they give about 3.9 min (planner 61.5 s + executor 81 s +
+# synthesizer 90.5 s), against about 5 min to an outright error before
 # timeouts failed over at all:
 #
 # - `stage_deadline_s()`: once a stage has spent this long in `resilient_call`,
@@ -252,17 +252,35 @@ _SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
 #   plan, executor hand-off, locally assembled recommendation, tool-error
 #   message). It is only checked between attempts, so the in-flight one still
 #   runs to its own timeout.
-# - `request_timeout()`: the read timeout for one HTTP attempt, shared by every
-#   production client. Unthrottled calls take about 1-3 s (the fastest no_tool
-#   eval row made two calls in 2.65 s, and a 4-tool agent run finished in
-#   10.05 s), so 20 s still leaves wide headroom. The slow eval rows are 429
-#   `retry-after` sleeps, which the SDK takes BETWEEN attempts, so this timeout
-#   doesn't shorten them and rate-limit handling is unchanged.
+# - `request_timeout()`: the read timeout for one HTTP attempt, in two profiles.
+#   - Default, 20 s (`LLM_REQUEST_TIMEOUT_S`): the planner, executor, RAG and
+#     intent, which return short answers. Unthrottled calls take about 1-3 s
+#     (the fastest no_tool eval row made two calls in 2.65 s, and a 4-tool
+#     agent run finished in 10.05 s). The slow eval rows are 429 `retry-after`
+#     sleeps, which the SDK takes BETWEEN attempts, so this timeout doesn't
+#     shorten them and rate-limit handling is unchanged.
+#   - `long_output=True`, 45 s (`LLM_AGENT_REQUEST_TIMEOUT_S`): the synthesizer
+#     and the Executive Brief, which run gpt-oss-120b at medium reasoning with
+#     no max_tokens and write a long structured answer, so a healthy call can
+#     take 20-40 s. Under the shared 20 s, such a call timed out on every SDK
+#     try (3 x 20 s + 1.5 s = 61.5 s), was past the stage deadline, and came
+#     back degraded every time, with up to three abandoned generations billed.
+#     This profile also makes 1 SDK retry instead of 2, so a call that outlasts
+#     45 s is regenerated once, not twice: one hung model costs 2 x 45 s +
+#     0.5 s = 90.5 s, not 136.5 s. It keeps one same-model retry for 429, 5xx
+#     and dropped connections; after that the chain moves to another model's
+#     bucket, which is the policy for rate limits anyway.
+#   Raising the agent stage's deadline instead (to fit a whole 136.5 s model
+#   and fail over after it) was rejected: it would bound a hung synthesizer at
+#   273 s or more rather than 90.5 s. A healthy call never meets the deadline,
+#   which is only checked after a failure.
 #
-# Both are read at call time, so an operator can widen them with an env change
-# and tests can patch them.
+# All three are read at call time, so an operator can widen them with an env
+# change and tests can patch them.
 DEFAULT_STAGE_DEADLINE_S = 45.0
 DEFAULT_REQUEST_TIMEOUT_S = 20.0
+DEFAULT_AGENT_REQUEST_TIMEOUT_S = 45.0
+LONG_OUTPUT_SDK_RETRIES = 1
 _CONNECT_TIMEOUT_S = 5.0   # the groq SDK's own default, kept
 
 
@@ -270,11 +288,20 @@ def stage_deadline_s() -> float:
     return float(os.getenv("LLM_STAGE_DEADLINE_S", DEFAULT_STAGE_DEADLINE_S))
 
 
-def request_timeout():
-    """The `httpx.Timeout` every production Groq client is built with."""
+def request_timeout(long_output: bool = False):
+    """The `httpx.Timeout` a production Groq client is built with.
+
+    `long_output=True` is the synthesizer and Brief profile (see above). It is
+    a flag on the answer's size rather than a `resilient_call` stage name,
+    because the planner shares the "agent" chain and must stay on the fast
+    profile.
+    """
     import httpx
 
-    read = float(os.getenv("LLM_REQUEST_TIMEOUT_S", DEFAULT_REQUEST_TIMEOUT_S))
+    if long_output:
+        read = float(os.getenv("LLM_AGENT_REQUEST_TIMEOUT_S", DEFAULT_AGENT_REQUEST_TIMEOUT_S))
+    else:
+        read = float(os.getenv("LLM_REQUEST_TIMEOUT_S", DEFAULT_REQUEST_TIMEOUT_S))
     return httpx.Timeout(read, connect=_CONNECT_TIMEOUT_S)
 
 
@@ -324,9 +351,10 @@ def resilient_call(stage: str, fn):
     reached on a path that would otherwise have failed outright.
 
     Timeouts are the slow case: each attempt first waits out the read timeout
-    once per SDK try (x 2 for the executor and RAG, x 3 for the instructor
-    clients). So an unavailable model only advances the chain while the stage
-    is inside `stage_deadline_s()`; see the comment above it.
+    once per SDK try (x 2 for the executor, RAG and the long-output clients,
+    x 3 for the planner and intent). So an unavailable model only advances the
+    chain while the stage is inside `stage_deadline_s()`; see the comment above
+    it.
     """
     chain = model_chain(stage)
     last: Exception | None = None
@@ -417,20 +445,25 @@ def configured_models() -> dict[str, str]:
     }
 
 
-def groq_client():
+def groq_client(long_output: bool = False):
     """Shared `instructor`-wrapped Groq client for structured-output calls.
 
     Previously duplicated in six places. Not cached — instructor wraps a
     thread-safe httpx client, but callers that want a singleton still apply
     their own lru_cache.
 
-    The SDK's own retry count (2) is left as it is, so 429 handling doesn't
-    change; only the read timeout is the shared one.
+    Default: the 20 s read timeout and the SDK's own 2 retries, so 429 handling
+    doesn't change. `long_output=True` (the synthesizer and the Brief, and the
+    eval and doctor calls that stand in for the synthesizer): the 45 s read
+    timeout and 1 retry. See `request_timeout`.
     """
     import instructor
     from groq import Groq
 
-    return instructor.from_groq(Groq(api_key=api_key(), timeout=request_timeout()))
+    kwargs = {"api_key": api_key(), "timeout": request_timeout(long_output)}
+    if long_output:
+        kwargs["max_retries"] = LONG_OUTPUT_SDK_RETRIES
+    return instructor.from_groq(Groq(**kwargs))
 
 
 def thought_text(message) -> str:

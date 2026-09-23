@@ -203,7 +203,9 @@ def synthesize_node(state: AgentState) -> dict:
     try:
         # Inside the try, so a client that cannot be built degrades like any
         # other synthesis failure instead of discarding the gathered evidence.
-        client = groq_client()
+        # long_output: a healthy Recommendation can take 20-40 s, past the
+        # 20 s default read timeout (src/llm_config.py, request_timeout).
+        client = groq_client(long_output=True)
         recommendation: Recommendation = resilient_call("agent", lambda model: client.chat.completions.create(
             model=model,
             response_model=Recommendation,

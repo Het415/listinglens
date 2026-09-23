@@ -58,8 +58,9 @@ def run_no_tool(asin: str, query: str) -> AgentOutput:
         HumanMessage(content=f"Product: {product_name} (ASIN: {asin})\nQuestion: {query}"),
     ])
 
-    # Synthesize to the Recommendation shape directly via instructor.
-    client = groq_client()
+    # Synthesize to the Recommendation shape directly via instructor, on the
+    # synthesizer's client profile so the baseline times out like the agent.
+    client = groq_client(long_output=True)
     recommendation = client.chat.completions.create(
         model=agent_model(),
         response_model=Recommendation,

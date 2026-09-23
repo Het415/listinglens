@@ -102,10 +102,10 @@ def fake_llms(monkeypatch):
         raise AssertionError("a Groq client must never be built in this test")
 
     monkeypatch.setattr(planner, "resilient_call", planner_call)
-    monkeypatch.setattr(planner, "groq_client", lambda: None)
+    monkeypatch.setattr(planner, "groq_client", lambda **_: None)
     monkeypatch.setattr(executor, "resilient_call", executor_call)
     monkeypatch.setattr(synthesizer, "resilient_call", synthesizer_call)
-    monkeypatch.setattr(synthesizer, "groq_client", lambda: None)
+    monkeypatch.setattr(synthesizer, "groq_client", lambda **_: None)
     monkeypatch.setattr(review_qa_tool, "review_qa",
                         lambda asin, question: {"answer": "stub", "sources": [], "n_sources": 0})
     # A fresh graph so no test sees another's compiled closures.

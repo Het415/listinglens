@@ -95,10 +95,14 @@ services:
       - key: LLM_DAILY_BUDGET
         value: "300"
       # ── LLM wall-clock bounds (src/llm_config.py) ───────────────────────
-      # Read timeout per Groq HTTP attempt, and how long one stage may keep
-      # failing over on timeouts, dropped connections or 5xx before it
-      # degrades. The code defaults are the same; pinned here to be explicit.
+      # Read timeout per Groq HTTP attempt (20 s; 45 s for the synthesizer and
+      # the Executive Brief, which write a long structured answer), and how
+      # long one stage may keep failing over on timeouts, dropped connections
+      # or 5xx before it degrades. The code defaults are the same; pinned here
+      # to be explicit.
       - key: LLM_REQUEST_TIMEOUT_S
         value: "20"
+      - key: LLM_AGENT_REQUEST_TIMEOUT_S
+        value: "45"
       - key: LLM_STAGE_DEADLINE_S
         value: "45"

@@ -330,7 +330,8 @@ def test_the_request_timeout_is_env_configurable(monkeypatch):
 
 
 def test_the_instructor_client_uses_it_and_keeps_its_sdk_retries(default_timeout, monkeypatch):
-    """Planner, synthesizer, Brief and intent all build through `groq_client()`."""
+    """The default profile: the planner and intent. The synthesizer and the Brief
+    use `groq_client(long_output=True)` (tests/test_long_output_timeout.py)."""
     monkeypatch.setenv("GROQ_API_KEY", "gsk_dummy_never_sent")
     inner = groq_client().client
     assert (inner.timeout.read, inner.timeout.connect) == (20.0, 5.0)
