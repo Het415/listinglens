@@ -37,6 +37,7 @@ and the frontend can only report a network failure.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import math
 import os
@@ -156,40 +157,118 @@ def _env_int(name: str, default: int) -> int:
     return int(raw) if raw else default
 
 
-# Render sets RENDER=true in every service; one hop is its proxy. Anywhere else
-# the TCP peer is the client, unless TRUSTED_PROXY_HOPS says otherwise.
-TRUSTED_PROXY_HOPS = _env_int("TRUSTED_PROXY_HOPS", 1 if os.getenv("RENDER") else 0)
+# How the visitor's address is found. Render sets RENDER=true in every service.
+#
+# The first version assumed one proxy hop on Render and took the rightmost
+# X-Forwarded-For entry. The live service showed otherwise (2026-09-23):
+#
+#     x-forwarded-for='155.33.132.27, 172.71.150.145, 10.192.163.192'
+#                      visitor        Cloudflare edge Render internal
+#
+# so every visitor resolved to 10.192.163.192, and the "per-IP" limits were one
+# bucket shared by everybody. The hop count is the platform's to change, so on
+# Render the visitor is now the rightmost entry that is not one of those
+# proxies: not a global address (Render's internal hops), or inside
+# Cloudflare's published ranges. A visitor can only add entries to the LEFT of
+# the address Cloudflare writes for them, so extra entries can't move the
+# answer off their real address.
+#
+# TRUSTED_PROXY_HOPS, when set, still overrides with a fixed count from the
+# right. Off Render, and with it unset, the TCP peer is the client.
+_hops_env = os.getenv("TRUSTED_PROXY_HOPS", "").strip()
+TRUSTED_PROXY_HOPS: int | None = int(_hops_env) if _hops_env else None
+BEHIND_RENDER = bool(os.getenv("RENDER"))
 
-_ip_logged = False
+# https://www.cloudflare.com/ips-v4 and /ips-v6, fetched 2026-09-23.
+CLOUDFLARE_NETWORKS = tuple(ipaddress.ip_network(n) for n in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22",
+    "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20",
+    "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32",
+    "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32",
+))
+
+
+def _parse_ip(entry: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """An X-Forwarded-For entry as an address, tolerating a port or v6 brackets."""
+    candidates = [entry]
+    if entry.startswith("[") and "]" in entry:
+        candidates.append(entry[1:entry.index("]")])
+    elif entry.count(":") == 1:
+        candidates.append(entry.split(":", 1)[0])
+    for candidate in candidates:
+        try:
+            return ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+    return None
+
+
+def _hop_kind(entry: str) -> str:
+    """What sort of address an entry is: used both to skip proxies and to log."""
+    addr = _parse_ip(entry)
+    if addr is None:
+        return "unparsed"
+    if not addr.is_global:
+        return "internal"
+    if any(addr in net for net in CLOUDFLARE_NETWORKS):
+        return "cloudflare"
+    return "public"
+
+
+def _rightmost_outside_edge(chain: list[str]) -> str:
+    """The rightmost entry that no proxy of ours could have written.
+
+    If every entry is a proxy address, the request started inside the platform
+    or at Cloudflare itself, and the leftmost entry is its origin.
+    """
+    for entry in reversed(chain):
+        if _hop_kind(entry) not in ("internal", "cloudflare"):
+            return entry
+    return chain[0]
+
+
+# Log each distinct header shape once per process, capped, so a change in the
+# platform's proxy chain shows up in the logs instead of silently merging
+# every visitor into one bucket again (see IMPLEMENTATION_LOG.md, T-02).
+_MAX_LOGGED_SHAPES = 16
+_logged_shapes: set[tuple] = set()
 
 
 def client_ip(peer: str | None, forwarded_for: str | None,
-              hops: int | None = None) -> str:
+              hops: int | None = None, *, skip_edge: bool | None = None) -> str:
     """The address to rate-limit by.
 
-    Behind Render's proxy the TCP peer is the proxy, so every visitor would share
-    one bucket. The client IP comes from `X-Forwarded-For`, counted from the right:
-    each trusted proxy appends the address it received the connection from, so the
-    entry `TRUSTED_PROXY_HOPS` from the right was written by our own proxy and
-    cannot be forged. The leftmost entry can: a client can send any
-    `X-Forwarded-For` it likes, and proxies append to it. That is why this does not
-    rely on uvicorn's `--forwarded-allow-ips='*'`, which takes the leftmost entry.
+    Two ways to read `X-Forwarded-For`, which proxies append to on the right:
+    - a fixed hop count (`hops`, or TRUSTED_PROXY_HOPS): the entry that many
+      places from the right. It falls back to the peer when the chain is
+      shorter, as ProxyFix does.
+    - `skip_edge` (the Render default): the rightmost entry that isn't a
+      Render-internal or Cloudflare address.
+    The leftmost entry is never trusted: a client can send any X-Forwarded-For
+    it likes. That is also why this does not rely on uvicorn's
+    `--forwarded-allow-ips='*'`, which takes the leftmost entry.
     """
-    global _ip_logged
-    hops = TRUSTED_PROXY_HOPS if hops is None else hops
+    if hops is None:
+        hops = TRUSTED_PROXY_HOPS
+    if skip_edge is None:
+        skip_edge = hops is None and BEHIND_RENDER
+    chain = [part.strip() for part in (forwarded_for or "").split(",") if part.strip()]
     ip = peer or "unknown"
-    if hops > 0 and forwarded_for:
-        chain = [part.strip() for part in forwarded_for.split(",") if part.strip()]
-        # Fewer entries than trusted hops means the header did not come through
-        # our proxies as configured; fall back to the peer, as ProxyFix does.
-        if len(chain) >= hops:
+    if skip_edge:
+        if chain:
+            ip = _rightmost_outside_edge(chain)
+        mode = "edge"
+    else:
+        if hops and len(chain) >= hops:
             ip = chain[-hops]
-    if not _ip_logged:
-        # Once per process, so the owner can check TRUSTED_PROXY_HOPS against
-        # what the platform actually sends (see IMPLEMENTATION_LOG.md, T-02).
-        _ip_logged = True
-        print(f"[limits] client IP resolution: peer={peer} "
-              f"x-forwarded-for={forwarded_for!r} hops={hops} -> {ip}", flush=True)
+        mode = f"hops={hops or 0}"
+    shape = (mode, tuple(_hop_kind(entry) for entry in chain))
+    if shape not in _logged_shapes and len(_logged_shapes) < _MAX_LOGGED_SHAPES:
+        _logged_shapes.add(shape)
+        print(f"[limits] client IP resolution ({mode}; chain {','.join(shape[1]) or 'empty'}): "
+              f"peer={peer} x-forwarded-for={forwarded_for!r} -> {ip}", flush=True)
     return ip
 
 
