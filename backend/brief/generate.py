@@ -40,9 +40,21 @@ def _gather_metrics(asin: str) -> dict:
     from backend.mcp_server.tools import return_risk as rr
 
     summary = asin_summary(asin)
+    raw = summary.get("raw_star_distribution") or {}
     metrics = {
         "asin": asin,
-        "total_reviews": summary.get("total_reviews"),
+        # The model reads these keys, so they say what they are: the analysed
+        # sample is 50 reviews per star, while the rating and the shares
+        # describe every rating the product has. Under the old `total_reviews`
+        # name, a brief could write "21% of the 250 reviews".
+        "reviews_sampled": summary.get("total_reviews"),
+        "ratings_total": sum(int(n) for n in raw.values()) or None,
+        "sentiment_basis": (
+            "avg_rating is the mean of all ratings_total ratings. pct_negative and "
+            "pct_positive estimate the share of all reviews whose text reads as "
+            "negative or positive: measured on reviews_sampled reviews (an equal "
+            "number per star), then weighted to the real star mix."
+        ),
         "avg_rating": summary.get("avg_rating"),
         "pct_negative": summary.get("pct_negative"),
         "pct_positive": summary.get("pct_positive"),

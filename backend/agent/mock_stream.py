@@ -10,8 +10,11 @@ from typing import AsyncIterator
 
 # Single canonical fixture: a returns-style query on the TOZO T10 earbuds.
 # The predict_return_risk numbers are what the tool returns for B08XPWDSWW
-# since the 2026-09-23 feature fix (audit T-08): the old 77.4% HIGH came from
-# scoring every product as a 3.0-star product. Reasoning is stubbed but
+# since the 2026-09-23 feature fixes: the old 77.4% HIGH came from scoring
+# every product as a 3.0-star product (audit T-08), and the "31% of reviews are
+# negative; significant gap" drivers from sentiment averaged over a sample that
+# is 40% 1-2 star by construction. Post-stratified to the real star mix it is
+# 21% negative-sentiment with a 0.004 gap. Reasoning is stubbed but
 # plausible. Delays are tuned so the trace animates believably (~6-8s
 # end-to-end, similar to real runs).
 
@@ -39,10 +42,9 @@ _RETURNS_FIXTURE: list[dict] = [
     {"delay_ms": 400, "event": "tool_result", "data": {
         "tool": "predict_return_risk",
         "result_preview": (
-            '{"asin": "B08XPWDSWW", "risk_score": 0.0072, "risk_label": "LOW", '
-            '"risk_pct": 0.7, "confidence": 0.9928, '
-            '"explanation": "Risk drivers: 31% of reviews are negative; '
-            'significant gap between ratings and review sentiment"}'
+            '{"asin": "B08XPWDSWW", "risk_score": 0.001, "risk_label": "LOW", '
+            '"risk_pct": 0.1, "confidence": 0.999, '
+            '"explanation": "Risk drivers: product signals look healthy"}'
         ),
     }},
     {"delay_ms": 250, "event": "node_started", "data": {
@@ -71,7 +73,7 @@ _RETURNS_FIXTURE: list[dict] = [
     }},
     {"delay_ms": 600, "event": "executor_thought", "data": {
         "content": (
-            "The quantitative return risk is LOW (0.7%) at a 4.26-star average, "
+            "The quantitative return risk is LOW (0.1%) at a 4.26-star average, "
             "so the data does not show a spike; the 1-star reviews still show "
             "what the unhappy minority returns over. That's enough for an "
             "action plan."
@@ -86,19 +88,19 @@ _RETURNS_FIXTURE: list[dict] = [
         "confidence": 0.7,
         "summary": (
             "The review data does not point to a returns spike: the return-risk "
-            "model scores this product LOW (0.7%) at a real 4.26-star average. "
+            "model scores this product LOW (0.1%) at a real 4.26-star average. "
             "Where customers are unhappy, 1-star reviewers consistently cite "
             "poor sound quality, slow customer-service response, and "
             "perceived dishonesty around review solicitation. Check actual "
             "return records before treating this as a spike."
         ),
         "reasoning_steps": [
-            "Pulled quantitative risk: LOW (0.7%); rating_avg=4.26 outweighs pct_negative=0.31 in the model.",
+            "Pulled quantitative risk: LOW (0.1%); rating_avg=4.26, pct_negative=0.21, and ratings match review sentiment.",
             "Looked at 1-star review themes via review_qa: sound quality, customer service, review skepticism.",
             "Cross-referenced themes with the model's drivers: the complaints are real but come from a minority of reviewers.",
         ],
         "evidence": [
-            {"tool": "predict_return_risk", "snippet": "LOW risk 0.7%; 31% negative reviews in the analysed sample; rating-sentiment gap noted", "relevance": 0.9},
+            {"tool": "predict_return_risk", "snippet": "LOW risk 0.1%; product signals look healthy", "relevance": 0.9},
             {"tool": "review_qa", "snippet": "1-star reviewers cite poor sound quality and frustration with customer service", "relevance": 0.85},
             {"tool": "review_qa", "snippet": "Skepticism about 5-star review authenticity damages trust", "relevance": 0.75},
         ],

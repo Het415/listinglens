@@ -295,9 +295,13 @@ def _generate_risk_explanation(features: dict, risk_prob: float) -> str:
     """
     drivers = []
 
+    # `pct_negative` is the sentiment model's share of reviews labelled
+    # negative, weighted to the product's real star mix (src/features.py). It
+    # is not the 1-2 star share, which can be far lower (B07GZFM1ZM: 27% read
+    # as negative, 8.5% rated 1-2 stars), hence "read as".
     if features["pct_negative"] > 0.25:
         drivers.append(
-            f"{features['pct_negative']*100:.0f}% of reviews are negative"
+            f"{features['pct_negative']*100:.0f}% of reviews read as negative"
         )
 
     if features["rating_avg"] < 3.5:

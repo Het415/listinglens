@@ -19,6 +19,16 @@ model was scoring products it had never been trained to see (audit E-01/E-02):
 Both definitions live here, once, so the parity test in
 tests/test_fusion_parity.py can hold the two sides to the same function.
 
+The same sample also skewed every sentiment aggregate. With 50 reviews per
+star, 40% of the sample is 1-2 star by construction, so a product whose real
+ratings are 13.6% 1-2 star (B08XPWDSWW) was described as "31% negative", and
+its compound sentiment was compared against its real rating as if both came
+from the same reviews. The aggregates are now post-stratified: computed per
+star on the sample, then weighted by the product's real star mix
+(`star_weights`, `post_stratified_mean`, `post_stratified_share`). Training
+draws its features from a generator rather than from reviews, so serving is
+the only caller, but the definition sits beside the other shared ones.
+
 Pure Python on purpose: no numpy, pandas or model imports, so importing this
 costs nothing on either side.
 """
@@ -26,7 +36,7 @@ costs nothing on either side.
 from __future__ import annotations
 
 import math
-from typing import Mapping
+from typing import Iterable, Mapping
 
 # The model's inputs, in vector order. fusion.build_feature_vector and the
 # served features dict both follow this list exactly.
@@ -61,6 +71,61 @@ def rating_stats(raw_star_distribution: Mapping[str, int] | Mapping[int, int]) -
     mean = sum(star * n for star, n in counts.items()) / total
     variance = sum(n * (star - mean) ** 2 for star, n in counts.items()) / total
     return mean, math.sqrt(variance)
+
+
+def star_weights(
+    raw_star_distribution: Mapping[str, int] | Mapping[int, int],
+    sampled_stars: Iterable[int],
+) -> dict[int, float]:
+    """Each star's share of the product's real reviews, over the sampled stars.
+
+    Renormalised over the stars the sample actually holds, since a star with no
+    sampled reviews has no estimate to weight. ingest keeps up to 50 per star,
+    so that only drops a star that also has no real reviews. Raises ValueError
+    when nothing is left to weight.
+    """
+    sampled = {int(s) for s in sampled_stars}
+    counts = {int(s): int(n) for s, n in raw_star_distribution.items() if int(s) in sampled}
+    total = sum(counts.values())
+    if total <= 0:
+        raise ValueError("raw_star_distribution has no reviews at the sampled stars")
+    return {s: n / total for s, n in counts.items()}
+
+
+def post_stratified_mean(
+    per_star_means: Mapping[int, float],
+    raw_star_distribution: Mapping[str, int] | Mapping[int, int],
+) -> float:
+    """A per-review quantity's mean over the product's REAL reviews.
+
+    `per_star_means` maps star to the quantity's mean among the sampled reviews
+    with that star. Each is weighted by that star's real share, so the result
+    no longer depends on how many reviews of each star were sampled.
+    """
+    weights = star_weights(raw_star_distribution, per_star_means)
+    return sum(w * per_star_means[s] for s, w in weights.items())
+
+
+def post_stratified_share(
+    per_star_rates: Mapping[int, float],
+    raw_star_distribution: Mapping[str, int] | Mapping[int, int],
+    stars: Iterable[int],
+) -> float:
+    """Among the real reviews with some property, the share whose star is in `stars`.
+
+    `per_star_rates` maps star to the share of sampled reviews with that star
+    that have the property (for example, mention a category). The property's
+    real prevalence at each star is its rate times the star's weight, so the
+    share is the in-`stars` part of that over the total. Returns 0.0 when no
+    sampled review has the property.
+    """
+    weights = star_weights(raw_star_distribution, per_star_rates)
+    wanted = {int(s) for s in stars}
+    mass = {s: w * per_star_rates[s] for s, w in weights.items()}
+    total = sum(mass.values())
+    if total <= 0:
+        return 0.0
+    return sum(m for s, m in mass.items() if s in wanted) / total
 
 
 def rating_sentiment_gap(rating_avg: float, avg_compound_score: float) -> float:

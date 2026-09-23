@@ -6,7 +6,13 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 from src.cancellation import CancelToken, check_cancelled, cancellable_sleep
-from src.features import MODEL_FEATURES, rating_sentiment_gap, rating_stats
+from src.features import (
+    MODEL_FEATURES,
+    post_stratified_mean,
+    post_stratified_share,
+    rating_sentiment_gap,
+    rating_stats,
+)
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -285,13 +291,29 @@ def _complaint_level(pct_negative: float) -> str:
     return "LOW"
 
 
+def _star_of(rating) -> int | None:
+    """The whole star a review's rating falls on, or None if it has none."""
+    if pd.isna(rating):
+        return None
+    star = int(round(float(rating)))
+    return star if 1 <= star <= 5 else None
+
+
 def _build_category_outputs(
     texts: pd.Series,
     ratings: pd.Series,
+    raw_distribution: dict | None = None,
 ) -> tuple[list[int], dict, list[dict]]:
     """
     Internal: per-review topic ids, full topic_info for features, and the public
     category list (count >= 5, sorted by count desc) for dashboards.
+
+    `count` is the number of SAMPLED reviews that mention the category. Its
+    `pct_negative` / `pct_positive` are the shares of those mentions that come
+    from 1-2 and 4-5 star reviews. With `raw_distribution` they are
+    post-stratified, so they describe the product's real star mix rather than a
+    sample that is 40% 1-2 star by construction; without it (ad-hoc callers)
+    they are plain sample shares.
     """
     print("Running category analysis...")
 
@@ -319,23 +341,30 @@ def _build_category_outputs(
     topic_info: dict = {}
     category_rows: list[dict] = []
 
+    stars = [_star_of(r) for r in ratings]
+    sampled_per_star: dict[int, int] = {}
+    for star in stars:
+        if star is not None:
+            sampled_per_star[star] = sampled_per_star.get(star, 0) + 1
+
     for cat_idx, ((label, trigger_keywords), mentions) in enumerate(
         zip(CATEGORY_KEYWORDS, mention_sets)
     ):
         count = int(sum(mentions))
-        neg = 0
-        pos = 0
-        for i, hit in enumerate(mentions):
-            if not hit:
-                continue
-            r = float(ratings.iloc[i]) if not pd.isna(ratings.iloc[i]) else 3.0
-            if 1 <= r <= 2:
-                neg += 1
-            elif 4 <= r <= 5:
-                pos += 1
+        hits_per_star: dict[int, int] = {star: 0 for star in sampled_per_star}
+        for hit, star in zip(mentions, stars):
+            if hit and star is not None:
+                hits_per_star[star] += 1
 
-        raw_neg_pct = (neg / count) * 100 if count else 0.0
-        raw_pos_pct = (pos / count) * 100 if count else 0.0
+        if raw_distribution and sampled_per_star:
+            rates = {s: hits_per_star[s] / sampled_per_star[s] for s in sampled_per_star}
+            raw_neg_pct = post_stratified_share(rates, raw_distribution, (1, 2)) * 100
+            raw_pos_pct = post_stratified_share(rates, raw_distribution, (4, 5)) * 100
+        else:
+            neg = hits_per_star.get(1, 0) + hits_per_star.get(2, 0)
+            pos = hits_per_star.get(4, 0) + hits_per_star.get(5, 0)
+            raw_neg_pct = (neg / count) * 100 if count else 0.0
+            raw_pos_pct = (pos / count) * 100 if count else 0.0
         pct_negative = float(round(raw_neg_pct, 1))
         pct_positive = float(round(raw_pos_pct, 1))
 
@@ -360,20 +389,22 @@ def _build_category_outputs(
     return topics, topic_info, category_rows
 
 
-def run_category_analysis(texts: pd.Series, ratings: pd.Series) -> list[dict]:
+def run_category_analysis(texts: pd.Series, ratings: pd.Series,
+                          raw_distribution: dict | None = None) -> list[dict]:
     """
     Keyword-based category detection (case-insensitive, whole words; see
     _keyword_pattern).
 
     For each category, counts reviews with at least one trigger keyword and
-    computes the share of those mentions from 1–2★ vs 4–5★ reviews (3★ excluded).
+    computes the share of those mentions from 1–2★ vs 4–5★ reviews (3★ excluded),
+    post-stratified by `raw_distribution` when given.
 
     Returns:
         Sorted list (count descending) of dicts with label, keywords (3 strings),
         count, pct_negative, pct_positive, complaint_level — only categories with
         count >= 5.
     """
-    _, _, rows = _build_category_outputs(texts, ratings)
+    _, _, rows = _build_category_outputs(texts, ratings, raw_distribution)
     return rows
 
 
@@ -391,17 +422,22 @@ def engineer_features(df: pd.DataFrame,
     live in src/features.py.
 
     Features created:
-        - avg_compound_score: mean sentiment across the analysed reviews
+        - avg_compound_score: mean sentiment
         - pct_negative / pct_positive: share of reviews by sentiment label
         - avg_positive_score / avg_negative_score: mean class probabilities
         - rating_avg: the product's REAL mean star rating
         - rating_sentiment_gap: do ratings match sentiment?
 
-    `rating_avg` comes from `raw_distribution`, the star counts ingest captured
-    before it balanced the sample to 50 reviews per star. The balanced sample's
-    own mean is 3.0 for every product (audit E-01). The sentiment features are
-    still computed on that balanced sample, which over-weights 1-2 star reviews;
-    see the follow-up noted in audit/IMPLEMENTATION_LOG.md (T-08).
+    Everything is taken from `raw_distribution`, the star counts ingest captured
+    before it balanced the sample to 50 reviews per star:
+        - `rating_avg` is its mean. The balanced sample's own mean is 3.0 for
+          every product (audit E-01).
+        - the five sentiment features are post-stratified: computed per star on
+          the sample, then weighted by the real star mix (src/features.py). A
+          plain mean over the balanced sample is 40% 1-2 star by construction,
+          and it put a real rating beside sample-biased sentiment in the gap.
+    Without a distribution (ad-hoc callers only) all of them fall back to the
+    analysed sample, loudly.
     """
     df = df.copy()
     df["topic_id"] = topics
@@ -411,22 +447,40 @@ def engineer_features(df: pd.DataFrame,
     df["is_negative"] = (df["sentiment_label"] == "negative").astype(int)
     df["is_positive"] = (df["sentiment_label"] == "positive").astype(int)
 
+    sentiment_columns = {
+        "avg_compound_score": "compound_score",
+        "pct_negative":       "is_negative",
+        "pct_positive":       "is_positive",
+        "avg_positive_score": "positive_score",
+        "avg_negative_score": "negative_score",
+    }
     if raw_distribution:
         rating_avg, _ = rating_stats(raw_distribution)
+        by_star = df.assign(_star=df["rating"].map(_star_of)).dropna(subset=["_star"])
+        per_star = by_star.groupby("_star")[list(sentiment_columns.values())].mean()
+        sentiment = {
+            name: float(post_stratified_mean(
+                {int(star): mean for star, mean in per_star[column].items()},
+                raw_distribution,
+            ))
+            for name, column in sentiment_columns.items()
+        }
     else:
         # Only ad-hoc callers get here: ingest always returns a distribution.
         # Say so loudly, because on a star-balanced sample this is the 3.0 bug.
-        print("[features] no raw_star_distribution; rating_avg falls back to the "
-              "analysed sample, which is biased if the sample was star-balanced")
+        print("[features] no raw_star_distribution; rating_avg and sentiment fall "
+              "back to the analysed sample, which is biased if the sample was "
+              "star-balanced")
         rating_avg = float(df["rating"].mean())
+        sentiment = {name: float(df[column].mean()) for name, column in sentiment_columns.items()}
 
-    avg_compound = float(df["compound_score"].mean())
+    avg_compound = sentiment["avg_compound_score"]
     features = {
         "avg_compound_score":   avg_compound,
-        "pct_negative":         float(df["is_negative"].mean()),
-        "pct_positive":         float(df["is_positive"].mean()),
-        "avg_positive_score":   float(df["positive_score"].mean()),
-        "avg_negative_score":   float(df["negative_score"].mean()),
+        "pct_negative":         sentiment["pct_negative"],
+        "pct_positive":         sentiment["pct_positive"],
+        "avg_positive_score":   sentiment["avg_positive_score"],
+        "avg_negative_score":   sentiment["avg_negative_score"],
         "rating_avg":           rating_avg,
         "rating_sentiment_gap": rating_sentiment_gap(rating_avg, avg_compound),
     }
@@ -492,6 +546,7 @@ def analyze_scored_reviews(df_enriched: pd.DataFrame,
     topics, topic_info, categories = _build_category_outputs(
         df["body"],
         df["rating"],
+        raw_distribution,
     )
 
     # ── Step 3: Feature engineering ──
@@ -525,9 +580,12 @@ def analyze_scored_reviews(df_enriched: pd.DataFrame,
 
     # ── Summary stats for dashboard ──
     summary = {
+        # The SAMPLE size (up to 50 per star), not the product's review count,
+        # which is sum(raw_star_distribution). Shown as "reviews sampled".
         "total_reviews":    len(df),
         # The product's real mean, not the balanced sample's 3.0 (audit E-01).
         "avg_rating":       round(features["rating_avg"], 2),
+        # Post-stratified to the real star mix, like the features they come from.
         "pct_negative":     round(features["pct_negative"] * 100, 1),
         "pct_positive":     round(features["pct_positive"] * 100, 1),
         "categories":       categories,

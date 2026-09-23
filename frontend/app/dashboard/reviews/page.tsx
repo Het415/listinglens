@@ -24,6 +24,7 @@ type AnalyzeResponse = {
     total_reviews?: number
     pct_positive?: number
     pct_negative?: number
+    raw_star_distribution?: Record<string, number>
     sentiment_by_rating?: Record<string, number> | Record<number, number>
     top_topics?: Array<{
       id?: number
@@ -283,7 +284,10 @@ function ReviewsPageInner() {
   const features = analysis?.features
   const risk = analysis?.risk
 
+  // The analysed sample (50 per star), not the product's review count.
   const totalReviews = reviews.length || summary?.total_reviews || 0
+  const totalRatings = Object.values(summary?.raw_star_distribution || {})
+    .reduce((n, c) => n + Number(c || 0), 0)
   const pctPositive = summary?.pct_positive ?? 0
   const pctNegative = summary?.pct_negative ?? 0
   const avgCompound = typeof features?.avg_compound_score === 'number' ? features.avg_compound_score : undefined
@@ -438,11 +442,17 @@ function ReviewsPageInner() {
           <section className="rounded-xl border border-border bg-card p-5 text-card-foreground">
             <h2 className="mb-4 text-sm font-medium text-foreground">Sentiment Overview</h2>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              <StatCard label="Total Reviews" value={`${totalReviews}`} />
+              <StatCard label="Reviews sampled" value={`${totalReviews}`} />
               <StatCard label="Positive %" value={`${pctPositive}%`} color="text-accent-teal" />
               <StatCard label="Negative %" value={`${pctNegative}%`} color="text-accent-red" />
               <StatCard label="Average Compound Score" value={`${avgCompound != null ? avgCompound.toFixed(3) : 'N/A'}`} />
             </div>
+            <p className="mt-3 text-xs text-muted-foreground">
+              The sample holds an equal number of reviews per star. The shares and the compound
+              score are weighted to the product&apos;s real star mix
+              {totalRatings ? ` (${totalRatings.toLocaleString()} ratings)` : ''}, so they
+              describe all of its reviews, not the sample.
+            </p>
           </section>
 
           {/* SECTION 2 — Sentiment by Star Rating */}

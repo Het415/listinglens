@@ -399,7 +399,7 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
 
   const riskNegLine =
     pctNegative > 30
-      ? `Address negative review patterns — ${pctNegative.toFixed(1)}% of reviews are negative. Focus on resolving the most common complaints.`
+      ? `Address negative review patterns — ${pctNegative.toFixed(1)}% of reviews read as negative. Focus on resolving the most common complaints.`
       : `Keep improving — negative sentiment is ${formatPercent(pctNegative)}.`
 
   const ratingLine =
