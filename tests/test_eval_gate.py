@@ -69,6 +69,9 @@ def _good_output(gold: dict) -> dict:
 def offline_main(monkeypatch, tmp_path):
     """main() with the agent replaced by `behaviour(gold) -> (out, err)`."""
     monkeypatch.setattr(run_eval, "REPORTS_DIR", tmp_path)
+    # main() refuses to start without a key; the agent is replaced, so this
+    # one is never sent. CI has no .env, so it must be set here, not inherited.
+    monkeypatch.setenv("GROQ_API_KEY", "gsk_dummy_never_sent")
 
     def run(behaviour, limit=5):
         by_query = {g["query"]: g for g in _gold()}
@@ -140,3 +143,19 @@ def test_no_gold_product_is_used_as_a_worked_example():
     examples = prompts[prompts.index("# Worked examples"):]
     for name in {g["product_name"] for g in _gold()}:
         assert name.lower() not in examples.lower(), name
+
+
+@pytest.mark.parametrize("value", ["", None], ids=["empty", "unset"])
+def test_a_missing_groq_key_is_a_config_error_not_degraded_rows(monkeypatch, capsys, value):
+    """PR #9's smoke eval ran on a repo with no GROQ_API_KEY secret: five rows
+    degraded, and the gate reported "no decision" instead of the cause."""
+    if value is None:
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("GROQ_API_KEY", value)
+    monkeypatch.setattr(run_eval, "_run_one", lambda *a: pytest.fail("no row may run without a key"))
+    monkeypatch.setattr("sys.argv", ["run_eval", "--limit", "5", "--no-judge"])
+
+    assert run_eval.main() == 1
+    out = capsys.readouterr().out
+    assert "GROQ_API_KEY is not set" in out and "Actions secret" in out

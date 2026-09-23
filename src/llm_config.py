@@ -177,20 +177,32 @@ def _provider_unavailable(err: Exception) -> bool:
 
     A 401 is an `AuthenticationError`, which is none of these, so a bad key
     still re-raises at once.
+
+    So does a request the HTTP layer refuses to SEND. An empty GROQ_API_KEY
+    makes the SDK write the header `Authorization: Bearer `, which h11 rejects
+    as illegal before any connection is made. The SDK wraps that
+    `httpx.LocalProtocolError` in an `APIConnectionError`, which would read as
+    "Groq is down" and quietly degrade every run. It is our own bad request, so
+    it must stay loud. Seen in CI on PR #9, where the repo had no secret.
+    A server-side `RemoteProtocolError` is still the provider's problem.
     """
     try:
         import groq
+        import httpx
     except ImportError:  # pragma: no cover — groq is a hard dependency
         return False
     unavailable = (groq.APIConnectionError, groq.InternalServerError)
+    found = False
     seen: set[int] = set()
     e: BaseException | None = err
     while e is not None and id(e) not in seen:
+        if isinstance(e, httpx.LocalProtocolError):
+            return False
         if isinstance(e, unavailable):
-            return True
+            found = True
         seen.add(id(e))
         e = e.__cause__
-    return False
+    return found
 
 
 _UNAVAILABLE = "unavailable (timeout, connection or 5xx)"

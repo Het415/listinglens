@@ -24,8 +24,8 @@ version, so a number can be traced to exactly what produced it.
 
 Exit status: 0 when every row produced a model decision; 2 when any row
 errored or degraded (the eval gate, audit E-10); 1 for a configuration error
-such as a missing judge key. `--limit N` runs a stratified smoke subset, not
-the first N rows (see SMOKE_STRATA).
+such as a missing or empty GROQ_API_KEY, or a missing judge key. `--limit N`
+runs a stratified smoke subset, not the first N rows (see SMOKE_STRATA).
 """
 import argparse
 import hashlib
@@ -679,6 +679,15 @@ def main() -> int:
     variant = args.baseline or "full"
     tag = args.output_tag or variant
     with_judges = not args.no_judge
+
+    # Every variant calls Groq. Without a key each row degrades, and the gate
+    # below reports "no decision" five times instead of the one-line cause:
+    # that is how the PR smoke eval failed on a repo with no secret (PR #9).
+    if not os.getenv("GROQ_API_KEY"):
+        print("ERROR: GROQ_API_KEY is not set, or is empty.")
+        print("Locally: set it in .env. In CI: add it as a repository Actions "
+              "secret (Settings > Secrets and variables > Actions).")
+        return 1
 
     if with_judges:
         provider = os.getenv("JUDGE_PROVIDER", "anthropic")

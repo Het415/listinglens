@@ -374,3 +374,53 @@ def test_the_executor_and_rag_clients_use_it(default_timeout, monkeypatch):
     for kwargs in _RecordingChatGroq.built:
         assert kwargs["request_timeout"].read == 20.0
         assert kwargs["max_retries"] == 1
+
+
+# ── a request we could not send is our bug, not an outage (PR #9 CI) ──────────
+
+def _refused_to_send() -> groq.APIConnectionError:
+    """What the SDK raises for an empty GROQ_API_KEY: h11 rejects the header
+    `Authorization: Bearer ` before any connection is made, and the SDK
+    re-raises it as `APIConnectionError(...) from err` (_base_client.py)."""
+    try:
+        try:
+            raise httpx.LocalProtocolError("Illegal header value b'Bearer '")
+        except httpx.LocalProtocolError as err:
+            raise groq.APIConnectionError(request=_REQ) from err
+    except groq.APIConnectionError as e:
+        return e
+
+
+def _server_broke_protocol() -> groq.APIConnectionError:
+    try:
+        try:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        except httpx.RemoteProtocolError as err:
+            raise groq.APIConnectionError(request=_REQ) from err
+    except groq.APIConnectionError as e:
+        return e
+
+
+@pytest.mark.parametrize("wrap", [False, True], ids=["bare", "instructor-wrapped"])
+def test_an_unsendable_request_is_not_a_failover_signature(wrap):
+    err = _instructor_wrapped(_refused_to_send()) if wrap else _refused_to_send()
+    assert _failover_reason(err) is None
+    assert is_provider_capacity_error(err) is False
+
+
+def test_an_empty_key_does_not_walk_the_chain():
+    calls = []
+
+    def fn(model):
+        calls.append(model)
+        raise _refused_to_send()
+
+    with pytest.raises(groq.APIConnectionError):
+        resilient_call("agent", fn)
+    assert len(calls) == 1
+
+
+def test_a_server_side_protocol_error_is_still_unavailable():
+    err = _server_broke_protocol()
+    assert _failover_reason(err) is not None
+    assert is_provider_capacity_error(err) is True

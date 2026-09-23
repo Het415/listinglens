@@ -45,6 +45,21 @@ AUTH_401 = groq.AuthenticationError(
     "Invalid API Key", response=httpx.Response(401, request=_REQ), body=None)
 
 
+def _empty_key() -> groq.APIConnectionError:
+    # An empty GROQ_API_KEY: h11 refuses the header `Bearer ` before sending,
+    # and the SDK re-raises that as a connection error (seen in CI, PR #9).
+    try:
+        try:
+            raise httpx.LocalProtocolError("Illegal header value b'Bearer '")
+        except httpx.LocalProtocolError as err:
+            raise groq.APIConnectionError(request=_REQ) from err
+    except groq.APIConnectionError as e:
+        return e
+
+
+EMPTY_KEY = _empty_key()
+
+
 # ── the classifier ────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("err", [TPD, OTPM, GONE, TIMEOUT, CONNECTION, SERVER_5XX])
@@ -52,7 +67,7 @@ def test_capacity_errors_are_recognised(err):
     assert is_provider_capacity_error(err) is True
 
 
-@pytest.mark.parametrize("err", [AUTH, AUTH_401, BUG])
+@pytest.mark.parametrize("err", [AUTH, AUTH_401, EMPTY_KEY, BUG])
 def test_our_own_faults_are_not_capacity_errors(err):
     assert is_provider_capacity_error(err) is False
 
@@ -83,7 +98,7 @@ def test_exhausted_chain_degrades_so_the_graph_can_continue(monkeypatch, err, la
     assert msg.additional_kwargs.get("tool_call_error")
 
 
-@pytest.mark.parametrize("err", [AUTH, AUTH_401, BUG])
+@pytest.mark.parametrize("err", [AUTH, AUTH_401, EMPTY_KEY, BUG])
 def test_auth_failures_and_bugs_still_raise(monkeypatch, err):
     """Masking these would hide a total outage behind partial answers."""
     with pytest.raises(type(err)):
