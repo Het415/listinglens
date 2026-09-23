@@ -12,7 +12,12 @@ low-confidence Synthesizer output.
 from langchain_core.messages import AIMessage, SystemMessage
 from langchain_groq import ChatGroq
 
-from src.llm_config import is_provider_capacity_error, reasoning_effort, resilient_call
+from src.llm_config import (
+    is_provider_capacity_error,
+    reasoning_effort,
+    request_timeout,
+    resilient_call,
+)
 
 from ..prompts import executor_system_prompt
 from ..schemas import AgentState
@@ -46,7 +51,8 @@ def _invoke_with_retry(bind_for, messages):
                 return bind_for(model).invoke(messages)
             except Exception as e:  # noqa: BLE001 — provider exception types vary
                 text = str(e)
-                # Let resilient_call see 404s/429s so it can switch models.
+                # Let resilient_call see 404s/429s/timeouts/5xx so it can
+                # switch models.
                 if "tool_use_failed" not in text and "tool call" not in text.lower():
                     raise
                 last_err = e
@@ -65,7 +71,8 @@ def _invoke_with_retry(bind_for, messages):
         pass
     except Exception as e:  # noqa: BLE001 — provider exception types vary
         # The chain is exhausted for a reason that is not our fault: every
-        # model rate-limited, or every model decommissioned. Degrade for the
+        # model rate-limited, decommissioned, or unavailable (timed out,
+        # connection dropped, 5xx; audit E-19). Degrade for the
         # same reason the malformed-tool-call path does — the evidence already
         # gathered is still worth synthesizing, and losing the whole run costs
         # the user everything the agent had proved.
@@ -136,6 +143,9 @@ def make_executor_node(tools):
     # parallel_tool_calls=False: serial tool calls only. The graph already
     # loops the executor, so serial is functionally equivalent, and it keeps
     # the one-tool-call-per-turn contract the routing edge in graph.py expects.
+    #
+    # request_timeout is the shared one (20 s read, was 60): see
+    # `stage_deadline_s` in src/llm_config.py for why it bounds a hung Groq.
     _bound: dict[str, object] = {}
 
     def bind_for(model: str):
@@ -145,7 +155,7 @@ def make_executor_node(tools):
                 temperature=0.1,
                 max_tokens=2048,
                 reasoning_effort=reasoning_effort("executor"),
-                request_timeout=60,
+                request_timeout=request_timeout(),
                 max_retries=1,
             )
             _bound[model] = llm.bind_tools(tools, parallel_tool_calls=False)

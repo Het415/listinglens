@@ -158,7 +158,7 @@ def build_rag_chain(vectorstore):
     from langchain_groq import ChatGroq
     from langchain_core.prompts import PromptTemplate
 
-    from src.llm_config import rag_model, reasoning_effort, resilient_call
+    from src.llm_config import rag_model, reasoning_effort, request_timeout, resilient_call
 
     # max_tokens is deliberately small. Groq enforces an *output* tokens per
     # minute cap (OTPM) separately from the input TPM cap, and it rejects a
@@ -170,7 +170,9 @@ def build_rag_chain(vectorstore):
     #
     # request_timeout caps the blocking wait. Without it, langchain retries a
     # 429 with backoff and no deadline, which hangs the /chat request (and the
-    # uvicorn worker thread serving it) indefinitely rather than erroring.
+    # uvicorn worker thread serving it) indefinitely rather than erroring. It
+    # is the shared 20 s read timeout (was 60); see `stage_deadline_s` in
+    # src/llm_config.py.
     _llms: dict = {}
 
     def llm_for(model: str):
@@ -180,7 +182,7 @@ def build_rag_chain(vectorstore):
                 api_key=GROQ_API_KEY,
                 temperature=0.1,
                 max_tokens=512,
-                request_timeout=60,
+                request_timeout=request_timeout(),
                 max_retries=1,
             )
         return _llms[model]

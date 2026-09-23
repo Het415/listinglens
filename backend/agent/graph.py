@@ -25,6 +25,7 @@ animates the trace panel as the agent progresses.
 """
 import json
 import os
+import traceback
 from typing import Annotated, AsyncIterator
 
 from dotenv import load_dotenv
@@ -36,6 +37,7 @@ from langchain_core.messages import (
 from langchain_core.tools import tool
 from langgraph.graph import END, START, StateGraph
 from langgraph.prebuilt import InjectedState, ToolNode
+from langgraph.prebuilt.tool_node import ToolInvocationError
 
 from ..mcp_server.tools import (
     competitor as competitor_tool,
@@ -142,6 +144,34 @@ def _build_tools_for_asin(asin: str) -> list:
     ]
 
 
+def handle_tool_error(e: Exception) -> str:
+    """ToolNode's error handler: a failed tool becomes an evidence gap.
+
+    ToolNode's default re-raises anything but an argument ValidationError, so a
+    single raising tool (a rate-limited RAG chain, a FAISS load failure, a
+    vislens timeout) aborted the whole run: the evidence already streamed was
+    orphaned and no recommendation was produced (audit E-09, CMD-03).
+
+    The returned string becomes the ToolMessage content, which the synthesizer
+    reads as LLM context and the UI shows as the tool's result, so it carries
+    the exception CLASS only. Provider bodies can hold an org id or quota
+    details, and they belong in the server log, never in a prompt or a browser.
+    ToolNode labels the message with the tool's name, and the synthesizer's
+    transcript prints it (`TOOL RESULT [review_qa]: ...`), so it is not repeated
+    here.
+    """
+    if isinstance(e, ToolInvocationError):
+        # The model passed arguments the tool's schema rejects. ToolNode's own
+        # message says which ones, so the executor can correct the call.
+        return e.message
+    print(f"[tool-error] {type(e).__name__}: {e}")
+    print("".join(traceback.format_exception(e)).rstrip())
+    return (
+        f"Tool failed ({type(e).__name__}). Continue without this result and "
+        f"list it under evidence_gaps."
+    )
+
+
 # ── Routing edges ─────────────────────────────────────────────────────────────
 
 
@@ -212,7 +242,7 @@ def build_graph(asin: str):
     graph = StateGraph(AgentState)
     graph.add_node("planner", plan_node)
     graph.add_node("executor", make_executor_node(tools))
-    graph.add_node("tools", ToolNode(tools))
+    graph.add_node("tools", ToolNode(tools, handle_tool_errors=handle_tool_error))
     graph.add_node("synthesizer", synthesize_node)
     graph.add_node("bump_replan", _bump_replan_counter)
 

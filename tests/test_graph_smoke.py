@@ -18,7 +18,10 @@ Same approach as audit/_work/phase3/scripts/agt01_harness.py.
 from __future__ import annotations
 
 import asyncio
+import json
 
+import groq
+import httpx
 import pytest
 from langchain_core.messages import AIMessage
 
@@ -38,6 +41,22 @@ RATE_LIMITED = RuntimeError(
     "'code': 'rate_limit_exceeded'}}"
 )
 
+# What `review_qa` raises once the RAG chain's own failover is exhausted: the
+# groq SDK's RateLimitError, whose text carries the org id and quota figures.
+_BODY = {"error": {
+    "message": "Rate limit reached for model `qwen/qwen3.8-27b` in organization "
+               "`org_01TESTORGID` service tier `on_demand` on tokens per minute "
+               "(TPM): Limit 6000, Used 5990, Requested 312.",
+    "type": "tokens", "code": "rate_limit_exceeded"}}
+TOOL_RATE_LIMITED = groq.RateLimitError(
+    f"Error code: 429 - {_BODY}",
+    response=httpx.Response(429, request=httpx.Request(
+        "POST", "https://api.groq.com/openai/v1/chat/completions")),
+    body=_BODY,
+)
+# Fragments of the provider text that must never reach an event or a prompt.
+_PROVIDER_TEXT = ("org_", "Rate limit reached", "rate_limit_exceeded", "TPM")
+
 
 def _recommendation() -> Recommendation:
     return Recommendation(
@@ -56,7 +75,8 @@ def _recommendation() -> Recommendation:
 def fake_llms(monkeypatch):
     """Patch every LLM call site; return a dict the test can steer."""
     control = {"executor_script": ["predict_return_risk", "done"], "executor_calls": 0,
-               "executor_error": None, "tool_calls_made": []}
+               "executor_error": None, "tool_calls_made": [],
+               "tool_args": {"review_qa": {"question": "What do 1-star reviews say?"}}}
 
     def planner_call(stage, fn):
         return Plan(query_type="returns", tool_sequence=["predict_return_risk"],
@@ -72,7 +92,8 @@ def fake_llms(monkeypatch):
             return AIMessage(content="I have enough evidence.")
         control["tool_calls_made"].append(step)
         return AIMessage(content="", tool_calls=[
-            {"name": step, "args": {}, "id": f"call_{control['executor_calls']}"}])
+            {"name": step, "args": control["tool_args"].get(step, {}),
+             "id": f"call_{control['executor_calls']}"}])
 
     def synthesizer_call(stage, fn):
         return _recommendation()
@@ -185,3 +206,100 @@ def test_a_later_good_turn_does_not_clear_the_flag(fake_llms):
     finally:
         executor.resilient_call = real
     assert out.trace.executor_degraded is True
+
+
+# ── a raising tool degrades instead of aborting (audit E-09, CMD-03) ──────────
+
+def _raising_review_qa(monkeypatch, fake_llms):
+    def boom(asin, question):
+        raise TOOL_RATE_LIMITED
+    monkeypatch.setattr(review_qa_tool, "review_qa", boom)
+    fake_llms["executor_script"] = ["review_qa", "done"]
+
+
+def _synthesis_fails(monkeypatch):
+    def fail(stage, fn):
+        raise RuntimeError("synthesizer unavailable")
+    monkeypatch.setattr(synthesizer, "resilient_call", fail)
+
+
+@pytest.mark.parametrize("synth_ok", [True, False], ids=["synth-ok", "synth-degraded"])
+def test_a_raising_tool_ends_in_a_recommendation_not_an_error(monkeypatch, fake_llms, synth_ok):
+    """Before T-04 the stream ended `... tool_call, node_completed, error`."""
+    _raising_review_qa(monkeypatch, fake_llms)
+    if not synth_ok:
+        _synthesis_fails(monkeypatch)
+
+    events = _stream()
+    names = [e["event"] for e in events]
+
+    assert "error" not in names
+    assert "recommendation" in names
+    assert names[-1] == "done"
+
+    result = next(e["data"] for e in events if e["event"] == "tool_result")
+    assert result["tool"] == "review_qa"
+    assert result["result_preview"].startswith("Tool failed (RateLimitError).")
+
+    rec = next(e["data"] for e in events if e["event"] == "recommendation")
+    assert rec["synthesis_degraded"] is (not synth_ok)
+    if not synth_ok:
+        # The locally assembled answer carries the failure as its evidence.
+        assert [ev["tool"] for ev in rec["evidence"]] == ["review_qa"]
+
+    wire = json.dumps(events, default=str)
+    for fragment in _PROVIDER_TEXT:
+        assert fragment not in wire, f"provider text {fragment!r} reached the client"
+
+
+def test_the_synthesizer_prompt_gets_the_sanitized_failure(monkeypatch, fake_llms):
+    """The ToolMessage is LLM context, so the provider body must not be in it."""
+    _raising_review_qa(monkeypatch, fake_llms)
+    seen = {}
+    real = synthesizer._build_transcript
+
+    def capture(**kwargs):
+        seen["transcript"] = real(**kwargs)
+        return seen["transcript"]
+    monkeypatch.setattr(synthesizer, "_build_transcript", capture)
+
+    graph.run_agent(ASIN, QUERY)
+
+    assert "TOOL RESULT [review_qa]: Tool failed (RateLimitError)." in seen["transcript"]
+    for fragment in _PROVIDER_TEXT:
+        assert fragment not in seen["transcript"]
+
+
+def test_the_full_tool_error_is_logged_server_side(monkeypatch, fake_llms, capsys):
+    """Degrading must not hide a real bug: the full text goes to the log."""
+    _raising_review_qa(monkeypatch, fake_llms)
+
+    graph.run_agent(ASIN, QUERY)
+
+    out = capsys.readouterr().out
+    assert "[tool-error] RateLimitError: Error code: 429" in out
+    assert "org_01TESTORGID" in out
+    assert "Traceback" in out
+
+
+def test_run_agent_survives_a_raising_tool(monkeypatch, fake_llms):
+    _raising_review_qa(monkeypatch, fake_llms)
+
+    out = graph.run_agent(ASIN, QUERY)
+
+    assert out.recommendation is not None
+    assert out.trace.tools_called == ["review_qa"]
+
+
+def test_bad_tool_arguments_still_get_the_schema_message(fake_llms):
+    """ToolNode's default for a rejected argument set is kept, so the executor
+    can correct its call: `review_qa` without its required `question`."""
+    fake_llms["executor_script"] = ["review_qa", "done"]
+    fake_llms["tool_args"] = {}
+
+    events = _stream()
+
+    result = next(e["data"] for e in events if e["event"] == "tool_result")
+    assert "question" in result["result_preview"]
+    assert not result["result_preview"].startswith("Tool failed")
+    assert "error" not in [e["event"] for e in events]
