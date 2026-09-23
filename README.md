@@ -132,9 +132,9 @@ synthesizer prompt's worked examples anchor hedged answers at 0.55. Recorded her
 than quietly listed as a feature; re-arming it means gating on missing tools instead of
 on self-reported confidence.
 
-Two of the five tools are real:
+Two of the five tools run on real review data:
 - **`review_qa`** — semantic search over actual Amazon reviews using vector embeddings, then an LLM answers grounded in what it found
-- **`predict_return_risk`** — an XGBoost classifier trained on engineered review features (96.5% accuracy on held-out data)
+- **`predict_return_risk`** — an XGBoost classifier over engineered review features (sentiment mix, the product's real average rating, a rating–sentiment gap). There is no return data behind it: it is trained on synthetic product profiles against a *proxy* label, a fixed threshold of three of its own inputs, so the score it reports is the probability of that proxy label, not a predicted return rate. Its held-out accuracy only measures how well it re-learns the threshold, so none is quoted here; the training record is `data/processed/xgboost_metrics.json`.
 
 The other three (competitor, price, trend) are deterministic synthetic data — the agent doesn't know the difference, which means the architecture is real even where the data isn't yet. Wiring real market data in is a tool-layer swap, not an agent change.
 

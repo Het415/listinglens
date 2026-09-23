@@ -9,9 +9,11 @@ from typing import AsyncIterator
 
 
 # Single canonical fixture: a returns-style query on the TOZO T10 earbuds.
-# Numbers are realistic (lifted from the Stage 4 eval report); reasoning is
-# stubbed but plausible. Delays are tuned so the trace animates believably
-# (~6-8s end-to-end, similar to real runs).
+# The predict_return_risk numbers are what the tool returns for B08XPWDSWW
+# since the 2026-09-23 feature fix (audit T-08): the old 77.4% HIGH came from
+# scoring every product as a 3.0-star product. Reasoning is stubbed but
+# plausible. Delays are tuned so the trace animates believably (~6-8s
+# end-to-end, similar to real runs).
 
 _RETURNS_FIXTURE: list[dict] = [
     {"delay_ms": 0,   "event": "started", "data": {
@@ -37,11 +39,10 @@ _RETURNS_FIXTURE: list[dict] = [
     {"delay_ms": 400, "event": "tool_result", "data": {
         "tool": "predict_return_risk",
         "result_preview": (
-            '{"asin": "B08XPWDSWW", "risk_score": 0.7738, "risk_label": "HIGH", '
-            '"risk_pct": 77.4, "confidence": 0.7738, '
+            '{"asin": "B08XPWDSWW", "risk_score": 0.0072, "risk_label": "LOW", '
+            '"risk_pct": 0.7, "confidence": 0.9928, '
             '"explanation": "Risk drivers: 31% of reviews are negative; '
-            'average rating is low at 3.0/5; significant gap between ratings '
-            'and review sentiment"}'
+            'significant gap between ratings and review sentiment"}'
         ),
     }},
     {"delay_ms": 250, "event": "node_started", "data": {
@@ -70,9 +71,10 @@ _RETURNS_FIXTURE: list[dict] = [
     }},
     {"delay_ms": 600, "event": "executor_thought", "data": {
         "content": (
-            "I now have both the quantitative return risk (77.4%, HIGH) and "
-            "the qualitative drivers from 1-star reviews. That's enough to "
-            "produce a confident action plan."
+            "The quantitative return risk is LOW (0.7%) at a 4.26-star average, "
+            "so the data does not show a spike; the 1-star reviews still show "
+            "what the unhappy minority returns over. That's enough for an "
+            "action plan."
         ),
     }},
     {"delay_ms": 100, "event": "node_completed", "data": {"node": "executor"}},
@@ -81,21 +83,22 @@ _RETURNS_FIXTURE: list[dict] = [
     }},
     {"delay_ms": 1200, "event": "recommendation", "data": {
         "decision": "go",
-        "confidence": 0.82,
+        "confidence": 0.7,
         "summary": (
-            "Returns are likely spiking because of three converging issues: "
-            "31% of reviews are negative and 1-star reviewers consistently "
-            "cite poor sound quality, slow customer-service response, and "
-            "perceived dishonesty around review solicitation. The XGBoost "
-            "model flags this product as HIGH return risk (77.4%)."
+            "The review data does not point to a returns spike: the return-risk "
+            "model scores this product LOW (0.7%) at a real 4.26-star average. "
+            "Where customers are unhappy, 1-star reviewers consistently cite "
+            "poor sound quality, slow customer-service response, and "
+            "perceived dishonesty around review solicitation. Check actual "
+            "return records before treating this as a spike."
         ),
         "reasoning_steps": [
-            "Pulled quantitative risk: HIGH (77.4%), driven by pct_negative=0.31 and rating_avg=3.0.",
+            "Pulled quantitative risk: LOW (0.7%); rating_avg=4.26 outweighs pct_negative=0.31 in the model.",
             "Looked at 1-star review themes via review_qa: sound quality, customer service, review skepticism.",
-            "Cross-referenced themes with the model's risk drivers — they align on customer-trust and product-quality issues.",
+            "Cross-referenced themes with the model's drivers: the complaints are real but come from a minority of reviewers.",
         ],
         "evidence": [
-            {"tool": "predict_return_risk", "snippet": "HIGH risk 77.4%; 31% negative reviews; rating-sentiment gap detected", "relevance": 0.9},
+            {"tool": "predict_return_risk", "snippet": "LOW risk 0.7%; 31% negative reviews in the analysed sample; rating-sentiment gap noted", "relevance": 0.9},
             {"tool": "review_qa", "snippet": "1-star reviewers cite poor sound quality and frustration with customer service", "relevance": 0.85},
             {"tool": "review_qa", "snippet": "Skepticism about 5-star review authenticity damages trust", "relevance": 0.75},
         ],

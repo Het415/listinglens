@@ -5,7 +5,14 @@ import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
+from src.features import MODEL_FEATURES, rating_sentiment_gap
+
 load_dotenv()
+
+MODEL_PATH = "data/processed/xgboost_model.json"
+# Written next to the model by train_model(), so the numbers quoted anywhere
+# trace to a file rather than to memory (audit E-15).
+METRICS_PATH = "data/processed/xgboost_metrics.json"
 
 
 @lru_cache(maxsize=1)
@@ -17,13 +24,12 @@ def _load_return_risk_model():
     """
     import xgboost as xgb
 
-    model_path = "data/processed/xgboost_model.json"
-    if not os.path.exists(model_path):
+    if not os.path.exists(MODEL_PATH):
         print("No trained model found — training now...")
         train_model()
 
     model = xgb.XGBClassifier()
-    model.load_model(model_path)
+    model.load_model(MODEL_PATH)
     return model
 
 # ── Proxy Label Engineering ────────────────────────────────────────────────────
@@ -39,6 +45,11 @@ def create_proxy_labels(features_list: list[dict]) -> np.ndarray:
 
     This proxy correlates with return behavior based on e-commerce research
     showing negative reviews and low ratings are the strongest return predictors.
+
+    Be clear about what that makes the model: it learns this threshold of three
+    of its own inputs, on synthetic rows. Its held-out accuracy measures how
+    well it re-learns the formula, not anything about returns. The score it
+    serves is P(proxy label = high risk), not a return rate.
 
     In production this would be replaced with actual return rate data
     from the seller's backend — the model architecture stays identical.
@@ -61,35 +72,12 @@ def create_proxy_labels(features_list: list[dict]) -> np.ndarray:
 def build_feature_vector(features: dict) -> np.ndarray:
     """
     Converts features dict to ordered numpy array for XGBoost.
-    Order must be consistent between training and inference.
+    Order must be consistent between training and inference: both follow
+    src.features.MODEL_FEATURES.
     """
-    return np.array([
-        features["avg_compound_score"],
-        features["pct_negative"],
-        features["pct_positive"],
-        features["avg_positive_score"],
-        features["avg_negative_score"],
-        features["rating_avg"],
-        features["rating_std"],
-        features["rating_sentiment_gap"],
-        features["review_length_avg"] / 10000,  # normalize
-        features["n_topics"],
-        features["pct_outlier_reviews"],
-    ])
+    return np.array([features[name] for name in MODEL_FEATURES], dtype=float)
 
-FEATURE_NAMES = [
-    "avg_compound_score",
-    "pct_negative",
-    "pct_positive",
-    "avg_positive_score",
-    "avg_negative_score",
-    "rating_avg",
-    "rating_std",
-    "rating_sentiment_gap",
-    "review_length_avg_norm",
-    "n_topics",
-    "pct_outlier_reviews",
-]
+FEATURE_NAMES = list(MODEL_FEATURES)
 
 
 # ── Synthetic Training Data ────────────────────────────────────────────────────
@@ -139,11 +127,8 @@ def generate_synthetic_training_data(n_samples: int = 500) -> tuple:
             "avg_positive_score":   round(avg_positive_score, 4),
             "avg_negative_score":   round(avg_negative_score, 4),
             "rating_avg":           round(rating_avg, 2),
-            "rating_std":           round(np.random.uniform(0.5, 2.0), 2),
-            "rating_sentiment_gap": round(abs(avg_compound - (rating_avg/5 - 0.5)), 4),
-            "review_length_avg":    round(np.random.uniform(500, 5000), 1),
-            "n_topics":             int(np.random.randint(3, 12)),
-            "pct_outlier_reviews":  round(np.random.uniform(0, 0.3), 4),
+            # The same function serving uses (src/features.py).
+            "rating_sentiment_gap": round(rating_sentiment_gap(rating_avg, avg_compound), 4),
         }
         features_list.append(features)
 
@@ -224,8 +209,35 @@ def train_model():
 
     # save model
     os.makedirs("data/processed", exist_ok=True)
-    model.save_model("data/processed/xgboost_model.json")
-    print("\nModel saved to data/processed/xgboost_model.json")
+    model.save_model(MODEL_PATH)
+    print(f"\nModel saved to {MODEL_PATH}")
+
+    # ...and what it scored, next to it. The ranges are what the parity test
+    # checks served features against.
+    X_all = np.vstack([X_train, X_test])
+    with open(METRICS_PATH, "w") as f:
+        json.dump({
+            "what_this_measures": (
+                "Held-out agreement with a synthetic proxy label that is a "
+                "threshold of three of the model's own inputs "
+                "(create_proxy_labels). It is not a returns metric."
+            ),
+            "accuracy": metrics["accuracy"],
+            "roc_auc": metrics["roc_auc"],
+            "n_samples": int(len(X)),
+            "n_test": int(len(X_test)),
+            "positive_rate": round(float(y.mean()), 4),
+            "features": FEATURE_NAMES,
+            "feature_importance": {k: round(float(v), 4) for k, v in importance.items()},
+            "training_ranges": {
+                name: [round(float(X_all[:, i].min()), 4), round(float(X_all[:, i].max()), 4)]
+                for i, name in enumerate(FEATURE_NAMES)
+            },
+            "xgboost_version": xgb.__version__,
+            "seed": 42,
+        }, f, indent=2)
+        f.write("\n")
+    print(f"Metrics saved to {METRICS_PATH}")
 
     return model, metrics
 
