@@ -34,7 +34,6 @@ import os
 import subprocess
 import sys
 import time
-import traceback
 from datetime import date
 from pathlib import Path
 from statistics import median

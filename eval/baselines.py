@@ -9,10 +9,7 @@ Two baselines:
 Both produce an AgentOutput matching the full agent's shape so the eval
 pipeline can treat them uniformly.
 """
-import os
 
-import instructor
-from groq import Groq
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq

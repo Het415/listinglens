@@ -2,7 +2,6 @@ import os
 import json
 from functools import lru_cache
 import numpy as np
-import pandas as pd
 from dotenv import load_dotenv
 
 from src.features import MODEL_FEATURES, rating_sentiment_gap

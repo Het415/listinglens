@@ -1,6 +1,4 @@
 import os
-import json
-import time
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -158,7 +156,7 @@ def build_rag_chain(vectorstore):
     from langchain_groq import ChatGroq
     from langchain_core.prompts import PromptTemplate
 
-    from src.llm_config import rag_model, reasoning_effort, request_timeout, resilient_call
+    from src.llm_config import rag_model, request_timeout, resilient_call
 
     # max_tokens is deliberately small. Groq enforces an *output* tokens per
     # minute cap (OTPM) separately from the input TPM cap, and it rejects a

@@ -5,7 +5,6 @@ built once per ASIN and cached in-process so repeated agent calls don't pay
 the FAISS-load + chain-construction cost on every iteration.
 """
 import sys
-from pathlib import Path
 
 from pydantic import BaseModel, Field
 

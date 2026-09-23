@@ -24,7 +24,6 @@ suitable for Server-Sent Events. The frontend subscribes to these and
 animates the trace panel as the agent progresses.
 """
 import json
-import os
 import traceback
 from typing import Annotated, AsyncIterator
 
