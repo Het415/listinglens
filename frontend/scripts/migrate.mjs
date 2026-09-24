@@ -4,17 +4,21 @@
 //
 // Uses DATABASE_URL_UNPOOLED (Neon's DIRECT connection string). DDL through
 // the pooler can fail or behave oddly; the app itself uses the pooled URL.
-// Reads frontend/.env.local when present, otherwise the environment (CI).
+// Reads frontend/.env.development.local (where local secrets live), then
+// frontend/.env.local, then the environment (CI). Earlier files win: Node's
+// loadEnvFile never overrides a variable that is already set.
 
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import pg from 'pg'
 import { getMigrations } from 'better-auth/db/migration'
 
-try {
-  process.loadEnvFile(new URL('../.env.local', import.meta.url))
-} catch {
-  /* no .env.local — use the environment as-is */
+for (const file of ['../.env.development.local', '../.env.local']) {
+  try {
+    process.loadEnvFile(new URL(file, import.meta.url))
+  } catch {
+    /* file absent — fall through to the next one, then the environment */
+  }
 }
 
 const url = process.env.DATABASE_URL_UNPOOLED

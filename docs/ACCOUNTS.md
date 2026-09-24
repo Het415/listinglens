@@ -60,7 +60,8 @@ must be refused with an `account not linked` error.
    - `https://listinglens.hetprajapati.me/api/auth/callback/github`
 4. **Secrets:** `openssl rand -base64 32` for `BETTER_AUTH_SECRET`.
 5. **Env:** names are in `frontend/.env.example`. Local values go in
-   `frontend/.env.local`; production values in Vercel. Never commit either.
+   `frontend/.env.development.local` (gitignored), **not** `frontend/.env.local`,
+   which is tracked in this repo. Production values go in Vercel.
 6. **Migrate** (uses `DATABASE_URL_UNPOOLED`; DDL doesn't go through the
    pooler). It runs Better Auth's migration first, then `001_saved.sql`, and is
    safe to re-run:
