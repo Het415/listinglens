@@ -276,14 +276,22 @@ def _initial_state(
     audit_id: str | None = None,
     image_urls: list[str] | None = None,
     main_index: int | None = None,
+    context: str | None = None,
 ) -> AgentState:
     """The graph's starting state, shared by both entries.
 
     `run_agent` used to build its own copy, which referenced image arguments it
     never received, so every call raised NameError (audit E-11). One builder
     means the two entries cannot drift again.
+
+    `context` is the prior-conversation block from backend/agent/context.py.
+    Without it the state is exactly what it was before follow-ups existed, so
+    every prompt is too (tests/test_context_golden.py). With it, it becomes
+    messages[1]: after the question, so every executor turn opens exactly as a
+    no-context run does (system prompt, then question), and constant for the
+    whole run, so each turn's history still extends the previous one.
     """
-    return {
+    state: AgentState = {
         "asin": asin,
         "query": query,
         "product_name": product_name,
@@ -296,6 +304,10 @@ def _initial_state(
         "main_index": main_index,
         "audit_id": audit_id,
     }
+    if context:
+        state["context"] = context
+        state["messages"].append(HumanMessage(content=context))
+    return state
 
 
 def run_agent(
@@ -304,12 +316,14 @@ def run_agent(
     audit_id: str | None = None,
     image_urls: list[str] | None = None,
     main_index: int | None = None,
+    *,
+    context: str | None = None,
 ) -> AgentOutput:
     """Run the multi-node agent end-to-end and return AgentOutput.
 
     Same external signature as Stage 2 so the CLI and (future) API endpoint
     don't need to change; the image context is optional, as it is for
-    run_agent_streaming.
+    run_agent_streaming. So is `context`, and the eval never passes it.
     """
     catalog = supported_asins()
     if asin not in catalog:
@@ -324,6 +338,7 @@ def run_agent(
     initial_state = _initial_state(
         asin, query, product_name,
         audit_id=audit_id, image_urls=image_urls, main_index=main_index,
+        context=context,
     )
 
     final_state = compiled.invoke(initial_state, config={"recursion_limit": 50})
@@ -481,6 +496,8 @@ async def run_agent_streaming(
     audit_id: str | None = None,
     image_urls: list[str] | None = None,
     main_index: int | None = None,
+    *,
+    context: str | None = None,
 ) -> AsyncIterator[dict]:
     """Async generator yielding events as the agent runs.
 
@@ -489,7 +506,8 @@ async def run_agent_streaming(
 
     `audit_id` / `image_urls` / `main_index` are optional image context from the
     UI. They go into state rather than into the tool closure because they vary
-    per request while the compiled graph is cached per ASIN.
+    per request while the compiled graph is cached per ASIN. `context` (prior
+    turns, a pinned report) goes into state for the same reason.
     """
     catalog = supported_asins()
     if asin not in catalog:
@@ -510,6 +528,7 @@ async def run_agent_streaming(
     initial_state = _initial_state(
         asin, query, product_name,
         audit_id=audit_id, image_urls=image_urls, main_index=main_index,
+        context=context,
     )
 
     executor_degraded = False

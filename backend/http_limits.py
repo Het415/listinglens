@@ -54,11 +54,19 @@ Receive = Callable[[], Awaitable[Message]]
 Send = Callable[[Message], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 
-# 64 KB. The largest body the request models accept is an /assistant/query
-# with a 2,000-char question and 12 image URLs of 2,048 chars: about 50 KB even
-# if every question character is an escaped emoji. The browser sends a few
-# hundred bytes. Raise this constant if a real client ever needs more.
-MAX_BODY_BYTES = 64 * 1024
+# 128 KB (was 64 KB, before /assistant/query carried follow-up context). The
+# largest body the request models accept is an /assistant/query with every
+# field at its limit: a 2,000-char question, 12 image URLs of 2,048 chars,
+# 6 history turns of 1,000 chars, and a pinned report whose text fields add up
+# to 9,596 chars (id 64, title 200, decision 32, summary and situation 1,500
+# each, headline 300, four lists of 5 x 300). A browser's JSON.stringify
+# writes non-ASCII as raw UTF-8, at most 4 bytes a character, so that is
+# 8,000 + 24,576 + 24,000 + 38,384 = 94,960 bytes, about 96 KB with the JSON
+# punctuation. A client that \u-escapes every character (12 bytes per emoji)
+# could pass 128 KB at those limits and get a 413 instead of a 422, which is
+# still a refusal. A real follow-up is a few KB. Raise this constant if a real
+# client ever needs more.
+MAX_BODY_BYTES = 128 * 1024
 
 TOO_LARGE_DETAIL = (
     "Request body is too large for this API. Questions are limited to a few "

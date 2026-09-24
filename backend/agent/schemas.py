@@ -162,6 +162,9 @@ class AgentState(TypedDict, total=False):
     image_urls: list[str]  # optional, supplied by the UI alongside asin
     main_index: Optional[int]  # which supplied image is the MAIN image
     audit_id: Optional[str]  # an audit the UI already ran by uploading files
+    context: str  # prior turns / pinned report (agent/context.py); absent when
+                  # none, and every node reads it with .get so older state
+                  # literals (the tests') still work
     messages: Annotated[list[AnyMessage], add_messages]
     iterations: int  # tool-call counter (cap = 8)
     query_type: QueryType  # filled by Planner

@@ -7,8 +7,23 @@ export interface SourceItem {
   score: number
 }
 
+/** A saved report the chat continues from (see components/assistant/context.ts).
+ *  `data` is the report's saved payload — a Recommendation or a BriefResponse —
+ *  kept whole so the card and the request can both be rebuilt from it. */
+export interface PinnedReportRef {
+  id: string
+  kind: 'copilot' | 'brief'
+  asin: string
+  title: string
+  savedAt: string
+  data: unknown
+}
+
 export interface ChatMessage {
-  role: 'user' | 'assistant'
+  /** `context` is not a chat turn: it carries `pinnedReport`, is rendered as
+   *  the pinned card above the chat, and is never sent as history. */
+  role: 'user' | 'assistant' | 'context'
+  pinnedReport?: PinnedReportRef
   content?: string
   sources?: SourceItem[]
   recommendation?: Recommendation

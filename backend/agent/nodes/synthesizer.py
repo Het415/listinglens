@@ -70,19 +70,31 @@ from ..schemas import AgentState, Evidence, Recommendation
 _TOOL_RESULT_CHARS = 3000
 
 
-def _build_transcript(messages: list, query: str, query_type: str, plan: list[str]) -> str:
+def _build_transcript(
+    messages: list,
+    query: str,
+    query_type: str,
+    plan: list[str],
+    *,
+    context: str | None = None,
+) -> str:
     """Compact, structured transcript of the agent's research."""
     lines = [
         f"USER QUESTION: {query}",
         f"PLANNER classified as: {query_type}",
         f"PLANNER initial plan: {plan}",
-        "",
     ]
+    # Only when present, so a run without it keeps its exact old transcript.
+    # The same text is also messages[1]; the loop below skips it with the
+    # question, so it is printed once, here, labelled as not evidence.
+    if context:
+        lines.append(f"PRIOR CONTEXT (background, not evidence):\n{context}")
+    lines.append("")
     for m in messages:
         if isinstance(m, SystemMessage):
             continue
         if isinstance(m, HumanMessage):
-            continue  # already captured above as USER QUESTION
+            continue  # the question and prior context, both captured above
         if isinstance(m, AIMessage):
             if getattr(m, "name", None) == "planner":
                 continue  # planner bookkeeping already captured
@@ -197,6 +209,7 @@ def synthesize_node(state: AgentState) -> dict:
         query=state["query"],
         query_type=state.get("query_type", "unknown"),
         plan=state.get("plan", []),  # remaining plan items
+        context=state.get("context"),
     )
 
     degraded = False

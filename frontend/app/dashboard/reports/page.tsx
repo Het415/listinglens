@@ -1,7 +1,8 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { FolderOpen, Trash2, ArrowLeft, FileText, Sparkles } from 'lucide-react'
+import Link from 'next/link'
+import { FolderOpen, Trash2, ArrowLeft, FileText, Sparkles, MessageSquareReply } from 'lucide-react'
 import { useSession } from '@/lib/auth-client'
 import { SignInDialog } from '@/components/auth/sign-in-dialog'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
@@ -10,6 +11,14 @@ import { savedView, type Report, type ReportSummary } from '@/lib/saved'
 
 function formatDate(iso: string) {
   return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+}
+
+/** /assistant pins the report (?report=) and asks follow-ups with it as
+ *  context. A Copilot report opens in Copilot mode, where it came from. */
+function continueHref(r: Pick<ReportSummary, 'id' | 'asin' | 'kind'>) {
+  const params = new URLSearchParams({ asin: r.asin, report: r.id })
+  if (r.kind === 'copilot') params.set('mode', 'copilot')
+  return `/assistant?${params.toString()}`
 }
 
 function SavedReport({ report }: { report: Report }) {
@@ -109,12 +118,20 @@ export default function ReportsPage() {
           >
             <ArrowLeft className="h-4 w-4" /> All reports
           </button>
-          <div>
-            <h2 className="text-lg font-medium">{open.title}</h2>
-            <p className="text-xs text-muted-foreground">
-              ASIN {open.asin} · saved {formatDate(open.created_at)}
-              {open.question ? ` · “${open.question}”` : ''}
-            </p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <h2 className="text-lg font-medium">{open.title}</h2>
+              <p className="text-xs text-muted-foreground">
+                ASIN {open.asin} · saved {formatDate(open.created_at)}
+                {open.question ? ` · “${open.question}”` : ''}
+              </p>
+            </div>
+            <Link
+              href={continueHref(open)}
+              className="flex shrink-0 items-center gap-2 rounded-lg bg-accent-teal px-3 py-2 text-sm font-medium text-white hover:bg-accent-teal/90"
+            >
+              <MessageSquareReply className="h-4 w-4" /> Continue in AI Assistant
+            </Link>
           </div>
           <SavedReport report={open} />
         </div>
@@ -142,6 +159,14 @@ export default function ReportsPage() {
                   {r.question ? ` · “${r.question}”` : ''}
                 </div>
               </button>
+              <Link
+                href={continueHref(r)}
+                aria-label={`Continue ${r.title} in AI Assistant`}
+                title="Continue in AI Assistant"
+                className="rounded-lg p-2 text-muted-foreground hover:bg-accent-teal/10 hover:text-accent-teal"
+              >
+                <MessageSquareReply className="h-4 w-4" />
+              </Link>
               <button
                 type="button"
                 onClick={() => remove(r.id)}

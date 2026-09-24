@@ -1,7 +1,7 @@
 'use client'
 import { Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
-import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown } from 'lucide-react'
+import { Send, Sparkles, Zap, Bot, Trash2, ChevronDown, Pin } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
@@ -16,8 +16,12 @@ import {
   useAssistant,
   submitAssistant,
   clearAssistant,
+  pinReport,
+  unpinReport,
   type Mode,
 } from '@/components/assistant/assistantStore'
+import { hasTurns, pinnedOf } from '@/components/assistant/context'
+import type { Report } from '@/lib/saved'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { ErrorBubble } from '@/components/assistant/ErrorBubble'
 
@@ -105,6 +109,10 @@ function AssistantPageContent() {
   // an in-flight run survives navigating away from this page and is still here
   // (streaming or finished) when the user comes back. See assistantStore.ts.
   const { messages, trace, loading } = useAssistant(asin)
+  // A saved report this chat continues from. It is a `context` message in the
+  // store (so it persists with the chat) but renders as a card, not a turn.
+  const pinned = pinnedOf(messages)
+  const chatHasTurns = hasTurns(messages)
   const [input, setInput] = useState('')
   // Mobile trace dropdown is controlled — closed by default, auto-opens
   // while streaming so users see progress, user can close again any time.
@@ -232,6 +240,44 @@ function AssistantPageContent() {
     }
   }, [searchParams])
 
+  // Hand-off from /dashboard/reports: ?report=<id> pins that saved report to
+  // this product's chat, so the next questions are asked with it as context.
+  // Applied once per id, via the ref (same reason as ?audit= above), then
+  // dropped from the URL: the pin is persisted with the chat, and a reload
+  // after Unpin must not quietly pin it again.
+  const reportParam = searchParams.get('report')
+  const appliedReportRef = useRef<string | null>(null)
+  const [pinError, setPinError] = useState<string | null>(null)
+  useEffect(() => {
+    if (!reportParam || appliedReportRef.current === reportParam) return
+    appliedReportRef.current = reportParam
+    setPinError(null)
+    void (async () => {
+      const res = await fetch(`/api/me/reports/${encodeURIComponent(reportParam)}`)
+      if (!res.ok) {
+        setPinError(
+          res.status === 401
+            ? 'Sign in to continue from a saved report.'
+            : 'That saved report could not be loaded.',
+        )
+        return
+      }
+      const { report } = (await res.json()) as { report: Report }
+      if (!(await pinReport(asin, report))) {
+        setPinError('That saved report is for a different product.')
+        return
+      }
+      if (report.kind === 'copilot') setMode('copilot')
+      // Read the live URL, not `searchParams`: the ?q= effect may have
+      // rewritten it while the report was loading.
+      const params = new URLSearchParams(window.location.search)
+      params.delete('report')
+      if (report.kind === 'copilot') params.set('mode', 'copilot')
+      const cleaned = params.toString()
+      router.replace(cleaned ? `${pathname}?${cleaned}` : pathname, { scroll: false })
+    })().catch(() => setPinError('That saved report could not be loaded.'))
+  }, [reportParam, asin, router, pathname])
+
   const submit = useCallback(
     (query: string, overrideMode?: Mode, overrideAuditId?: string | null) => {
       const trimmed = query.trim()
@@ -301,7 +347,7 @@ function AssistantPageContent() {
                 Try a question
               </p>
               <div className="flex items-center gap-2">
-                {messages.length > 0 && (
+                {chatHasTurns && (
                   <button
                     type="button"
                     onClick={clearChat}
@@ -330,6 +376,36 @@ function AssistantPageContent() {
               ))}
             </div>
 
+            {/* In the fixed header, not the scroll region: it frames every
+                question below it, so it stays in view. */}
+            {pinned && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-border bg-background-secondary px-3 py-2 text-xs">
+                <Pin className="w-3.5 h-3.5 shrink-0 text-accent-teal" />
+                {/* Only the title truncates, so the save date stays readable. */}
+                <span className="flex min-w-0 flex-1 items-baseline gap-1 text-muted-foreground">
+                  <span className="shrink-0">Continuing from:</span>
+                  <span className="truncate font-medium text-foreground">{pinned.title}</span>
+                  <span className="shrink-0">
+                    · saved {new Date(pinned.savedAt).toLocaleDateString(undefined, { dateStyle: 'medium' })}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={() => unpinReport(asin)}
+                  disabled={loading}
+                  title="Stop sending this report with your questions"
+                  className="shrink-0 rounded-md px-2 py-1 text-[11px] text-muted-foreground hover:bg-background hover:text-foreground disabled:opacity-50"
+                >
+                  Unpin
+                </button>
+              </div>
+            )}
+            {pinError && !pinned && (
+              <p role="status" className="mt-3 text-xs text-destructive">
+                {pinError}
+              </p>
+            )}
+
             {/* Copilot-only: the image audit is one of its six tools, and the
                 quick Q&A path never calls it. */}
             {mode === 'copilot' && (
@@ -339,11 +415,18 @@ function AssistantPageContent() {
             )}
           </div>
 
-          {messages.length === 0 && !loading && !uploadedAudit ? (
+          {/* A pin alone is not a conversation: the empty state still shows,
+              pointed at the report. */}
+          {!chatHasTurns && !loading && !uploadedAudit ? (
             <div className="flex-1 flex flex-col items-center justify-center text-center px-4 min-h-0">
               <Sparkles className="w-8 h-8 text-purple-400/60 mb-3" />
               <p className="text-sm text-muted-foreground max-w-md">
-                {mode === 'quick' ? (
+                {pinned ? (
+                  <>
+                    Ask a follow-up about <strong className="text-foreground">{pinned.title}</strong>.
+                    The report&apos;s summary, risks and actions go with each question as background.
+                  </>
+                ) : mode === 'quick' ? (
                   <>
                     <strong className="text-foreground">Quick Q&amp;A</strong> — grounded
                     answers from this product&apos;s reviews with cited sources. Fast (~5s).
@@ -367,6 +450,8 @@ function AssistantPageContent() {
           ) : (
             <div className="flex-1 overflow-y-auto min-h-0 space-y-4 pr-1">
               {messages.map((m, i) => {
+                // The pin renders as the card in the header, never as a turn.
+                if (m.role === 'context') return null
                 if (m.role === 'user') {
                   return (
                     <div key={i} className="flex justify-end">

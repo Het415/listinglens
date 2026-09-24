@@ -300,7 +300,10 @@ def make_executor_node(tools):
 
         # Strip out the planner's bookkeeping AIMessage if present — the
         # executor LLM only needs the system instructions + question +
-        # tool history (HumanMessage + ToolMessage chain).
+        # tool history (HumanMessage + ToolMessage chain). A follow-up's prior
+        # context rides along as the second HumanMessage, which is what lets
+        # it turn "what about the 1-star ones?" into a standalone review_qa
+        # question.
         history = [
             m for m in state.get("messages", [])
             if not (isinstance(m, AIMessage) and getattr(m, "name", None) == "planner")

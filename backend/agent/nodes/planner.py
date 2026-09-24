@@ -43,8 +43,14 @@ def plan_node(state: AgentState) -> dict:
     """Classify the query and pick the initial tool sequence."""
     product_name = state.get("product_name") or state["asin"]
 
+    # Only when present: without it this must stay byte-identical to the
+    # pre-follow-up prompt (tests/test_context_golden.py).
+    context = state.get("context")
+    context_part = f"\n{context}\n\n" if context else ""
+
     user_msg = (
         f"Seller's product: {product_name} (ASIN: {state['asin']}).\n"
+        f"{context_part}"
         f"Seller's question: {state['query']}\n\n"
         f"Produce the Plan now."
     )
