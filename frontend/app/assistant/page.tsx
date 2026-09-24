@@ -21,8 +21,6 @@ import {
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { ErrorBubble } from '@/components/assistant/ErrorBubble'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
 const SAMPLE_QUERIES: Record<Mode, { label: string; icon: string }[]> = {
   quick: [
     { label: 'What do 1-star reviews say?', icon: '⭐' },
@@ -252,7 +250,6 @@ function AssistantPageContent() {
         asin,
         trimmed,
         overrideMode ?? mode,
-        API_URL,
         overrideAuditId !== undefined ? overrideAuditId : auditId,
       )
     },
@@ -393,6 +390,12 @@ function AssistantPageContent() {
                         <RecommendationCard
                           rec={m.recommendation}
                           onEvidenceClick={handleEvidenceClick}
+                          save={{
+                            asin,
+                            // The question is the user turn this answers.
+                            question: messages[i - 1]?.role === 'user' ? messages[i - 1].content ?? null : null,
+                            productName,
+                          }}
                         />
                       </div>
                     </div>

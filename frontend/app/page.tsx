@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { Logo } from '@/components/logo'
+import { UserMenu } from '@/components/auth/user-menu'
 import {
   Check,
   Cpu,
@@ -17,11 +18,7 @@ import {
 } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
-  /\/$/,
-  '',
-)
+import { apiUrl } from '@/lib/api'
 
 type SupportedAsin = { asin: string; name: string }
 
@@ -60,7 +57,7 @@ export default function LandingPage() {
     async function loadSupported() {
       setSupportedLoading(true)
       try {
-        const res = await fetch(`${API_URL}/supported-asins`)
+        const res = await fetch(apiUrl(`/supported-asins`))
         if (!res.ok) return
         const json = await res.json() as { asins?: SupportedAsin[] }
         if (cancelled) return
@@ -87,7 +84,7 @@ export default function LandingPage() {
       // step 1 — show loading state
       setLoadingStep(0) // "Fetching reviews..."
       
-      const response = await fetch(`${API_URL}/analyze`, {
+      const response = await fetch(apiUrl(`/analyze`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url_or_asin: url }),
@@ -124,8 +121,8 @@ export default function LandingPage() {
       const hint =
         err instanceof Error ? err.message : 'Unknown error'
       alert(
-        `Could not reach the API (${API_URL}).\n\n${hint}\n\n` +
-          'Set NEXT_PUBLIC_API_URL in frontend/.env.local to your Railway URL, restart npm run dev, and check CORS + Railway logs.',
+        `Could not reach the API.\n\n${hint}\n\n` +
+          'Locally: set NEXT_PUBLIC_API_URL in frontend/.env.local, restart npm run dev, and check the backend is running.',
       )
       setIsLoading(false)
     }
@@ -148,8 +145,9 @@ export default function LandingPage() {
     <div className="min-h-screen bg-background">
       <div className="max-w-7xl mx-auto px-4 py-8 md:py-12">
         {/* Logo */}
-        <div className="mb-12 md:mb-16">
+        <div className="mb-12 flex items-center justify-between md:mb-16">
           <Logo />
+          <UserMenu />
         </div>
 
         <div className="flex flex-col lg:flex-row gap-12 lg:gap-8">

@@ -14,8 +14,7 @@ import { exportToPDF } from '@/lib/exportReport'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { isAbortError } from '@/lib/abort'
 import { useDashboardExport } from './dashboard-export-context'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiUrl } from '@/lib/api'
 
 function DashboardPageContent() {
   const [mounted, setMounted] = useState(false)
@@ -63,11 +62,11 @@ function DashboardPageContent() {
         }
 
         // fallback — fetch directly from API
-        const response = await fetch(`${API_URL}/analyze/${asin}`, { signal: controller.signal })
+        const response = await fetch(apiUrl(`/analyze/${asin}`), { signal: controller.signal })
         if (cancelled) return
         if (!response.ok) {
           // not cached in API yet — run analysis
-          const analyzeRes = await fetch(`${API_URL}/analyze`, {
+          const analyzeRes = await fetch(apiUrl(`/analyze`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url_or_asin: asin }),

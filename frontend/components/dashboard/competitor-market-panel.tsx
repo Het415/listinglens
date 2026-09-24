@@ -6,8 +6,7 @@ import { ArrowRight, Info, Star, ThumbsDown, ThumbsUp } from 'lucide-react'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { SkeletonGrid } from '@/components/dashboard/loading'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+import { apiUrl } from '@/lib/api'
 
 type Competitor = {
   asin: string
@@ -69,7 +68,7 @@ export function CompetitorMarketPanel({
       setLoading(true)
       setError(null)
       try {
-        const res = await fetch(`${API_URL}/competitors/${asin}?max_results=${maxResults}`)
+        const res = await fetch(apiUrl(`/competitors/${asin}?max_results=${maxResults}`))
         if (!res.ok) {
           // 404 = ASIN outside the supported catalog (e.g. user just typed in
           // a random ASIN). Surface a quiet empty-state, not a red error.

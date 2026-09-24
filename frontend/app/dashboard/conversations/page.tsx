@@ -20,8 +20,7 @@ import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { isAbortError } from '@/lib/abort'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+import { apiUrl } from '@/lib/api'
 
 type Topic = { topic_id: number; label: string; keywords: string[]; size: number; share: number }
 type SampleConvo = {
@@ -83,7 +82,7 @@ function ConversationsInner() {
       setError(null)
       setData(null)
       try {
-        const res = await fetch(`${API_URL}/conversations/${asin}`, { signal: controller.signal })
+        const res = await fetch(apiUrl(`/conversations/${asin}`), { signal: controller.signal })
         if (!res.ok) throw new Error(`No conversation analytics for ${asin} (${res.status})`)
         const json = (await res.json()) as ConversationAnalytics
         if (!cancelled) setData(json)
@@ -308,7 +307,7 @@ function LiveClassifier({ productName }: { productName?: string }) {
     setErr(null)
     setResult(null)
     try {
-      const res = await fetch(`${API_URL}/intent/classify`, {
+      const res = await fetch(apiUrl(`/intent/classify`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text }),

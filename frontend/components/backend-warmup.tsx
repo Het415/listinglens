@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { DEMO_ASIN } from '@/lib/demo-config'
+import { apiConfigured, apiUrl } from '@/lib/api'
 
 const STORAGE_KEY = 'll:backend-warmed'
 
@@ -20,12 +21,11 @@ export function BackendWarmup() {
     if (typeof window === 'undefined') return
     if (sessionStorage.getItem(STORAGE_KEY)) return
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL
-    if (!apiUrl) return
+    if (!apiConfigured()) return
 
     sessionStorage.setItem(STORAGE_KEY, '1')
 
-    fetch(`${apiUrl}/warmup`, {
+    fetch(apiUrl('/warmup'), {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ asin: DEMO_ASIN }),

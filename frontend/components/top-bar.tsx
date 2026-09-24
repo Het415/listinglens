@@ -8,8 +8,8 @@ import { Logo } from './logo'
 import { Download, ChevronRight, Moon, Sun } from 'lucide-react'
 
 import { DEMO_ASIN } from '@/lib/demo-config'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+import { apiUrl } from '@/lib/api'
+import { UserMenu } from './auth/user-menu'
 
 export function TopBar({
   onExport,
@@ -61,7 +61,7 @@ export function TopBar({
     // fetch just the name. Cheap — the backend serves this from cache/disk.
     ;(async () => {
       try {
-        const res = await fetch(`${API_URL}/analyze/${asin}`, { signal: controller.signal })
+        const res = await fetch(apiUrl(`/analyze/${asin}`), { signal: controller.signal })
         if (!res.ok || cancelled) return
         const data = await res.json()
         if (!cancelled && data?.product_name) setProductName(data.product_name)
@@ -185,6 +185,8 @@ export function TopBar({
             <Sun className="size-4" strokeWidth={2} aria-hidden />
           )}
         </button>
+
+        <UserMenu />
       </div>
     </header>
   )
