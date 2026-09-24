@@ -41,6 +41,7 @@ describe.skipIf(!TEST_DB)('/api/me routes (real Postgres)', async () => {
   const reports = await import('@/app/api/me/reports/route')
   const report = await import('@/app/api/me/reports/[id]/route')
   const convo = await import('@/app/api/me/conversations/[asin]/route')
+  const recent = await import('@/app/api/me/recent-products/route')
   const { pool } = await import('@/lib/db')
   const { MAX_REPORTS_PER_USER, MAX_MESSAGES_PER_CONVERSATION } = await import('@/lib/saved')
 
@@ -163,6 +164,30 @@ describe.skipIf(!TEST_DB)('/api/me routes (real Postgres)', async () => {
     const got = (await (await convo.GET(req('http://t'), asinCtx(ASIN))).json()) as { messages: { content: string }[] }
     expect(got.messages).toHaveLength(MAX_MESSAGES_PER_CONVERSATION)
     expect(got.messages.at(-1)?.content).toBe(`m${MAX_MESSAGES_PER_CONVERSATION + 19}`)
+  })
+
+  it('recent products: newest activity first, deduped, capped at 5, per user', async () => {
+    const at = (minsAgo: number) => new Date(Date.now() - minsAgo * 60_000).toISOString()
+    // A: a chat on P1 an hour ago, a report on P2 30 min ago, a report on P1
+    // 5 min ago (so P1 is newest and appears once), and six more products.
+    await pool().query(`INSERT INTO conversations (user_id, asin, messages, updated_at) VALUES ($1, 'P100000001', '[]', $2)`, [A, at(60)])
+    const report = `INSERT INTO saved_reports (user_id, kind, asin, title, payload, created_at) VALUES ($1, 'copilot', $2, 't', '{"schema_version":1,"data":{}}', $3)`
+    await pool().query(report, [A, 'P200000002', at(30)])
+    await pool().query(report, [A, 'P100000001', at(5)])
+    for (let i = 3; i <= 8; i++) await pool().query(report, [A, `P${i}0000000${i}`, at(100 + i)])
+    // B has activity too, on a product A never touched.
+    await pool().query(report, [B, 'PB00000000', at(1)])
+
+    session.userId = A
+    const a = (await (await recent.GET()).json()) as { products: { asin: string }[] }
+    expect(a.products.map((p) => p.asin)).toEqual(['P100000001', 'P200000002', 'P300000003', 'P400000004', 'P500000005'])
+
+    session.userId = B
+    const b = (await (await recent.GET()).json()) as { products: { asin: string }[] }
+    expect(b.products.map((p) => p.asin)).toEqual(['PB00000000'])
+
+    session.userId = null
+    expect((await recent.GET()).status).toBe(401)
   })
 
   it('deleting the user cascades to their reports and conversations', async () => {

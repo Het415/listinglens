@@ -15,7 +15,8 @@ function formatDate(iso: string) {
 function SavedReport({ report }: { report: Report }) {
   const view = savedView(report)
   if (view.type === 'copilot') return <RecommendationCard rec={view.rec} />
-  if (view.type === 'brief') return <BriefView data={view.brief} />
+  // A saved brief is a snapshot; the live one may have moved on since.
+  if (view.type === 'brief') return <BriefView data={view.brief} footnote={`numbers as of ${formatDate(report.created_at)}`} />
   // Saved by an older (or newer) version of the app whose shape this build
   // doesn't know. Show what's certain instead of crashing a card.
   const data = report.payload?.data as { summary?: unknown } | undefined
@@ -28,7 +29,13 @@ function SavedReport({ report }: { report: Report }) {
 }
 
 export default function ReportsPage() {
-  const { data: session, isPending } = useSession()
+  const { data: sessionData, isPending: sessionPending } = useSession()
+  // Everything below depends on the session, which only the browser knows;
+  // treat it as unknown until mounted so the first render matches the server.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const session = mounted ? sessionData : null
+  const isPending = !mounted || sessionPending
   const [signInOpen, setSignInOpen] = useState(false)
   const [reports, setReports] = useState<ReportSummary[] | null>(null)
   const [open, setOpen] = useState<Report | null>(null)

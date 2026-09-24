@@ -133,7 +133,30 @@ export async function deleteConversation(db: Queryable, userId: string, asin: st
   await db.query(`DELETE FROM conversations WHERE user_id = $1 AND asin = $2`, [userId, asin])
 }
 
-const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+export const MAX_RECENT_PRODUCTS = 5
+
+/** The products this user touched most recently: a chat they had or a report
+ *  they saved, newest first. Feeds the product switcher's "Recent" group. */
+export async function recentProducts(
+  db: Queryable,
+  userId: string,
+  limit = MAX_RECENT_PRODUCTS,
+): Promise<{ asin: string; last_active: string }[]> {
+  const { rows } = await db.query<{ asin: string; last_active: string }>(
+    `SELECT asin, max(at) AS last_active FROM (
+       SELECT asin, updated_at AS at FROM conversations WHERE user_id = $1
+       UNION ALL
+       SELECT asin, created_at AS at FROM saved_reports WHERE user_id = $1
+     ) activity
+     GROUP BY asin
+     ORDER BY last_active DESC
+     LIMIT $2`,
+    [userId, limit],
+  )
+  return rows
+}
+
+const UUID_RE =/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 // A malformed id would make Postgres raise on the uuid cast; treat it as
 // not-found instead of a 500.
