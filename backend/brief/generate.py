@@ -30,6 +30,8 @@ BRIEF_SYSTEM_PROMPT = (
     "leadership team. Be concise, quantified, and decision-oriented. Ground every "
     "claim in the metrics provided — do not invent numbers. Prioritize actions by "
     "business impact. Write for a VP who has 60 seconds.\n\n"
+    "Every key finding needs an insight: one sentence explaining what the "
+    "metric means for the business.\n\n"
     "Rank the actions honestly: assign priority per action based on business "
     "impact and urgency, not uniformly. A list where everything is 'medium' "
     "is useless to a reader deciding what to do first — mark the one or two "
