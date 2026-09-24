@@ -8,8 +8,8 @@ import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 import { apiUrl } from '@/lib/api'
+import { useSupportedAsins, type SupportedAsin } from '@/lib/use-supported-asins'
 
-type SupportedAsin = { asin: string; name: string }
 
 type AnalyzeResponse = {
   asin: string
@@ -156,7 +156,7 @@ function ComparePageContent() {
   const [slot1, setSlot1] = useState('')
   const [slot2, setSlot2] = useState('')
   const [slot3, setSlot3] = useState('')
-  const [supportedProducts, setSupportedProducts] = useState<SupportedAsin[]>([])
+  const { products: supportedProducts } = useSupportedAsins()
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [cards, setCards] = useState<CompareCard[]>([])
@@ -168,24 +168,6 @@ function ComparePageContent() {
     return Array.from(new Set(raw))
   }, [slot1, slot2, slot3])
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadSupported() {
-      try {
-        const res = await fetch(apiUrl(`/supported-asins`))
-        if (!res.ok) return
-        const json = await res.json() as { asins?: SupportedAsin[] }
-        if (cancelled) return
-        setSupportedProducts(Array.isArray(json.asins) ? json.asins : [])
-      } catch {
-        // ignore
-      }
-    }
-    loadSupported()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   const slot1Asin = useMemo(() => normalizeInputToAsin(slot1), [slot1])
   const slot2Asin = useMemo(() => normalizeInputToAsin(slot2), [slot2])

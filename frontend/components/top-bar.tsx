@@ -10,6 +10,7 @@ import { Download, ChevronRight, Moon, Sun } from 'lucide-react'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { apiUrl } from '@/lib/api'
 import { UserMenu } from './auth/user-menu'
+import { ProductSwitcher } from './product-switcher'
 
 export function TopBar({
   onExport,
@@ -129,19 +130,20 @@ export function TopBar({
 
   return (
     <header className="h-[60px] bg-background-secondary border-b border-border flex items-center justify-between px-4 md:px-6">
-      <div className="md:hidden">
-        <Link href="/">
-          <Logo size="small" />
+      <div className="flex min-w-0 items-center gap-1 md:hidden">
+        {/* The mark, not the full logo: a 375px bar holds the switcher and
+            the three buttons only without the wordmark and BETA badge. */}
+        <Link href="/" className="shrink-0 p-1">
+          <Logo size="mark" />
         </Link>
+        <ProductSwitcher asin={asin} productName={productName} compact />
       </div>
-      <nav className="hidden md:flex items-center gap-2 text-sm text-text-secondary">
-        <span className="flex items-center gap-2">
-          <ChevronRight className="w-4 h-4 text-text-muted" />
-          <span className="text-text-primary">{productName}</span>
-        </span>
+      <nav className="hidden md:flex min-w-0 items-center gap-1 text-sm text-text-secondary">
+        <ChevronRight className="w-4 h-4 shrink-0 text-text-muted" />
+        <ProductSwitcher asin={asin} productName={productName} />
       </nav>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-2 md:gap-3">
         <button
           type="button"
           onClick={async () => {
@@ -157,7 +159,7 @@ export function TopBar({
 
         <Link
           href={asinParam ? `/assistant?asin=${encodeURIComponent(asinParam)}` : '/assistant'}
-          className="flex items-center gap-2 px-4 py-2 text-sm bg-accent-teal text-white font-medium rounded-lg hover:bg-accent-teal/90 transition-colors h-9"
+          className="flex items-center gap-2 px-3 md:px-4 py-2 text-sm bg-accent-teal text-white font-medium rounded-lg hover:bg-accent-teal/90 transition-colors h-9 whitespace-nowrap"
         >
           Ask AI
         </Link>

@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { FolderOpen, LogOut, Trash2 } from 'lucide-react'
 import {
   DropdownMenu,
@@ -39,12 +39,17 @@ export function UserMenu() {
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
-  // The placeholder is for the very first load only. useSession re-checks on
-  // window focus, and swapping the menu out mid-check would unmount an open
-  // sign-in dialog.
+  // The server can't know who is signed in, so it always renders the
+  // placeholder; render it again until mounted, or a session check that
+  // finishes before hydration makes the client's first render differ.
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  // After that, the placeholder is for the very first load only. useSession
+  // re-checks on window focus, and swapping the menu out mid-check would
+  // unmount an open sign-in dialog.
   const resolved = useRef(false)
-  if (!isPending) resolved.current = true
-  if (isPending && !resolved.current) {
+  if (mounted && !isPending) resolved.current = true
+  if (!mounted || (isPending && !resolved.current)) {
     return <span className="size-9 shrink-0 rounded-full bg-border/60 animate-pulse" aria-hidden />
   }
 

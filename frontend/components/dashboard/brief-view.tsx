@@ -10,6 +10,8 @@ const PRIORITY_STYLE: Record<string, string> = {
   low: 'bg-accent-teal/15 text-accent-teal',
 }
 
+const oneDecimal = (x: number | undefined | null) => Math.round((x ?? 0) * 10) / 10
+
 /** The body of an executive brief. Shared by the live brief page and saved
  *  reports, so a saved brief looks exactly like the one that was saved. */
 export function BriefView({ data, footnote }: { data: BriefResponse; footnote?: string }) {
@@ -27,11 +29,14 @@ export function BriefView({ data, footnote }: { data: BriefResponse; footnote?: 
 
       {/* KPI row */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <ScoreCard title="Return Risk" value={Math.round(m.return_risk?.risk_pct ?? 0)} suffix="%"
-          color="red" badge={m.return_risk?.risk_label} delay={1} />
-        <ScoreCard title="Negative Reviews" value={Math.round(m.pct_negative ?? 0)} suffix="%"
-          color="amber" progress={Math.round(m.pct_negative ?? 0)} delay={2} />
-        <ScoreCard title="Avg Rating" value={m.avg_rating ?? 0} stars={m.avg_rating ?? 0}
+        {/* One decimal and the same colours as the dashboard's cards, so the
+            two views of the same product read the same: whole-number rounding
+            turned a 0.4% return risk into "0%" and 24.8% negative into "25%". */}
+        <ScoreCard title="Return Risk" value={oneDecimal(m.return_risk?.risk_pct)} suffix="%"
+          color="amber" badge={m.return_risk?.risk_label} delay={1} />
+        <ScoreCard title="Negative Reviews" value={oneDecimal(m.pct_negative)} suffix="%"
+          color="red" progress={oneDecimal(m.pct_negative)} delay={2} />
+        <ScoreCard title="Avg Rating" value={oneDecimal(m.avg_rating)} suffix="/5.0" stars={m.avg_rating ?? 0}
           color="teal" delay={3} />
         <ScoreCard
           title="Resolution Rate"

@@ -19,8 +19,8 @@ import {
 import { Area, AreaChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 import { apiUrl } from '@/lib/api'
+import { useSupportedAsins } from '@/lib/use-supported-asins'
 
-type SupportedAsin = { asin: string; name: string }
 
 export default function LandingPage() {
   const router = useRouter()
@@ -31,8 +31,7 @@ export default function LandingPage() {
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const inputWrapRef = useRef<HTMLDivElement | null>(null)
   const isSelectingProductRef = useRef(false)
-  const [supportedProducts, setSupportedProducts] = useState<SupportedAsin[]>([])
-  const [supportedLoading, setSupportedLoading] = useState(false)
+  const { products: supportedProducts, loading: supportedLoading } = useSupportedAsins()
 
   const loadingSteps = [
     'Fetching reviews...',
@@ -52,27 +51,6 @@ export default function LandingPage() {
     setIsValidUrl(isUrl || isAsin)
   }, [url])
 
-  useEffect(() => {
-    let cancelled = false
-    async function loadSupported() {
-      setSupportedLoading(true)
-      try {
-        const res = await fetch(apiUrl(`/supported-asins`))
-        if (!res.ok) return
-        const json = await res.json() as { asins?: SupportedAsin[] }
-        if (cancelled) return
-        setSupportedProducts(Array.isArray(json.asins) ? json.asins : [])
-      } catch {
-        // Ignore; dropdown will just be empty.
-      } finally {
-        if (!cancelled) setSupportedLoading(false)
-      }
-    }
-    loadSupported()
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   const handleAnalyze = async () => {
     if (!isValidUrl) return
