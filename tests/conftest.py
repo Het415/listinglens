@@ -109,6 +109,11 @@ def production_mode(monkeypatch):
     monkeypatch.chdir(PROJECT_ROOT)
     monkeypatch.setenv("ENV_MODE", "production")
     monkeypatch.delenv("REDIS_URL", raising=False)
+    # The proxy secret is read per request, so a local .env that sets it
+    # (loaded by deepeval before this file, see above) would 401 the suite.
+    # Tests that want it enforced set it themselves.
+    monkeypatch.delenv("BACKEND_SHARED_SECRET", raising=False)
+    monkeypatch.delenv("BACKEND_SHARED_SECRET_PREVIOUS", raising=False)
 
     import app
 
