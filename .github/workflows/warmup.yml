@@ -2,7 +2,7 @@ name: Keep backend warm
 
 # ⚠️ THIS WORKFLOW IS A BACKSTOP, NOT THE WARMUP MECHANISM. ⚠️
 #
-# Free-tier hosts (Railway / Render free) spin the API down after ~15 min idle,
+# Render's free tier spins the API down after ~15 min idle,
 # and the first request after spin-up pays 30-80s for Python + FAISS + LangGraph
 # to come back. This cron hits POST /warmup with the demo ASIN so the FAISS
 # index and compiled agent graph stay hot for recruiters dropping in
@@ -44,8 +44,8 @@ jobs:
     steps:
       - name: POST /warmup with demo ASIN
         env:
-          # Falls back to the currently-live Railway URL when the repo var is
-          # unset. Update the var (not this file) if the backend moves.
+          # Falls back to the live Render URL when the repo var is unset.
+          # Update the var (not this file) if the backend moves.
           BACKEND_URL: ${{ vars.BACKEND_URL || 'https://listinglens-api.onrender.com' }}
           # DEMO_ASIN matches frontend/lib/demo-config.ts:14 — the TOZO T10
           # earbuds product the dashboard loads by default.
