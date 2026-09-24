@@ -336,6 +336,55 @@ def test_a_follow_up_inherits_the_previous_rating_filter(rag):
     assert rag["searches"][1][1]["filter"] == {"rating": 5}  # the new question wins
 
 
+def test_a_new_topic_after_a_rating_question_starts_fresh(rag):
+    """The reported bug: after a 1-star question, a standalone question on a
+    new topic stayed filtered to 1-star reviews and searched with the old
+    question's words."""
+    review_qa_tool.review_qa(ASIN, "Which features do buyers love?",
+                             prev_question="What do 1-star reviews say?")
+
+    query, kwargs = rag["searches"][0]
+    assert query == "Which features do buyers love?"
+    assert "filter" not in kwargs
+
+
+@pytest.mark.parametrize("follow_up", ["why?", "what about battery life?", "and those with returns?",
+                                       "Do they mention the charger?"])
+def test_real_follow_ups_still_inherit_the_rating_and_the_search_words(rag, follow_up):
+    review_qa_tool.review_qa(ASIN, follow_up, prev_question="What do 1-star reviews say?")
+
+    query, kwargs = rag["searches"][0]
+    assert query == f"What do 1-star reviews say? {follow_up}"
+    assert kwargs["filter"] == {"rating": 1}
+
+
+def test_a_follow_up_whose_sentiment_flips_drops_the_inherited_rating(rag):
+    # A back-reference makes it a follow-up (so the search keeps the thread),
+    # but "love" contradicts a 1-star filter, and "complaints" a 5-star one.
+    review_qa_tool.review_qa(ASIN, "What do they love about it?",
+                             prev_question="What do 1-star reviews say?")
+    review_qa_tool.review_qa(ASIN, "Any complaints from them?",
+                             prev_question="What do 5-star reviews say?")
+
+    assert all("filter" not in kwargs for _, kwargs in rag["searches"])
+    assert rag["searches"][0][0].startswith("What do 1-star reviews say?")
+
+
+@pytest.mark.parametrize("question, expected", [
+    ("why?", True),
+    ("and the battery?", True),
+    ("What about the 1-star ones?", True),
+    ("How about shipping", True),
+    ("Do they mention the charger?", True),
+    ("Which features do buyers love?", False),
+    ("Is it worth fixing the battery issue?", False),  # "it" means the product
+    ("What do customers say about sound quality?", False),
+    ("", False),
+])
+def test_is_follow_up(question, expected):
+    assert rag_chatbot.is_follow_up(question) is expected
+
+
 def test_the_template_changes_only_with_context(rag):
     question = "What do 1-star reviews say about the battery?"
     review_qa_tool.review_qa(ASIN, question)

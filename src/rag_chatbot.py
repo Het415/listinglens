@@ -150,6 +150,49 @@ def detect_rating_intent(question: str) -> int | None:
             return rating
     return None
 
+
+# A question leans on the one before it when it opens like a continuation
+# ("and…", "what about…", "why?") or points back at it ("those", "they").
+# "it"/"this" are left out on purpose: in a seller's question they almost
+# always mean the product ("Is it worth fixing?"), not the previous answer.
+_FOLLOW_UP_OPENER = re.compile(
+    r"^(and|also|but|so|then|what about|how about|why|how come|what else|"
+    r"anything else|any others?|more|same)\b"
+)
+_BACK_REFERENCE = re.compile(r"\b(they|them|their|those|these|ones|the same)\b")
+_POSITIVE = re.compile(r"\b(love[sd]?|like[sd]?|best|great|praise[sd]?|positive|happy|favou?rite|enjoy)\b")
+_NEGATIVE = re.compile(
+    r"\b(hate[sd]?|dislike[sd]?|worst|complain\w*|negative|problems?|issues?|"
+    r"broken|disappoint\w*|return\w*|refund\w*|bad)\b"
+)
+
+
+def is_follow_up(question: str) -> bool:
+    """Whether a question only makes sense against the previous one.
+
+    Zero-cost heuristic (no LLM call): a continuation opener, a back-reference,
+    or a fragment of three words or fewer. A question that names its own topic
+    ("Which features do buyers love?") is standalone, so it neither borrows the
+    previous question's rating filter nor gets it mixed into its search.
+    """
+    q = question.lower().strip()
+    if not q:
+        return False
+    if _FOLLOW_UP_OPENER.search(q) or _BACK_REFERENCE.search(q):
+        return True
+    return len(re.findall(r"[a-z0-9']+", q)) <= 3
+
+
+def _sentiment_contradicts(question: str, rating: int) -> bool:
+    """A follow-up asking what buyers love shouldn't stay filtered to 1-star
+    reviews, nor a question about complaints to 5-star ones."""
+    q = question.lower()
+    if rating <= 2:
+        return bool(_POSITIVE.search(q)) and not _NEGATIVE.search(q)
+    if rating >= 4:
+        return bool(_NEGATIVE.search(q)) and not _POSITIVE.search(q)
+    return False
+
 # ── Updated RAG Chain Builder ──────────────────────────────────────────────
 
 def build_rag_chain(vectorstore):
@@ -224,12 +267,20 @@ Answer (under 150 words):"""
             prior_context = payload.get("prior_context")
             prev_question = (payload.get("prev_question") or "").strip()
 
+            # Only a real follow-up borrows from the previous question. A new
+            # topic ("Which features do buyers love?" after a 1-star question)
+            # used to inherit the 1-star filter and the old question's words.
+            follow_up = bool(prev_question) and is_follow_up(question)
+
             # 1. Detect if the user wants a specific rating. A follow-up
             # ("and what do they say about the battery?") inherits the rating
-            # its previous question asked about.
+            # its previous question asked about, unless its own sentiment
+            # points the other way.
             rating_filter = detect_rating_intent(question)
-            if rating_filter is None and prev_question:
-                rating_filter = detect_rating_intent(prev_question)
+            if rating_filter is None and follow_up:
+                inherited = detect_rating_intent(prev_question)
+                if inherited is not None and not _sentiment_contradicts(question, inherited):
+                    rating_filter = inherited
             
             # 2. Configure FAISS search
             # If a filter is found, we tell FAISS to ignore everything else
@@ -244,7 +295,7 @@ Answer (under 150 words):"""
             # the 1-star ones?"), which embeds as nothing in particular, so
             # the previous question is prepended. A heuristic, but one that
             # costs no LLM call; the prompt below still asks the new question.
-            search_query = f"{prev_question} {question}" if prev_question else question
+            search_query = f"{prev_question} {question}" if follow_up else question
             try:
                 docs = self.vectorstore.similarity_search(search_query, **search_kwargs)
             except Exception as e:
@@ -307,7 +358,8 @@ def ask_question(
         context: optional prior-context block for a follow-up
             (backend/agent/context.py); goes into the prompt
         prev_question: optional previous question; joins the retrieval
-            query and supplies a rating filter the new question lacks
+            query and supplies a rating filter the new question lacks, but only
+            when the new question is a follow-up (is_follow_up)
 
     Returns dict with:
         answer:   LLM-generated answer grounded in reviews
