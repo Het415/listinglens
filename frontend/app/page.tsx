@@ -99,7 +99,7 @@ export default function LandingPage() {
           const parsed = JSON.parse(text) as { detail?: string; message?: string }
           detail = parsed.detail ?? parsed.message ?? detail
         } catch {
-          /* Railway/HTML error pages are not JSON */
+          /* HTML error pages from the host or a proxy are not JSON */
         }
         alert(`Error (${response.status}): ${detail}`)
         setIsLoading(false)
