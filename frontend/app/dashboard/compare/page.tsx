@@ -7,8 +7,7 @@ import { Star } from 'lucide-react'
 import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-panel'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/$/, '')
+import { apiUrl } from '@/lib/api'
 
 type SupportedAsin = { asin: string; name: string }
 
@@ -173,7 +172,7 @@ function ComparePageContent() {
     let cancelled = false
     async function loadSupported() {
       try {
-        const res = await fetch(`${API_URL}/supported-asins`)
+        const res = await fetch(apiUrl(`/supported-asins`))
         if (!res.ok) return
         const json = await res.json() as { asins?: SupportedAsin[] }
         if (cancelled) return
@@ -248,7 +247,7 @@ function ComparePageContent() {
     try {
       const results = await Promise.all(
         selectedAsins.map(async (asin) => {
-          const res = await fetch(`${API_URL}/analyze/${asin}`)
+          const res = await fetch(apiUrl(`/analyze/${asin}`))
           if (!res.ok) {
             throw new Error(`ASIN ${asin} not found in cached results`)
           }

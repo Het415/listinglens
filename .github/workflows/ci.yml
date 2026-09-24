@@ -74,8 +74,26 @@ jobs:
 
   # ── Frontend ───────────────────────────────────────────────────────────────
   frontend:
+    # This name is a required status check on main. Renaming it strands every
+    # open PR on a check that never reports.
     name: Frontend (build + docker build)
     runs-on: ubuntu-latest
+
+    # Throwaway Postgres for the /api/me route tests (user scoping, caps).
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: listinglens_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     defaults:
       run:
@@ -93,6 +111,16 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Migrate test database
+        env:
+          DATABASE_URL_UNPOOLED: postgres://test:test@localhost:5432/listinglens_test
+        run: npm run db:migrate
+
+      - name: Test
+        env:
+          TEST_DATABASE_URL: postgres://test:test@localhost:5432/listinglens_test
+        run: npm test
 
       - name: Build Next.js
         env:

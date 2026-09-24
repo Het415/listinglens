@@ -10,13 +10,17 @@ import {
 import type { Recommendation } from './types'
 import { decisionStyle, recommendationToText, toolMeta } from './style-helpers'
 import { ConfidenceRing } from './ConfidenceRing'
+import { SaveReportButton } from '@/components/auth/save-report-button'
 
 export function RecommendationCard({
   rec,
   onEvidenceClick,
+  save,
 }: {
   rec: Recommendation
   onEvidenceClick?: (tool: string) => void
+  /** When given, the card offers "Save report" for this product and question. */
+  save?: { asin: string; question: string | null; productName: string }
 }) {
   const style = decisionStyle(rec.decision)
   const [copied, setCopied] = useState(false)
@@ -82,6 +86,17 @@ export function RecommendationCard({
               : style.tagline}
           </div>
         </div>
+        {save && (
+          <SaveReportButton
+            report={{
+              kind: 'copilot',
+              asin: save.asin,
+              title: `${save.productName}: ${degraded ? 'no verdict' : style.label}`,
+              question: save.question,
+              data: rec,
+            }}
+          />
+        )}
         <button
           onClick={handleCopy}
           aria-label="Copy recommendation as plain text"

@@ -12,6 +12,7 @@ import {
   MessagesSquare,
   FileText,
   ImageIcon,
+  FolderOpen,
 } from 'lucide-react'
 
 const navItems = [
@@ -26,6 +27,7 @@ const navItems = [
   { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
   { href: '/dashboard/brief', label: 'Executive Brief', icon: FileText },
   { href: '/assistant', label: 'AI Assistant', icon: Sparkles },
+  { href: '/dashboard/reports', label: 'My Reports', icon: FolderOpen },
 ]
 
 function useAsinHrefs() {

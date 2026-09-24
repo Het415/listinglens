@@ -3,6 +3,7 @@ import { DM_Sans, DM_Mono, Instrument_Serif } from 'next/font/google'
 import { Analytics } from '@vercel/analytics/next'
 import { ThemeProvider } from '@/components/theme-provider'
 import { BackendWarmup } from '@/components/backend-warmup'
+import { AccountSync } from '@/components/auth/account-sync'
 import './globals.css'
 
 const dmSans = DM_Sans({ 
@@ -53,6 +54,7 @@ export default function RootLayout({
       >
         <ThemeProvider defaultTheme="light">{children}</ThemeProvider>
         <BackendWarmup />
+        <AccountSync />
         <Analytics />
       </body>
     </html>

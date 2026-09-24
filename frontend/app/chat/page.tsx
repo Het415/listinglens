@@ -4,8 +4,7 @@ import { useSearchParams } from 'next/navigation'
 import { Send, Sparkles } from 'lucide-react'
 import { AssistantMessage } from '@/components/assistant/AssistantMessage'
 import type { ChatMessage } from '@/components/assistant/types'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiUrl } from '@/lib/api'
 
 const SUGGESTED = [
   "Why are customers returning this product?",
@@ -70,7 +69,7 @@ function ChatPageContent() {
       setMessages((prev) => [...prev, userMsg])
 
       try {
-        const res = await fetch(`${API_URL}/chat`, {
+        const res = await fetch(apiUrl(`/chat`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ asin, question }),

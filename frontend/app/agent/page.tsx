@@ -6,8 +6,7 @@ import { RecommendationCard } from '@/components/assistant/RecommendationCard'
 import { TracePanel } from '@/components/assistant/TracePanel'
 import { readSSE } from '@/components/assistant/sse'
 import type { Recommendation, TraceStep, ChatMessage } from '@/components/assistant/types'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+import { apiUrl } from '@/lib/api'
 
 // Use the mock endpoint by default while the live agent is rate-limited.
 // Toggle to the real endpoint by setting NEXT_PUBLIC_AGENT_LIVE=true.
@@ -97,7 +96,7 @@ function AgentPageContent() {
     setMessages((prev) => [...prev, { role: 'user', content: query }])
 
     try {
-      const res = await fetch(`${API_URL}${AGENT_ENDPOINT}`, {
+      const res = await fetch(apiUrl(`${AGENT_ENDPOINT}`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ asin, query }),

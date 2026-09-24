@@ -11,11 +11,7 @@ import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { isAbortError } from '@/lib/abort'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
-
-const API_URL = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(
-  /\/$/,
-  '',
-)
+import { apiUrl } from '@/lib/api'
 
 type AnalyzeResponse = {
   asin: string
@@ -216,7 +212,7 @@ function ReviewsPageInner() {
 
         // 2. Kick off the per-review fetch immediately (in parallel with the
         //    analysis fetch when we need one) instead of waiting in series.
-        const reviewsPromise = fetch(`${API_URL}/analyze/${asinFromQuery}/reviews`, {
+        const reviewsPromise = fetch(apiUrl(`/analyze/${asinFromQuery}/reviews`), {
           signal: controller.signal,
         })
         // The analysis step below can throw (or abort) before we ever await
@@ -226,7 +222,7 @@ function ReviewsPageInner() {
         reviewsPromise.catch(() => {})
 
         if (!analyzeJson) {
-          const analyzeRes = await fetch(`${API_URL}/analyze/${asinFromQuery}`, {
+          const analyzeRes = await fetch(apiUrl(`/analyze/${asinFromQuery}`), {
             signal: controller.signal,
           })
           if (!analyzeRes.ok) {
