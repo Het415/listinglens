@@ -15,19 +15,23 @@ import {
   FolderOpen,
 } from 'lucide-react'
 
+// `short` is the phone bottom-nav label: six tabs share 375px there, which
+// leaves about 55px of text each, so every one has to be a single short word.
+// "Dashboard" needs 61px, hence "Overview"; "Home" would clash with the logo,
+// which already links to the landing page.
 const navItems = [
-  { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/dashboard', label: 'Dashboard', short: 'Overview', icon: LayoutDashboard },
   // Second, not last. It is the only feature that works on the seller's own
   // product rather than on one of the twelve demo ASINs, and it needs neither
   // an ASIN nor the review pipeline — so it belongs near the top rather than
   // buried behind a mode toggle on another page, which is where it started.
-  { href: '/dashboard/images', label: 'Image Audit', icon: ImageIcon },
-  { href: '/dashboard/reviews', label: 'Review Analysis', icon: MessageSquareText },
-  { href: '/dashboard/conversations', label: 'Conversations', icon: MessagesSquare },
-  { href: '/dashboard/compare', label: 'Competitor Compare', icon: GitCompare },
-  { href: '/dashboard/brief', label: 'Executive Brief', icon: FileText },
-  { href: '/assistant', label: 'AI Assistant', icon: Sparkles },
-  { href: '/dashboard/reports', label: 'My Reports', icon: FolderOpen },
+  { href: '/dashboard/images', label: 'Image Audit', short: 'Images', icon: ImageIcon },
+  { href: '/dashboard/reviews', label: 'Review Analysis', short: 'Reviews', icon: MessageSquareText },
+  { href: '/dashboard/conversations', label: 'Conversations', short: 'Convos', icon: MessagesSquare },
+  { href: '/dashboard/compare', label: 'Competitor Compare', short: 'Compare', icon: GitCompare },
+  { href: '/dashboard/brief', label: 'Executive Brief', short: 'Brief', icon: FileText },
+  { href: '/assistant', label: 'AI Assistant', short: 'Assistant', icon: Sparkles },
+  { href: '/dashboard/reports', label: 'My Reports', short: 'Reports', icon: FolderOpen },
 ]
 
 function useAsinHrefs() {
@@ -145,26 +149,32 @@ function MobileNavInner() {
   // out too. Widening is additive — nothing that was reachable on a phone stops
   // being reachable — and a seller on a phone is the one holding the photos.
   // AI Assistant is still outside the slice; that predates this change.
+  //
+  // Six only helps if all six fit. Each tab used to be a 60px label plus px-3,
+  // about 84px, in a justify-around row that never shrinks its items: roughly
+  // 500px on a 375px phone. The row ran off the right edge, and Executive Brief,
+  // the sixth tab, was unreachable. Now every tab takes an equal share of the
+  // width (flex-1 min-w-0) and shows its short label.
   const mobileItems = navItems.slice(0, 6)
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-background-secondary border-t border-border-subtle z-50">
-      <ul className="flex justify-around py-2">
+      <ul className="flex py-2">
         {mobileItems.map((item) => {
           const href = resolveHref(item.href, currentAsin)
           const isActive = isNavActive(pathname, item.href)
           const Icon = item.icon
 
           return (
-            <li key={item.href}>
+            <li key={item.href} className="min-w-0 flex-1">
               <Link
                 href={href}
-                className={`flex flex-col items-center gap-1 px-3 py-2 text-xs transition-colors ${
+                className={`flex flex-col items-center gap-1 px-1 py-2 text-xs transition-colors ${
                   isActive ? 'text-accent-blue' : 'text-text-secondary'
                 }`}
               >
                 <Icon className="w-5 h-5" />
-                <span className="truncate max-w-[60px]">{item.label.split(' ')[0]}</span>
+                <span className="max-w-full truncate">{item.short}</span>
               </Link>
             </li>
           )
