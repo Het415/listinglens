@@ -54,9 +54,31 @@ export function ProductSwitcher({
   // dropped from the supported set would lead nowhere.
   const recent = recentAsins.filter((a) => nameOf.has(a))
 
+  // Prefetch every switch target as soon as the list opens. A soft navigation
+  // to a URL that differs only in ?asin= and was never prefetched was, now and
+  // then, dropped: go() ran and called router.push, and nothing happened. Seen
+  // on the first navigation after a fresh server start; prefetched sidebar
+  // links never showed it. Prefetching also makes the switch itself instant.
+  useEffect(() => {
+    if (!open) return
+    for (const p of products) {
+      if (p.asin !== asin) router.prefetch(switchHref(pathname, p.asin))
+    }
+  }, [open, products, asin, pathname, router])
+
   const go = (target: string) => {
     setOpen(false)
-    if (target !== asin) router.push(switchHref(pathname, target))
+    if (target === asin) return
+    const href = switchHref(pathname, target)
+    const from = window.location.pathname + window.location.search
+    router.push(href)
+    // Safety net: if the URL still hasn't moved, fall back to a full page
+    // load, so the seller always lands on the product they picked. Checked
+    // against where we started, not the target, so a click elsewhere in the
+    // meantime is never overridden.
+    window.setTimeout(() => {
+      if (window.location.pathname + window.location.search === from) window.location.assign(href)
+    }, 2500)
   }
 
   const item = (a: string, name: string, keyPrefix: string) => (
