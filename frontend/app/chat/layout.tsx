@@ -10,12 +10,16 @@ import { TopBarWithExport } from '../dashboard/top-bar-with-export'
 // page instead of the messages list. h-screen pins the wrapper to exactly
 // viewport height so the overflow-y-auto on the messages list activates
 // properly and only that list scrolls.
+//
+// min-w-0 on the content column, as in app/dashboard/layout.tsx: without it
+// the suggested-questions row widened the column to 768px on a phone, and
+// overflow-hidden clipped the excess, top bar included.
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   return (
     <DashboardExportProvider>
       <div className="flex h-screen bg-background overflow-hidden">
         <Sidebar />
-        <div className="flex-1 flex flex-col min-h-0 pb-16 md:pb-0">
+        <div className="flex-1 min-w-0 flex flex-col min-h-0 pb-16 md:pb-0">
           <Suspense fallback={<div className="h-[60px] bg-background-secondary border-b border-border" />}>
             <TopBarWithExport />
           </Suspense>
