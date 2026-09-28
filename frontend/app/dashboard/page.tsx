@@ -11,6 +11,7 @@ import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-
 import { DemoModeBanner } from '@/components/dashboard/demo-mode-banner'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 import { exportToPDF } from '@/lib/exportReport'
+import { listingScore } from '@/lib/listing-score'
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { isAbortError } from '@/lib/abort'
 import { useDashboardExport } from './dashboard-export-context'
@@ -150,7 +151,7 @@ function DashboardPageContent() {
   const features  = data?.features    || {}
   const topics    = summary.top_topics || []
 
-  const overallScore    = Math.round((1 - risk.risk_score) * 100)
+  const overallScore    = listingScore(risk)
   const sentimentAvg    = features.rating_avg || 0
   const pctNegative     = summary.pct_negative || 0
   const pctPositive     = summary.pct_positive || 0
@@ -173,7 +174,7 @@ function DashboardPageContent() {
           value={overallScore}
           suffix="/100"
           color="blue"
-          progress={overallScore}
+          progress={overallScore ?? undefined}
           subtext={`${pctPositive}% positive reviews`}
           subtextColor="green"
           delay={1}

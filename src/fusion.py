@@ -33,6 +33,23 @@ def _load_return_risk_model():
 
 # ── Proxy Label Engineering ────────────────────────────────────────────────────
 
+# The composite above this is labelled high risk.
+PROXY_HIGH_RISK_THRESHOLD = 0.30
+
+
+def proxy_risk_score(f: dict) -> float:
+    """The composite the proxy label thresholds: a weighted mix of the negative
+    share, how far the rating falls short of 5 stars, and the rating/sentiment
+    gap. Higher is worse. The label and the listing score both read it, so
+    they cannot drift apart.
+    """
+    return (
+        f["pct_negative"] * 0.4 +
+        (1 - f["rating_avg"] / 5) * 0.4 +
+        f["rating_sentiment_gap"] * 0.2
+    )
+
+
 def create_proxy_labels(features_list: list[dict]) -> np.ndarray:
     """
     Creates proxy return risk labels when real return data isn't available.
@@ -53,17 +70,27 @@ def create_proxy_labels(features_list: list[dict]) -> np.ndarray:
     In production this would be replaced with actual return rate data
     from the seller's backend — the model architecture stays identical.
     """
-    labels = []
-    for f in features_list:
-        # composite risk score from multiple signals
-        risk_score = (
-            f["pct_negative"] * 0.4 +
-            (1 - f["rating_avg"] / 5) * 0.4 +
-            f["rating_sentiment_gap"] * 0.2
-        )
-        # binary label: 1 = high return risk, 0 = low return risk
-        labels.append(1 if risk_score > 0.30 else 0)
-    return np.array(labels)
+    # binary label: 1 = high return risk, 0 = low return risk
+    return np.array([
+        1 if proxy_risk_score(f) > PROXY_HIGH_RISK_THRESHOLD else 0
+        for f in features_list
+    ])
+
+
+def listing_score(features: dict) -> int:
+    """0-100 listing score, where higher is healthier.
+
+    Taken from the proxy composite rather than from the model's probability.
+    The label is a hard threshold with no noise, so the model learned close to
+    a step function: every real product (0.09-0.17 on the composite) sits far
+    below the line and is served P ~= 0.001, and `(1 - P) * 100` rounded to
+    100 for all 12. The composite still tells them apart.
+
+    Scaled so the high-risk line lands at 50: a composite of 0 is 100, the
+    threshold is 50, and twice the threshold or more is 0.
+    """
+    ratio = proxy_risk_score(features) / (2 * PROXY_HIGH_RISK_THRESHOLD)
+    return int(round(100 * min(1.0, max(0.0, 1 - ratio))))
 
 
 # ── Feature Vector Builder ─────────────────────────────────────────────────────
@@ -254,10 +281,11 @@ def predict_return_risk(features: dict) -> dict:
         features: dict from nlp_pipeline.engineer_features()
 
     Returns dict with:
-        risk_score:  float 0-1 (probability of high return risk)
-        risk_label:  "HIGH" | "MEDIUM" | "LOW"
-        confidence:  float 0-1
-        explanation: human-readable explanation
+        risk_score:    float 0-1 (probability of high return risk)
+        risk_label:    "HIGH" | "MEDIUM" | "LOW"
+        confidence:    float 0-1
+        explanation:   human-readable explanation
+        listing_score: int 0-100 (see listing_score; not from the model)
     """
     model = _load_return_risk_model()
 
@@ -284,6 +312,7 @@ def predict_return_risk(features: dict) -> dict:
         "risk_pct":     round(float(risk_prob) * 100, 1),
         "confidence":   round(float(max(risk_prob, 1 - risk_prob)), 4),
         "explanation":  explanation,
+        "listing_score": listing_score(features),
     }
 
 
