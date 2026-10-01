@@ -1,4 +1,5 @@
 import os
+import ipaddress
 import json
 import pandas as pd
 from contextlib import asynccontextmanager
@@ -9,7 +10,9 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+from backend import internal_auth
 from backend.http_limits import BodySizeLimitMiddleware, Denial, RequestLimits, client_ip
+from backend.internal_auth import InternalSecretMiddleware
 
 from src.cancellation import AnalysisCancelled, CancelToken, check_cancelled
 
@@ -71,6 +74,10 @@ async def lifespan(app: FastAPI):
     else:
         app_state["supported_asins"] = SUPPORTED_ASINS
     app_state["cache"] = {}
+
+    # Once per boot, so a Render log shows whether this process checks the
+    # proxy's secret. The check itself re-reads the env on every request.
+    print(internal_auth.startup_notice(), flush=True)
 
     # Opt-in: the background preload sequentially fires the full NLP+FAISS
     # pipeline for every supported ASIN, which on Render's free tier spikes
@@ -141,17 +148,22 @@ _cors_regex_raw = os.getenv(
 )
 _cors_regex = _cors_regex_raw.strip() if _cors_regex_raw.strip().lower() not in ("", "none", "false") else None
 
+# No allow_credentials (audit E-68): the frontend sends no cookies or auth
+# headers, so allowing them only widened what a matching origin could do.
 _cors_kw: dict = {
     "allow_origins": _cors_origins,
-    "allow_credentials": True,
     "allow_methods": ["*"],
     "allow_headers": ["*"],
 }
 if _cors_regex:
     _cors_kw["allow_origin_regex"] = _cors_regex
 
-# Body cap first, so CORS (added next, therefore outermost) wraps it and the
-# 413 reaches the browser with its CORS headers. See backend/http_limits.py.
+# add_middleware makes the last-added outermost, so a request passes CORS,
+# then the body cap, then the secret check. The secret check is innermost so
+# an oversize body is a 413 before anything else runs, whether or not it
+# carries the secret. CORS is outermost so the 413 and 401 reach the browser
+# with CORS headers. See backend/http_limits.py and backend/internal_auth.py.
+app.add_middleware(InternalSecretMiddleware)
 app.add_middleware(BodySizeLimitMiddleware)
 app.add_middleware(CORSMiddleware, **_cors_kw)
 
@@ -260,6 +272,16 @@ async def _rate_limited(request: Request, exc: RateLimited) -> JSONResponse:
 
 
 def _ip(request: Request) -> str:
+    # Behind the Next.js proxy the TCP peer and X-Forwarded-For name Vercel's
+    # server, not the visitor, so the proxy sets X-Client-IP. It is trusted
+    # only alongside a valid secret, so a direct caller can't spoof it to pick
+    # a fresh rate-limit bucket per request.
+    if internal_auth.enforced() and internal_auth.secret_matches(
+            request.headers.get("x-internal-secret")):
+        try:
+            return str(ipaddress.ip_address(request.headers.get("x-client-ip", "").strip()))
+        except ValueError:
+            pass
     return client_ip(
         request.client.host if request.client else None,
         request.headers.get("x-forwarded-for"),
@@ -424,7 +446,7 @@ def run_full_pipeline(asin: str, max_reviews: int = 250,
     # 3. THE GUARDRAIL: If files are missing...
     else:
         if ENV_MODE == "production":
-            # Throw a 404 so Railway never attempts the download
+            # Throw a 404 so production never attempts the download
             print(f"Bailing out: ASIN {asin} not found in pre-computed data.")
             raise HTTPException(
                 status_code=404,
@@ -998,6 +1020,9 @@ def health():
 
     `commit` is the deployed revision (RENDER_GIT_COMMIT), "unknown" off-Render.
 
+    `internal_auth` is "enforced" once BACKEND_SHARED_SECRET is set, else
+    "off": the go-live check in docs/INTERNAL_AUTH.md.
+
     ⚠️ Do NOT trust `commit` to tell you what is deployed. Observed 2026-09-17:
     Render reported deploy dep-dalri90u01pc73fle5kg live at de26bbc8, the logs
     confirmed a fresh uvicorn process started at 10:06:01 and served the very
@@ -1026,6 +1051,7 @@ def health():
         "supported_asins": len(app_state.get("supported_asins", {})),
         "models": configured_models(),
         "limits": limits.status(),
+        "internal_auth": "enforced" if internal_auth.enforced() else "off",
     }
 
 
