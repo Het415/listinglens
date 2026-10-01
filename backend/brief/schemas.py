@@ -49,7 +49,14 @@ class Finding(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     metric: str = Field(default="", description="The metric or evidence point, e.g. 'Return risk: 62%'.")
-    insight: str = Field(default="", description="One sentence on what it means for the business.")
+    # Default hidden for the same reason as Action.priority: an advertised
+    # `"default": ""` let the model skip the insight, and the UI rendered
+    # findings as bare titles.
+    insight: str = Field(
+        default="",
+        description="One sentence on what it means for the business.",
+        json_schema_extra=_hide_default,
+    )
     value: str = Field(default="", description="Optional raw value for the metric.")
 
     @model_validator(mode="before")
@@ -59,9 +66,20 @@ class Finding(BaseModel):
             return data
         d = dict(data)
         d["metric"] = _first_key(d, "metric", "title", "name", "label") or ""
-        d["insight"] = _first_key(d, "insight", "detail", "description", "summary") or ""
+        d["insight"] = _first_key(
+            d, "insight", "detail", "description", "summary",
+            "impact", "implication", "explanation",
+        ) or ""
         d["value"] = _first_key(d, "value", "figure", "number") or ""
         return d
+
+    @model_validator(mode="after")
+    def _value_as_insight(self):
+        # The UI never renders `value`, so an explanation the model put there
+        # would be lost; promote it rather than show a bare title.
+        if not self.insight and self.value:
+            self.insight = self.value
+        return self
 
 
 class Action(BaseModel):
