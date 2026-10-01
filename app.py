@@ -446,7 +446,7 @@ def run_full_pipeline(asin: str, max_reviews: int = 250,
     # 3. THE GUARDRAIL: If files are missing...
     else:
         if ENV_MODE == "production":
-            # Throw a 404 so Railway never attempts the download
+            # Throw a 404 so production never attempts the download
             print(f"Bailing out: ASIN {asin} not found in pre-computed data.")
             raise HTTPException(
                 status_code=404,
