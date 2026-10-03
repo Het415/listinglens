@@ -5,7 +5,8 @@ import { Star } from 'lucide-react'
 
 interface ScoreCardProps {
   title: string
-  value: number
+  /** null renders a dash: the payload had no value to show. */
+  value: number | null
   suffix?: string
   color?: 'blue' | 'amber' | 'teal' | 'red' | 'default'
   progress?: number
@@ -54,6 +55,7 @@ export function ScoreCard({
   }
 
   useEffect(() => {
+    if (value === null) return
     const duration = 1200
     const steps = 60
     const increment = value / steps
@@ -89,7 +91,9 @@ export function ScoreCard({
       
       <div className="flex items-baseline gap-1 mb-3">
         <span className={`font-mono text-5xl ${colorClasses[color]}`}>
-          {displayValue % 1 === 0 ? Math.round(displayValue) : displayValue.toFixed(1)}
+          {value === null
+            ? '—'
+            : displayValue % 1 === 0 ? Math.round(displayValue) : displayValue.toFixed(1)}
         </span>
         <span className="text-text-muted text-lg">{suffix}</span>
       </div>

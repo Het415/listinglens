@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client'
 
+import { listingScore } from '@/lib/listing-score'
+
 let jsPDFPromise: Promise<any> | null = null
 async function getJsPDF() {
   if (!jsPDFPromise) {
@@ -34,6 +36,7 @@ export type AnalyzeResponse = {
     risk_pct?: number
     risk_label?: string
     explanation?: string
+    listing_score?: number
   }
 }
 
@@ -43,7 +46,6 @@ function safeNumber(n: unknown, fallback = 0): number {
 
 /**
  * risk_score is 0–1 from API; if sent as 0–100, normalize. Fallback to risk_pct.
- * Overall score = Math.round((1 - r) * 100) e.g. 23/100 when risk is ~0.77.
  */
 function normalizeRiskScore01(risk: AnalyzeResponse['risk'] | undefined): number {
   const raw = risk?.risk_score
@@ -115,7 +117,7 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
   const features = data.features || {}
 
   const riskNorm = normalizeRiskScore01(risk)
-  const overallListingScore = Math.round((1 - riskNorm) * 100)
+  const overallListingScore = listingScore(risk)
 
   const riskPct = safeNumber(risk.risk_pct, Math.round(riskNorm * 100))
   const riskLabel = (risk.risk_label || 'UNKNOWN').toUpperCase()
@@ -237,7 +239,7 @@ export async function exportToPDF(data: AnalyzeResponse): Promise<void> {
   const returnRiskRgb = riskLabelColors(riskLabel)
 
   const execCells: CellSpec[] = [
-    { label: 'Overall Score', labelRgb: blueLabel, value: `${overallListingScore}/100`, valueRgb: blueLabel },
+    { label: 'Overall Score', labelRgb: blueLabel, value: overallListingScore === null ? '—' : `${overallListingScore}/100`, valueRgb: blueLabel },
     {
       label: 'Return Risk',
       labelRgb: returnRiskRgb,

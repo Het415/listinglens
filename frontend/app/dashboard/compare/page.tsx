@@ -8,6 +8,7 @@ import { CompetitorMarketPanel } from '@/components/dashboard/competitor-market-
 import { DEMO_ASIN } from '@/lib/demo-config'
 import { DashboardLoading, RouteFallback, SkeletonGrid, SkeletonPanel } from '@/components/dashboard/loading'
 import { apiUrl } from '@/lib/api'
+import { listingScore } from '@/lib/listing-score'
 import { useSupportedAsins, type SupportedAsin } from '@/lib/use-supported-asins'
 
 
@@ -27,13 +28,14 @@ type AnalyzeResponse = {
     risk_score?: number
     risk_pct?: number
     risk_label?: string
+    listing_score?: number
   }
 }
 
 type CompareCard = {
   asin: string
   name: string
-  overallScore: number
+  overallScore: number | null
   returnRiskPct: number
   returnRiskLabel: string
   avgRating: number
@@ -65,7 +67,7 @@ function toCard(data: AnalyzeResponse): CompareCard {
   return {
     asin: data.asin,
     name: data.product_name || data.asin,
-    overallScore: Math.round((1 - riskScore) * 100),
+    overallScore: listingScore(data.risk),
     returnRiskPct,
     returnRiskLabel: (data.risk?.risk_label || 'UNKNOWN').toUpperCase(),
     avgRating: Number((data.summary?.avg_rating ?? 0).toFixed(1)),
@@ -74,6 +76,13 @@ function toCard(data: AnalyzeResponse): CompareCard {
     topKeywords,
     compoundScore: Number((data.features?.avg_compound_score ?? 0).toFixed(3)),
   }
+}
+
+// Best first: the higher listing score, then the lower return risk. Return
+// risk alone can't pick a winner: it is under 1% on every cached product, so
+// ties went to whichever product was in the first slot.
+function byStrength(a: CompareCard, b: CompareCard): number {
+  return (b.overallScore ?? -1) - (a.overallScore ?? -1) || a.returnRiskPct - b.returnRiskPct
 }
 
 function riskColor(label: string): string {
@@ -206,20 +215,23 @@ function ComparePageContent() {
 
   const winnerAsin = useMemo(() => {
     if (!cards.length) return null
-    return [...cards].sort((a, b) => a.returnRiskPct - b.returnRiskPct)[0]?.asin || null
+    return [...cards].sort(byStrength)[0]?.asin || null
   }, [cards])
 
   const insight = useMemo(() => {
     if (cards.length < 2) return ''
-    const byRisk = [...cards].sort((a, b) => a.returnRiskPct - b.returnRiskPct)
     const byPositive = [...cards].sort((a, b) => b.pctPositive - a.pctPositive)
-    const bestRisk = byRisk[0]
+    const best = [...cards].sort(byStrength)[0]
     const bestPos = byPositive[0]
+    const lead =
+      best.overallScore !== null
+        ? `${best.name} has the strongest listing score at ${best.overallScore}/100, with ${best.returnRiskPct}% return risk.`
+        : `${best.name} has the lowest return risk at ${best.returnRiskPct}%.`
     const extra =
-      bestRisk.asin === bestPos.asin
-        ? `${bestRisk.name} also leads in positive sentiment at ${bestRisk.pctPositive}%.`
+      best.asin === bestPos.asin
+        ? `${best.name} also leads in positive sentiment at ${best.pctPositive}%.`
         : `${bestPos.name} has stronger positive sentiment at ${bestPos.pctPositive}%.`
-    return `${bestRisk.name} has the lowest return risk at ${bestRisk.returnRiskPct}% and the strongest listing score at ${bestRisk.overallScore}/100. ${extra} Consider using top-performing topic keywords and listing structure from this winner.`
+    return `${lead} ${extra} Consider using top-performing topic keywords and listing structure from this winner.`
   }, [cards])
 
   const handleCompare = async () => {
@@ -338,7 +350,10 @@ function ComparePageContent() {
                   </div>
 
                   <div className="mt-4 space-y-2.5 text-sm">
-                    <MetricRow label="Overall Listing Score" value={`${c.overallScore}/100`} />
+                    <MetricRow
+                      label="Overall Listing Score"
+                      value={c.overallScore === null ? '—' : `${c.overallScore}/100`}
+                    />
                     <MetricRow
                       label="Return Risk"
                       value={`${c.returnRiskPct}%`}
