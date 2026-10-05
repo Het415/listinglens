@@ -65,7 +65,7 @@ langchain-text-splitters==1.1.1
 # was silently skipping these in production, leaving /agent/query and
 # /assistant/query (copilot mode) returning ModuleNotFoundError.
 langgraph>=1.0,<2
-mcp>=1.0
+mcp>=2.2,<3   # 2.x API (MCPServer); unbounded, 2.0 broke the server once
 instructor>=1.7
 
 # Optional cache backend. backend/cache.py degrades to passthrough when
