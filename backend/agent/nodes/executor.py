@@ -9,7 +9,12 @@ This node owns the loop. Each invocation:
 The Executor also handles the optional re-plan loop triggered by a
 low-confidence Synthesizer output.
 """
-from langchain_core.messages import AIMessage, SystemMessage
+import ast
+import json
+import re
+import uuid
+
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_groq import ChatGroq
 
 from src.llm_config import (
@@ -22,21 +27,135 @@ from src.llm_config import (
 from ..prompts import executor_system_prompt
 from ..schemas import AgentState
 
-
 # Groq rejects a malformed tool call server-side with a 400 whose code is
 # `tool_use_failed` ("Failed to parse tool call arguments as JSON"). That is a
-# stochastic generation slip, not a bug in the request: the same query can
-# succeed on the next attempt. Retrying the turn recovers it; without a retry
-# a single bad generation aborts the whole agent run.
+# generation slip, not a bug in the request. It is also STICKY: the eval logs
+# from 2026-09-23 to 10-02 hold 13 episodes, and resending the identical turn
+# recovered 4 of 13 on the 2nd attempt but only 1 of 9 on the 3rd; the other
+# 8 gave up and degraded the run (every executor_degraded row in that span).
+# So the 2nd and 3rd attempts no longer resend the same turn: they carry
+# `_correction`, which says what Groq rejected. And before any retry, the
+# rejected generation itself is checked for a call `_salvage` can rebuild.
 TOOL_CALL_RETRIES = 3
 
 
-def _invoke_with_retry(bind_for, messages):
-    """Invoke the bound LLM, retrying transient malformed-tool-call 400s.
+def _failed_generation(err: Exception) -> tuple[str, str] | None:
+    """(Groq's error message, the rejected generation) from a tool_use_failed 400.
+
+    The groq SDK parses the response body onto `err.body`; langchain_groq
+    raises it unwrapped. `str(err)` carries the same dict as a Python repr, so
+    it is the fallback for anything that wrapped the error and dropped `body`.
+    """
+    body = getattr(err, "body", None)
+    if not isinstance(body, dict):
+        m = re.search(r"Error code: \d+ - (\{.*\})\s*$", str(err), re.DOTALL)
+        try:
+            body = ast.literal_eval(m.group(1)) if m else None
+        except (ValueError, SyntaxError):
+            body = None
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("error", body)
+    if not isinstance(detail, dict) or detail.get("code") != "tool_use_failed":
+        return None
+    gen = detail.get("failed_generation")
+    if not isinstance(gen, str) or not gen.strip():
+        return None
+    return str(detail.get("message", "")), gen
+
+
+def _model_args(tool) -> set[str]:
+    """The argument names the MODEL sees; injected state is already stripped."""
+    schema = tool.tool_call_schema
+    schema = schema.model_json_schema() if hasattr(schema, "model_json_schema") else schema
+    return set((schema or {}).get("properties") or {})
+
+
+_NAME = re.compile(r'^\s*\{\s*"name"\s*:\s*"([^"]+)"')
+_ARGS = re.compile(r'"arguments"\s*:\s*(.*)\}\s*$', re.DOTALL)
+
+
+def _salvage(err: Exception, tools, tools_called) -> AIMessage | None:
+    """Rebuild the tool call a rejected generation unambiguously meant, or None.
+
+    Reproduced live on 2026-10-03 (gpt-oss-safeguard-20b, the executor's
+    fallback, on the eval's launch_006 state): 2 of 3 calls in a probe, then
+    4 of 4 when this fix was checked against it, every time verbatim:
+
+        {"name": "price_history", "arguments": {""}"}
+
+    The tool exists and takes no arguments, so there is nothing to get wrong:
+    the call is `price_history({})`. Groq still rejects the whole turn, because
+    `{""}"` is not JSON. Five of the six tools take no arguments from the model.
+    The fix rebuilt it on all 4, from the one rejected call each, with no retry.
+
+    Deliberately narrow. Only a tool that is bound, and either takes no
+    arguments or whose arguments parse as JSON and validate against its schema
+    as written. Nothing is invented: `review_qa` with a garbled question goes
+    to a retry instead. A zero-argument tool that was ALREADY called is not
+    rebuilt either: its result would be identical, and the prompt forbids the
+    repeat, so the retry's correction gets to say so instead.
+    """
+    found = _failed_generation(err)
+    if found is None:
+        return None
+    _, gen = found
+    m = _NAME.match(gen)
+    if not m:
+        return None
+    name = m.group(1).removeprefix("functions.")
+    tool = next((t for t in tools if t.name == name), None)
+    if tool is None:
+        return None
+    if not _model_args(tool):
+        if name in tools_called:
+            return None
+        args: dict = {}
+    else:
+        a = _ARGS.search(gen)
+        try:
+            args = json.loads(a.group(1)) if a else None
+            if isinstance(args, str):  # OpenAI-style arguments: a JSON-encoded string
+                args = json.loads(args)
+            if not isinstance(args, dict):
+                return None
+            tool.tool_call_schema.model_validate(args)
+        except Exception:  # noqa: BLE001 — JSON or validation, either way not ours to guess
+            return None
+    return AIMessage(
+        content="",
+        tool_calls=[{"name": name, "args": args, "id": f"call_{uuid.uuid4().hex[:24]}", "type": "tool_call"}],
+        additional_kwargs={"salvaged_tool_call": gen[:300]},
+    )
+
+
+def _correction(err: Exception, tools) -> HumanMessage:
+    """Per-call note for a retry, so it is not the same turn that just failed.
+
+    Never stored in graph state: the next turn's history is unchanged.
+    """
+    found = _failed_generation(err)
+    why = found[0] if found and found[0] else "it was not a valid tool call"
+    no_args = [t.name for t in tools if not _model_args(t)]
+    with_args = [f"{t.name}({', '.join(sorted(_model_args(t)))})" for t in tools if _model_args(t)]
+    options = []
+    if no_args:
+        options.append(f"a call to one of {', '.join(no_args)}, with arguments {{}} (they take none)")
+    options += [f"a call to {sig}, with valid JSON arguments" for sig in with_args]
+    options.append("or, if no more tools are needed, a short plain-text summary and no tool call")
+    return HumanMessage(content=(
+        f"Your last reply could not be used: Groq rejected its tool call ({why}). "
+        "Reply again with exactly one of these:\n" + "".join(f"  - {o}\n" for o in options)
+    ).rstrip())
+
+
+def _invoke_with_retry(bind_for, messages, tools=(), tools_called=()):
+    """Invoke the bound LLM, recovering malformed-tool-call 400s.
 
     `bind_for(model_id)` returns a tools-bound ChatGroq for that model, so a
     decommissioned or rate-limited model fails over to the next candidate via
-    `resilient_call` while the malformed-tool-call retry happens per model.
+    `resilient_call` while the malformed-tool-call recovery happens per model:
+    first `_salvage` (no extra call), then a retry carrying `_correction`.
 
     Falls back to a content-only AIMessage after the last attempt so the graph
     routes on to the Synthesizer with whatever evidence it already gathered,
@@ -46,9 +165,10 @@ def _invoke_with_retry(bind_for, messages):
 
     def attempt_with(model: str):
         nonlocal last_err
+        turn = messages
         for attempt in range(1, TOOL_CALL_RETRIES + 1):
             try:
-                return bind_for(model).invoke(messages)
+                return bind_for(model).invoke(turn)
             except Exception as e:  # noqa: BLE001 — provider exception types vary
                 text = str(e)
                 # Let resilient_call see 404s/429s/timeouts/5xx so it can
@@ -56,10 +176,17 @@ def _invoke_with_retry(bind_for, messages):
                 if "tool_use_failed" not in text and "tool call" not in text.lower():
                     raise
                 last_err = e
+                found = _failed_generation(e)
+                detail = f"{found[0]}; generated {found[1][:160]!r}" if found else type(e).__name__
                 print(
                     f"[executor] malformed tool call from {model} "
-                    f"(attempt {attempt}/{TOOL_CALL_RETRIES}): {type(e).__name__}"
+                    f"(attempt {attempt}/{TOOL_CALL_RETRIES}): {detail}"
                 )
+                rebuilt = _salvage(e, tools, tools_called)
+                if rebuilt is not None:
+                    print(f"[executor] rebuilt the {rebuilt.tool_calls[0]['name']} call it meant; no retry needed")
+                    return rebuilt
+                turn = [*messages, _correction(e, tools)]
         # Exhausted retries on THIS model without a provider-level error.
         raise _MalformedToolCalls(str(last_err))
 
@@ -180,7 +307,7 @@ def make_executor_node(tools):
         ]
 
         messages = [SystemMessage(content=sys_prompt), *history]
-        response = _invoke_with_retry(bind_for, messages)
+        response = _invoke_with_retry(bind_for, messages, tools, state.get("tools_called", []))
 
         # Track tool calls for the trace + dedup
         new_tools_called = list(state.get("tools_called", []))
