@@ -303,7 +303,7 @@ limits = RequestLimits.from_env()
 
 # Estimated LLM calls per request, charged before the first one is made. A
 # Copilot run is a planner call, several executor turns and a synthesizer call:
-# 4-8 in practice (HANDOFF.md), so 8. The others are one call each.
+# 4-8 in practice, so 8. The others are one call each.
 LLM_COST = {"copilot": 8, "quick": 1, "chat": 1, "brief": 1, "intent": 1}
 
 
