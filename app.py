@@ -7,7 +7,7 @@ from typing import Annotated, Callable, Literal
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from dotenv import load_dotenv
 
 from backend import internal_auth
@@ -191,6 +191,13 @@ ImageUrl = Annotated[str, Field(max_length=MAX_URL_CHARS)]
 # vislens issues `uuid4().hex[:12]`. The id is joined into a vislens URL path
 # (image_audit.py), so path characters are refused here, not just its length.
 AuditId = Annotated[str, Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")]
+# Follow-up context. The browser sends at most the last three exchanges and
+# trims each turn itself; these are the outer bounds, and
+# backend/agent/context.py caps again what actually reaches a prompt.
+MAX_HISTORY_TURNS = 6
+MAX_TURN_CHARS = 1000
+ReportText = Annotated[str, Field(max_length=1500)]
+ReportItems = Annotated[list[Annotated[str, Field(max_length=300)]], Field(max_length=5)]
 
 
 class AnalyzeRequest(BaseModel):
@@ -215,6 +222,39 @@ class AgentQueryRequest(BaseModel):
     main_index: int | None = Field(default=None, ge=0, lt=MAX_IMAGE_URLS)
 
 
+class Turn(BaseModel):
+    """One earlier chat turn. An assistant turn is the browser's digest of the
+    answer (decision + summary, or the quick answer), not the whole card."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(max_length=MAX_TURN_CHARS)
+
+
+class PinnedReport(BaseModel):
+    """A saved report the seller is continuing from, as structured fields.
+
+    Only these fields exist, so a saved report's evidence snippets and free
+    text cannot ride along. `id` and `title` are for the UI and never reach a
+    prompt; the rest does, via backend/agent/context.py.
+    """
+
+    id: str = Field(max_length=64)
+    kind: Literal["copilot", "brief"]
+    asin: Asin
+    title: str = Field(max_length=200)
+    # kind == "copilot": a saved Recommendation
+    decision: str | None = Field(default=None, max_length=32)
+    confidence: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
+    summary: ReportText | None = None
+    risks: ReportItems | None = None
+    next_actions: ReportItems | None = None
+    # kind == "brief": a saved executive brief
+    headline: str | None = Field(default=None, max_length=300)
+    situation: ReportText | None = None
+    top_risks: ReportItems | None = None
+    actions: ReportItems | None = None
+
+
 class AssistantQueryRequest(BaseModel):
     asin: Asin
     query: Query
@@ -227,6 +267,18 @@ class AssistantQueryRequest(BaseModel):
     # A Literal, not a str: an unknown mode used to fall through to copilot,
     # silently upgrading a typo to the most expensive path.
     mode: Literal["quick", "copilot"] = "copilot"
+    # Follow-up memory: earlier turns (oldest first) and an optional pinned
+    # report. Both absent is today's request, and builds today's prompts.
+    history: list[Turn] | None = Field(default=None, max_length=MAX_HISTORY_TURNS)
+    pinned: PinnedReport | None = None
+
+    @model_validator(mode="after")
+    def _pinned_matches_product(self):
+        # The report is about some product; discussing it under another
+        # ASIN's tools would mix two products' evidence in one answer.
+        if self.pinned is not None and self.pinned.asin != self.asin:
+            raise ValueError("pinned report is for a different product than `asin`")
+        return self
 
 
 class WarmupRequest(BaseModel):
@@ -885,6 +937,14 @@ async def assistant_query(request: AssistantQueryRequest, http_request: Request)
     if denial := _admit(http_request, LLM_COST[mode]):
         return _sse_refusal(denial)
 
+    # None without history or a pin, and then every prompt is byte-identical
+    # to a request that predates follow-ups. Cost is unchanged either way: the
+    # block rides in prompts the run was already making.
+    from backend.agent.context import previous_question, render_context
+    history = [t.model_dump() for t in request.history or []]
+    context = render_context(history, request.pinned.model_dump() if request.pinned else None)
+    prev_question = previous_question(history)
+
     async def event_stream():
         # First event echoes the routed mode so the frontend can confirm.
         yield f"event: kind\ndata: {json.dumps({'value': mode})}\n\n"
@@ -904,6 +964,7 @@ async def assistant_query(request: AssistantQueryRequest, http_request: Request)
                     audit_id=request.audit_id,
                     image_urls=request.image_urls,
                     main_index=request.main_index,
+                    context=context,
                 ):
                     payload = json.dumps(event["data"], default=str)
                     yield f"event: {event['event']}\ndata: {payload}\n\n"
@@ -950,7 +1011,13 @@ async def assistant_query(request: AssistantQueryRequest, http_request: Request)
             # in a worker thread so the event loop stays free to flush SSE
             # frames; asyncio.to_thread uses the default thread executor and
             # plays well with the upstream FAISS/Bert init.
-            result = await asyncio.to_thread(review_qa, request.asin, request.query)
+            #
+            # The follow-up kwargs are passed only when set, so a first
+            # question makes exactly the call it always did.
+            followup = {
+                k: v for k, v in (("context", context), ("prev_question", prev_question)) if v
+            }
+            result = await asyncio.to_thread(review_qa, request.asin, request.query, **followup)
         except Exception as e:
             err = json.dumps(user_facing_error(e, context="agent/query"))
             yield f"event: error\ndata: {err}\n\n"
@@ -971,11 +1038,18 @@ async def assistant_query(request: AssistantQueryRequest, http_request: Request)
         )
         yield "event: done\ndata: {}\n\n"
 
-    # Cache by (asin, query, mode). Quick and copilot modes produce
-    # very different traces for the same question, so the mode is part
-    # of the key — never serve a quick-mode trace to a copilot caller.
+    # Cache by everything that changes the answer. Quick and copilot modes
+    # produce very different traces for the same question, so the mode is
+    # part of the key — never serve a quick-mode trace to a copilot caller.
+    # So are the follow-up context and the image context: without them one
+    # upload's image-audit answer replayed to another upload (audit E-24).
     from backend.cache import cached_sse_stream, make_key
-    cache_key = make_key(request.asin, request.query, mode=f"assistant:{mode}")
+    cache_key = make_key(
+        request.asin, request.query, mode=f"assistant:{mode}",
+        context=context, prev_question=prev_question,
+        audit_id=request.audit_id, image_urls=request.image_urls,
+        main_index=request.main_index,
+    )
 
     return StreamingResponse(
         cached_sse_stream(cache_key, event_stream()),

@@ -150,6 +150,49 @@ def detect_rating_intent(question: str) -> int | None:
             return rating
     return None
 
+
+# A question leans on the one before it when it opens like a continuation
+# ("and…", "what about…", "why?") or points back at it ("those", "they").
+# "it"/"this" are left out on purpose: in a seller's question they almost
+# always mean the product ("Is it worth fixing?"), not the previous answer.
+_FOLLOW_UP_OPENER = re.compile(
+    r"^(and|also|but|so|then|what about|how about|why|how come|what else|"
+    r"anything else|any others?|more|same)\b"
+)
+_BACK_REFERENCE = re.compile(r"\b(they|them|their|those|these|ones|the same)\b")
+_POSITIVE = re.compile(r"\b(love[sd]?|like[sd]?|best|great|praise[sd]?|positive|happy|favou?rite|enjoy)\b")
+_NEGATIVE = re.compile(
+    r"\b(hate[sd]?|dislike[sd]?|worst|complain\w*|negative|problems?|issues?|"
+    r"broken|disappoint\w*|return\w*|refund\w*|bad)\b"
+)
+
+
+def is_follow_up(question: str) -> bool:
+    """Whether a question only makes sense against the previous one.
+
+    Zero-cost heuristic (no LLM call): a continuation opener, a back-reference,
+    or a fragment of three words or fewer. A question that names its own topic
+    ("Which features do buyers love?") is standalone, so it neither borrows the
+    previous question's rating filter nor gets it mixed into its search.
+    """
+    q = question.lower().strip()
+    if not q:
+        return False
+    if _FOLLOW_UP_OPENER.search(q) or _BACK_REFERENCE.search(q):
+        return True
+    return len(re.findall(r"[a-z0-9']+", q)) <= 3
+
+
+def _sentiment_contradicts(question: str, rating: int) -> bool:
+    """A follow-up asking what buyers love shouldn't stay filtered to 1-star
+    reviews, nor a question about complaints to 5-star ones."""
+    q = question.lower()
+    if rating <= 2:
+        return bool(_POSITIVE.search(q)) and not _NEGATIVE.search(q)
+    if rating >= 4:
+        return bool(_NEGATIVE.search(q)) and not _POSITIVE.search(q)
+    return False
+
 # ── Updated RAG Chain Builder ──────────────────────────────────────────────
 
 def build_rag_chain(vectorstore):
@@ -200,17 +243,44 @@ Answer (under 150 words):"""
 
     PROMPT = PromptTemplate(template=prompt_template, input_variables=["context", "question"])
 
+    # A follow-up's prior-context block (backend/agent/context.py) sits just
+    # before the excerpts. A second template rather than an optional slot in
+    # the first: with no context the prompt must stay byte-identical to
+    # PROMPT's (tests/test_context_golden.py).
+    context_template = prompt_template.replace(
+        "\nContext:\n", "\n{prior_context}\n\nContext:\n", 1
+    )
+    CONTEXT_PROMPT = PromptTemplate(
+        template=context_template,
+        input_variables=["prior_context", "context", "question"],
+    )
+
     class SimpleRAGChain:
-        def __init__(self, llm, vectorstore, prompt):
+        def __init__(self, llm, vectorstore, prompt, context_prompt):
             self.llm = llm
             self.vectorstore = vectorstore # We use the store directly for filtering
             self.prompt = prompt
+            self.context_prompt = context_prompt
 
         def invoke(self, payload: dict) -> dict:
             question = payload.get("input", "").strip()
-            
-            # 1. Detect if the user wants a specific rating
+            prior_context = payload.get("prior_context")
+            prev_question = (payload.get("prev_question") or "").strip()
+
+            # Only a real follow-up borrows from the previous question. A new
+            # topic ("Which features do buyers love?" after a 1-star question)
+            # used to inherit the 1-star filter and the old question's words.
+            follow_up = bool(prev_question) and is_follow_up(question)
+
+            # 1. Detect if the user wants a specific rating. A follow-up
+            # ("and what do they say about the battery?") inherits the rating
+            # its previous question asked about, unless its own sentiment
+            # points the other way.
             rating_filter = detect_rating_intent(question)
+            if rating_filter is None and follow_up:
+                inherited = detect_rating_intent(prev_question)
+                if inherited is not None and not _sentiment_contradicts(question, inherited):
+                    rating_filter = inherited
             
             # 2. Configure FAISS search
             # If a filter is found, we tell FAISS to ignore everything else
@@ -221,9 +291,13 @@ Answer (under 150 words):"""
                 # Widen the pre-filter sweep — see FILTERED_FETCH_K above.
                 search_kwargs["fetch_k"] = FILTERED_FETCH_K
 
-            # 3. Retrieve
+            # 3. Retrieve. A follow-up is often only a fragment ("what about
+            # the 1-star ones?"), which embeds as nothing in particular, so
+            # the previous question is prepended. A heuristic, but one that
+            # costs no LLM call; the prompt below still asks the new question.
+            search_query = f"{prev_question} {question}" if follow_up else question
             try:
-                docs = self.vectorstore.similarity_search(question, **search_kwargs)
+                docs = self.vectorstore.similarity_search(search_query, **search_kwargs)
             except Exception as e:
                 print(f"[RAG] similarity_search failed: {e}")
                 raise
@@ -243,7 +317,12 @@ Answer (under 150 words):"""
                 }
 
             context = "\n\n".join(doc.page_content for doc in docs)
-            prompt_text = self.prompt.format(context=context, question=question)
+            if prior_context:
+                prompt_text = self.context_prompt.format(
+                    prior_context=prior_context, context=context, question=question
+                )
+            else:
+                prompt_text = self.prompt.format(context=context, question=question)
             
             try:
                 # Fail over to the next model in the chain if this one has been
@@ -257,20 +336,30 @@ Answer (under 150 words):"""
             return {"answer": answer, "context": docs}
 
     # Pass vectorstore instead of retriever for more control
-    return SimpleRAGChain(llm, vectorstore, PROMPT)
+    return SimpleRAGChain(llm, vectorstore, PROMPT, CONTEXT_PROMPT)
 
 # ... (Keep ask_question and run_rag_pipeline as is)
 
 
 # ── Query Function ─────────────────────────────────────────────────────────────
 
-def ask_question(chain, question: str) -> dict:
+def ask_question(
+    chain,
+    question: str,
+    context: str | None = None,
+    prev_question: str | None = None,
+) -> dict:
     """
     Asks a question about the product's reviews.
 
     Args:
         chain: RAG chain from build_rag_chain()
         question: seller's natural language question
+        context: optional prior-context block for a follow-up
+            (backend/agent/context.py); goes into the prompt
+        prev_question: optional previous question; joins the retrieval
+            query and supplies a rating filter the new question lacks, but only
+            when the new question is a follow-up (is_follow_up)
 
     Returns dict with:
         answer:   LLM-generated answer grounded in reviews
@@ -280,7 +369,13 @@ def ask_question(chain, question: str) -> dict:
     print(f"\nQuestion: {question}")
     print("Retrieving relevant reviews...")
 
-    result = chain.invoke({"input": question})
+    # Per call, not per chain: chains are cached per ASIN and shared.
+    payload = {"input": question}
+    if context:
+        payload["prior_context"] = context
+    if prev_question:
+        payload["prev_question"] = prev_question
+    result = chain.invoke(payload)
 
     # extract source review metadata
     sources = []

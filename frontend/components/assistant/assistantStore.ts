@@ -2,6 +2,17 @@
 
 import { useCallback, useSyncExternalStore } from 'react'
 import { apiUrl } from '@/lib/api'
+import type { Report } from '@/lib/saved'
+import {
+  buildHistory,
+  hasTurns,
+  isContext,
+  pinFromReport,
+  pinnedOf,
+  toPinned,
+  withPin,
+  withoutPin,
+} from './context'
 import { readSSE } from './sse'
 import type { ChatMessage, Recommendation, TraceStep } from './types'
 
@@ -63,6 +74,9 @@ function persist(asin: string, messages: ChatMessage[]) {
 // Signed-out users never touch the network here.
 let syncUserId: string | null = null
 const pulled = new Set<string>()
+// The in-flight pull per product, so pinReport can wait for it: pinning first
+// would PUT a pin-only chat over the account's saved one before it was read.
+const pulls = new Map<string, Promise<void>>()
 
 const remoteUrl = (asin: string) => `/api/me/conversations/${encodeURIComponent(asin)}`
 
@@ -87,21 +101,34 @@ async function fetchRemote(asin: string): Promise<ChatMessage[]> {
 }
 
 // A product whose history is empty in this tab adopts the saved copy — this is
-// what brings a chat back after the tab was closed.
+// what brings a chat back after the tab was closed. A pin alone does not count
+// as history: "Continue in AI Assistant" pins before the pull lands, and the
+// saved chat must still come back, under the new pin.
 function pullIfEmpty(asin: string) {
   if (!syncUserId || pulled.has(asin)) return
   pulled.add(asin)
   const owner = syncUserId
-  fetchRemote(asin)
+  const pull = fetchRemote(asin)
     .then((remote) => {
       const cur = states.get(asin)
       // Only fill a history that is still empty and idle, for the same user.
-      if (owner !== syncUserId || remote.length === 0 || !cur || cur.loading || cur.messages.length) return
-      states.set(asin, { ...cur, messages: remote })
-      writeLocal(asin, remote)
+      if (owner !== syncUserId || remote.length === 0 || !cur || cur.loading || hasTurns(cur.messages)) return
+      const pin = pinnedOf(cur.messages)
+      if (pin) {
+        const merged = withPin(remote, pin)
+        states.set(asin, { ...cur, messages: merged })
+        persist(asin, merged)
+      } else {
+        states.set(asin, { ...cur, messages: remote })
+        writeLocal(asin, remote)
+      }
       emit()
     })
-    .catch(() => pulled.delete(asin))
+    .catch(() => {
+      pulled.delete(asin)
+    })
+    .finally(() => pulls.delete(asin))
+  pulls.set(asin, pull)
 }
 
 // On sign-in, chats started while signed out are uploaded once — but never
@@ -145,13 +172,41 @@ function hydrate(asin: string): AsinRunState {
   const seeded: AsinRunState = { messages: readHistory(asin), trace: [], loading: false }
   states.set(asin, seeded)
   // hydrate runs inside render (getSnapshot), so the network pull is deferred.
-  if (seeded.messages.length === 0) queueMicrotask(() => pullIfEmpty(asin))
+  if (!hasTurns(seeded.messages)) queueMicrotask(() => pullIfEmpty(asin))
   return seeded
 }
 
+/** Clears the conversation. A pinned report stays: unpinning is its own action. */
 export function clearAssistant(asin: string) {
-  states.set(asin, { messages: [], trace: [], loading: false })
-  persist(asin, [])
+  const kept = (states.get(asin)?.messages ?? []).filter(isContext)
+  states.set(asin, { messages: kept, trace: [], loading: false })
+  persist(asin, kept)
+  emit()
+}
+
+/** Continue this product's chat from a saved report. Replaces any earlier pin.
+ *  Returns false, pinning nothing, when the report is about another product —
+ *  the backend would refuse every question asked under it. */
+export async function pinReport(asin: string, report: Report): Promise<boolean> {
+  if (report.asin !== asin) return false
+  hydrate(asin)
+  // hydrate defers its pull to a microtask; let it start, then let it land.
+  await Promise.resolve()
+  await pulls.get(asin)
+  const cur = states.get(asin) ?? hydrate(asin)
+  const messages = withPin(cur.messages, pinFromReport(report))
+  states.set(asin, { ...cur, messages })
+  persist(asin, messages)
+  emit()
+  return true
+}
+
+export function unpinReport(asin: string) {
+  const cur = hydrate(asin)
+  if (!pinnedOf(cur.messages)) return
+  const messages = withoutPin(cur.messages)
+  states.set(asin, { ...cur, messages })
+  persist(asin, messages)
   emit()
 }
 
@@ -172,6 +227,9 @@ export async function submitAssistant(
   const start = hydrate(asin)
   if (start.loading) return // one in-flight run per product at a time
 
+  // From the chat BEFORE this question: the question itself is `query`.
+  const history = buildHistory(start.messages)
+  const pin = pinnedOf(start.messages)
   const withUser: ChatMessage[] = [...start.messages, { role: 'user', content: trimmed }]
   states.set(asin, { messages: withUser, trace: [], loading: true })
   persist(asin, withUser)
@@ -192,7 +250,16 @@ export async function submitAssistant(
     const res = await fetch(apiUrl('/assistant/query'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ asin, query: trimmed, mode, audit_id: auditId ?? null }),
+      // `history` and `pinned` are omitted, not sent empty, on a first
+      // question: the backend then builds exactly its no-context prompts.
+      body: JSON.stringify({
+        asin,
+        query: trimmed,
+        mode,
+        audit_id: auditId ?? null,
+        ...(history.length ? { history } : {}),
+        ...(pin ? { pinned: toPinned(pin) } : {}),
+      }),
     })
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`)
 

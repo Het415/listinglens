@@ -46,16 +46,24 @@ def _get_chain(asin: str):
     return rag["chain"]
 
 
-def review_qa(asin: str, question: str) -> dict:
+def review_qa(
+    asin: str,
+    question: str,
+    context: str | None = None,
+    prev_question: str | None = None,
+) -> dict:
     """Answers a question about an ASIN's reviews, grounded in retrieved chunks.
 
     Returns dict matching ReviewQAOutput. The agent sees only this — no FAISS
     or LangChain types leak out.
+
+    `context` / `prev_question` are for a follow-up on the quick path only
+    (app.py); the agent's tool and the MCP server never pass them.
     """
     from src.rag_chatbot import ask_question
 
     chain = _get_chain(asin)
-    result = ask_question(chain, question)
+    result = ask_question(chain, question, context=context, prev_question=prev_question)
 
     out = ReviewQAOutput(
         answer=result["answer"],
