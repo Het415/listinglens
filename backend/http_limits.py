@@ -394,7 +394,7 @@ class RequestLimits:
     failover spreads a flood across every model's daily bucket. A short curl loop
     could take the Copilot down for everyone until the UTC reset (audit E-05). The
     free tier allows 200k tokens per model per day, roughly 30 Copilot runs per
-    model (HANDOFF.md), and the eval spends from the same key.
+    model, and the eval spends from the same key.
 
     1. Request rate per client IP: flood control on the LLM routes, including
        their cheap paths (a cached brief, a confident intent guess).
