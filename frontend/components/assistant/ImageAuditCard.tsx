@@ -1,6 +1,6 @@
 'use client'
 
-import { ImageIcon, AlertTriangle, Copy, Info } from 'lucide-react'
+import { ImageIcon, AlertTriangle, Copy, Info, Wrench } from 'lucide-react'
 import { checkStatusStyle } from './style-helpers'
 import type {
   AuditDetail,
@@ -36,7 +36,29 @@ import type {
  * Both are absent on the agent path (TracePanel renders a tool result with no
  * blob URLs and no detail record), so every use of them degrades to the
  * original rendering.
+ *
+ * Every word a seller reads here is the service's: the legend's plain `title`
+ * and `rule`, and its `fix`, which says how to reshoot the photo. The fix is
+ * rendered as advice without any guard because the service attaches one only
+ * to a rule that was actually broken. Before it existed this card headed each
+ * finding with a raw check id like `frame_occupancy`, and the agent's next
+ * steps read "fills ≥ 85 % of the frame" — correct, and not something a seller
+ * could act on.
  */
+
+/** How to fix a broken rule, in the service's words. */
+function FixHint({ fix }: { fix?: string }) {
+  if (!fix) return null
+  return (
+    <div className="mt-2 flex items-start gap-2 rounded-md border border-accent-teal/25 bg-accent-teal/5 px-2.5 py-2">
+      <Wrench className="w-3.5 h-3.5 text-accent-teal shrink-0 mt-0.5" />
+      <p className="text-xs text-text-primary leading-relaxed">
+        <span className="font-medium">How to fix: </span>
+        {fix}
+      </p>
+    </div>
+  )
+}
 
 function statusFromFinding(finding: [string, string, number?]): string {
   return finding[1]
@@ -44,11 +66,15 @@ function statusFromFinding(finding: [string, string, number?]): string {
 
 function formatValue(code: string, value: number | undefined): string | null {
   if (value === undefined) return null
-  // Fractions are rendered as percentages where the rule is a percentage, and
-  // left alone where it is a count or a pixel dimension.
-  if (code === 'wbg' || code === 'occ') return `${(value * 100).toFixed(1)}%`
+  // Each value says what it counts, because beside a plain title a bare "0.0%"
+  // or "3" leaves the seller guessing which way is good.
+  const pct = `${(value * 100).toFixed(1)}%`
+  if (code === 'wbg') return `${pct} pure white`
+  if (code === 'occ') return `${pct} filled`
   if (code === 'asp') return `${value.toFixed(2)}:1`
-  if (code === 'res') return `${value.toFixed(0)}px`
+  if (code === 'res') return `${value.toLocaleString('en-US')} pixels`
+  if (code === 'art') return `${value} spot${value === 1 ? '' : 's'}`
+  if (code === 'cnt') return `${value} photo${value === 1 ? '' : 's'}`
   return `${value}`
 }
 
@@ -253,7 +279,7 @@ export function ImageAuditCard({
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="text-sm text-text-primary">
-                    {entry?.check ?? code}
+                    {entry?.title ?? entry?.check ?? code}
                     {/* The measured value is the number the reader came for, so
                         it uses the theme-aware accent rather than a hardcoded
                         dark-theme cyan that washes out on a light background. */}
@@ -280,6 +306,11 @@ export function ImageAuditCard({
                     image{groupImages.length === 1 ? '' : 's'}{' '}
                     {groupImages.map((i) => i + 1).join(', ')}
                   </div>
+                  {/* Once per rule: the same check can break in several image
+                      groups, and the advice does not change between them. */}
+                  {verdicts.findIndex((v) => v.finding[0] === code) === index && (
+                    <FixHint fix={entry?.fix} />
+                  )}
                 </div>
               </div>
             )
@@ -301,21 +332,27 @@ export function ImageAuditCard({
             return (
               <div
                 key={`set-${code}-${index}`}
-                className="flex items-center gap-3 rounded-lg border border-border bg-background-secondary px-3 py-2"
+                className="flex items-start gap-3 rounded-lg border border-border bg-background-secondary px-3 py-2.5"
               >
                 <span
-                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 ${style.cls}`}
+                  className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border shrink-0 mt-0.5 ${style.cls}`}
                 >
                   {style.label}
                 </span>
-                <span className="text-sm text-text-primary">
-                  {entry?.check ?? code}
-                  {value !== undefined && (
-                    <span className="ml-2 font-mono text-xs font-semibold text-accent-teal">
-                      {value}
-                    </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-text-primary">
+                    {entry?.title ?? entry?.check ?? code}
+                    {value !== undefined && (
+                      <span className="ml-2 font-mono text-xs font-semibold text-accent-teal">
+                        {formatValue(code, value)}
+                      </span>
+                    )}
+                  </div>
+                  {entry?.rule && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{entry.rule}</div>
                   )}
-                </span>
+                  <FixHint fix={entry?.fix} />
+                </div>
               </div>
             )
           })}
@@ -342,6 +379,7 @@ export function ImageAuditCard({
           <p className="text-[11px] text-muted-foreground mt-1.5">
             detected by {duplicates.method} at distance ≤ {duplicates.threshold}
           </p>
+          <FixHint fix={duplicates.fix} />
         </div>
       )}
 

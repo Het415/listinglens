@@ -83,7 +83,12 @@ export type ImageAudit = {
   headline: 'pass' | 'warn' | 'fail' | 'skipped'
   main_index: number | null
   caveat: string | null
-  legend: Record<string, { check: string; rule: string }>
+  /** One entry per check code that appears anywhere in the payload. `title` and
+   * `rule` are plain seller language. `fix` — how to reshoot the photo — is
+   * present ONLY for a code that is a verdict somewhere (`f` or `set_checks`);
+   * a code that was merely measured never carries one, so its presence is safe
+   * to render as advice. Optional because pre-guidance services omit both. */
+  legend: Record<string, { check: string; title?: string; rule: string; fix?: string }>
   groups: AuditGroup[]
   set_checks: AuditFinding[]
   duplicates?: {
@@ -93,6 +98,8 @@ export type ImageAudit = {
     unavailable?: string
     skipped_no_contrast?: number[]
     group_mismatches?: { i: number; tagged: string; nearest: string }[]
+    /** Present only when `clusters` is non-empty and the detector is calibrated. */
+    fix?: string
   }
   notes?: string[]
 }
