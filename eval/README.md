@@ -1,20 +1,20 @@
 # ListingLens Copilot — Evaluation Harness
 
-This directory holds the evaluation harness for the ListingLens Copilot agent extension. It is scaffolded in Stage 0 (gold-set design) and fully implemented in Stage 4.
+This directory holds the evaluation harness for the ListingLens Copilot agent: the gold set, the runner, baselines, trajectory scoring, LLM judges and the generated reports. Everything described here is implemented.
 
 ---
 
-## What the Copilot does (elevator pitch — refines for Stage 6 README)
+## What the Copilot does
 
 ListingLens today is a **passive** RAG system: a seller asks about their product, the system retrieves matching review chunks, and an LLM answers. Fixed pipeline.
 
 ListingLens Copilot is an **active** agent. Given a seller question — "Should I launch a stainless variant?", "Why are returns spiking on this SKU?", "How do I improve this listing?" — the agent:
 
 1. **Plans** which evidence it needs (which tools to call, in what order)
-2. **Executes** tools autonomously (5 of them: review_qa, predict_return_risk, competitor_search, price_history, trend_signal)
-3. **Synthesizes** a structured recommendation with `decision`, `confidence`, cited `evidence`, listed `risks`, and `suggested_next_actions`
+2. **Executes** tools autonomously (6 of them: review_qa, predict_return_risk, competitor_search, price_history, trend_signal, image_audit)
+3. **Synthesizes** a structured recommendation with `decision`, `confidence`, cited `evidence`, listed `risks`, `suggested_next_actions` and `evidence_gaps`
 
-Two of the five tools (`review_qa`, `predict_return_risk`) are powered by the **existing** ListingLens models — the FAISS RAG over real Amazon reviews and the XGBoost return-risk classifier. The three external-data tools (`competitor_search`, `price_history`, `trend_signal`) are mocked for v1, seeded with realistic data for the 12 supported ASINs.
+Two of the six tools (`review_qa`, `predict_return_risk`) are powered by the **existing** ListingLens models — the FAISS RAG over real Amazon reviews and the XGBoost return-risk classifier. The classifier is trained on synthetic profiles against a proxy label, and it scores all 12 catalog products LOW (0.0–0.4%). `image_audit` applies deterministic main-image rules to uploaded images. The three external-data tools (`competitor_search`, `price_history`, `trend_signal`) are mocked, seeded with realistic data for the 12 supported ASINs.
 
 Why this matters: most agent demos are toys ("give me a recipe"). This one is grounded in a real domain with measurable outcomes.
 
@@ -26,13 +26,15 @@ You cannot unit-test an agent the way you test a function. Outputs are stochasti
 
 ### Axis 1 — Output quality (LLM-as-judge)
 
-A second LLM scores each agent response on a 0-5 rubric. To avoid same-family bias, the judge model is a *different model family* than the agent (agent: Groq `gpt-oss-120b`; judge: Anthropic `claude-haiku-4-5-20251001` by default). Set `JUDGE_PROVIDER=openai` to use `gpt-4o-mini` instead, or pass `--no-judge` to skip judging entirely.
+A second LLM scores each agent response with DeepEval's `GEval`, normalised to 0-1. To avoid same-family bias, the judge model is a *different model family* than the agent (agent: Groq `gpt-oss-120b`; judge: Anthropic `claude-haiku-4-5-20251001` by default). Set `JUDGE_PROVIDER=openai` to use `gpt-4o-mini` instead, or pass `--no-judge` to skip judging entirely.
 
 Four scored dimensions per query:
 - **Decision correctness** — does the agent's `decision` match the gold `expected_decision`?
 - **Evidence relevance** — do the cited evidence snippets match the gold `expected_evidence_themes`?
-- **Hallucination** — does any claim in the recommendation lack support in actual tool outputs?
+- **Hallucination** — is each claim supported by the agent's cited snippets? The judge sees only those snippets, never the raw tool outputs, so this measures internal consistency, not grounding.
 - **Completeness** — does the recommendation address all critical aspects of the question?
+
+**Judge scores aren't used as a headline.** Besides the hallucination caveat, the evidence-relevance judge is shown the expected decision, so its score tracks agreement with the gold answer. Fix both before trusting either number.
 
 ### Axis 2 — Trajectory correctness
 
@@ -42,21 +44,24 @@ For each query, compare `actual_tools_called` (extracted from LangGraph trace) a
 
 ### Axis 3 — Operational metrics
 
-- **Tokens** per query (input + output)
-- **Cost** per query in USD
-- **Latency** — p50, p95, p99 wall-clock
-- **Error rate** — tool failures, parse failures, timeouts
+- **Latency** — p50 and p95 wall-clock
+- **Error rate** — rows that raised
+- **Degraded rows** — a stage gave up and the answer was assembled without the model. Flagged, and never scored as correct
+- **No-decision rate** — errored plus degraded rows
+- Not tracked yet: tokens and cost per query
 
 A correct but $2/query agent is a failed agent. Operational metrics regressions are real bugs, even when quality looks fine.
 
 ---
 
-## Baselines (Stage 4 implements these)
+## Baselines
 
-The full agent must beat both baselines on a composite score. If it doesn't, the architecture isn't earning its complexity.
+If the full agent doesn't beat these, the architecture isn't earning its complexity. Both are implemented in `baselines.py` and have been run.
 
-- **`no_tool`** — single LLM call, no tools available. The "minimum useful" floor.
+- **`no_tool`** — the same LLM with no tools: two calls, a plain answer then a structured one. The "minimum useful" floor.
 - **`single_tool`** — agent only has `review_qa`. Shows the lift from adding tools beyond what the existing `/chat` endpoint already provides.
+
+**Current result: it doesn't beat `no_tool` on launch decisions.** Full agent 5/13 (right in both runs); `no_tool` 6/13 in each of three runs, always `needs_more_data`, exactly the constant floor; exact McNemar p = 1.0. See [Results](#results).
 
 ---
 
@@ -64,11 +69,13 @@ The full agent must beat both baselines on a composite score. If it doesn't, the
 
 | File | Status | Purpose |
 |---|---|---|
-| `gold_set.jsonl` | **Stage 0 ✅** | 33 hand-crafted queries with expected outputs |
-| `run_eval.py` | Stage 4 | Main eval runner — invokes agent on each gold query, records results |
-| `judges.py` | Stage 4 | DeepEval `GEval` LLM-as-judge metrics (Claude Haiku 4.5 by default; `JUDGE_PROVIDER=openai` switches to GPT-4o-mini) |
-| `trajectory_eval.py` | Stage 4 | F1 + ordering bonus over actual vs expected tool sets |
-| `reports/` | Stage 4 | Generated Markdown reports per run, named `YYYY-MM-DD.md` |
+| `gold_set.jsonl` | ✅ | 39 hand-crafted queries with expected outputs |
+| `run_eval.py` | ✅ | Main eval runner — invokes the agent (or a baseline) on each gold query, scores it against runtime baselines, stamps provenance |
+| `baselines.py` | ✅ | `no_tool` and `single_tool` |
+| `judges.py` | ✅ | DeepEval `GEval` LLM-as-judge metrics (Claude Haiku 4.5 by default; `JUDGE_PROVIDER=openai` switches to GPT-4o-mini) |
+| `trajectory_eval.py` | ✅ | F1 + ordering bonus over actual vs expected tool sets |
+| `compare_reports.py` | ✅ | Row-by-row diff of two reports |
+| `reports/` | ✅ | Generated Markdown + JSONL per run, named `YYYY-MM-DD-{tag}.md`; each records the git commit, gold sha256 and prompts sha256 |
 
 ---
 
@@ -76,15 +83,15 @@ The full agent must beat both baselines on a composite score. If it doesn't, the
 
 The gold set is intentionally diverse along several dimensions:
 
-**Query types (10 each):**
-- `launch` — "should I launch a variant?" — most should be `needs_more_data` because real launch decisions need data beyond 5 tools
+**Query types (13 launch, 11 returns, 15 improve):**
+- `launch` — "should I launch a variant?" — 6 of 13 are `needs_more_data`, because real launch decisions often need data beyond these tools
 - `returns` — "why are returns spiking?" — diagnostic queries, mostly `go` (action plan)
 - `improve` — "how do I improve this listing?" — mostly `go` (concrete recommendations)
 
 **Decision distribution** (rebalanced 2026-09-17 — see the audit note below):
 | Decision | Count | Why |
 |---|---|---|
-| `go` | 19 | Most returns/improve queries have clear action plans |
+| `go` | 25 | Most returns/improve queries have clear action plans (19, plus the six image rows added 2026-09-20) |
 | `needs_more_data` | 9 | Most launch queries + a few honest "we don't have that data" cases (e.g., temporal trends, BSR causality) |
 | `no_go` | 5 | Tests the agent's ability to actively decline. All inside `launch`, the only type where declining is meaningful: `launch_007` (AirPods sport variant), `launch_010` (Echo Dot clock — Amazon already sells it), `launch_011` (cheaper Fire stick — Amazon's own Lite is already at the same price), `launch_012` (Wi-Fi 6E stick — the 4K Max ships it and its top complaint is "Wi-Fi 6E underused"), `launch_013` (portable Echo Dot — category −17.1% YoY and saturated) |
 
@@ -93,30 +100,31 @@ The gold set is intentionally diverse along several dimensions:
 Fixed by (a) scoring only `launch` in the headline — `DECISION_SCORED_TYPES` in `run_eval.py` — with returns/improve reported as informational, and (b) adding three `no_go` cases. The launch baseline fell from 60.0% to **46.2%**, so the scored benchmark is now materially harder to guess. Every report prints these floors next to the accuracy, derived from the gold set at runtime, so this cannot silently drift again.
 
 **Tool-set discrimination:**
-The 30 queries do not all expect the same tools. `review_qa` is universal (always evidence). `predict_return_risk` is mostly returns queries. `trend_signal` and `competitor_search` cluster on launch queries. The trajectory F1 has real discriminative signal.
+The 39 queries do not all expect the same tools. `review_qa` is expected on all but five (`launch_011`, `launch_012`, `images_001`-`003`). `predict_return_risk` is mostly returns queries. `trend_signal` and `competitor_search` cluster on launch queries. The trajectory F1 has real discriminative signal.
 
 **ASIN coverage:**
-All 12 supported ASINs are exercised, at 2-3 queries each. Queries are matched to each product's *actual* complaint signature from `data/processed/features_*.json` — e.g., Ring Doorbell's "What's driving negative reviews?" query expects evidence around customer service, setup/installation, and connectivity.
+All 12 supported ASINs are exercised, at 2-4 queries each. Queries are matched to each product's *actual* complaint signature from `data/processed/features_*.json` — e.g., Ring Doorbell's "What's driving negative reviews?" query expects evidence around customer service, setup/installation, and connectivity.
 
-⚠️ Those `features_*.json` shares (Ring customer service is genuinely 44.8% negative) are **real but not evidenceable**. No tool reads that block — `_loader.asin_summary()` exists but nothing under `tools/` calls it — and `review_qa` returns 5 retrieved chunks out of ~2,900, which cannot derive a share. Four gold rows used to demand those percentages and were unwinnable by construction; their themes now ask for the complaint category to be named and quoted instead. Keep new themes on the evidenceable side of that line. Quantitative themes ARE legitimate where a tool genuinely returns a number — `predict_return_risk` returns `risk_pct`, so risk figures stay quantitative.
+⚠️ Those `features_*.json` shares (Ring's customer-service topic is 17.3% negative since the 2026-09-23 feature fixes; it read 44.8% before them) are **real but not evidenceable**. No tool reads that block — `_loader.asin_summary()` exists but nothing under `tools/` calls it — and `review_qa` returns 5 retrieved chunks out of ~2,900, which cannot derive a share. Four gold rows used to demand those percentages and were unwinnable by construction; their themes now ask for the complaint category to be named and quoted instead. Keep new themes on the evidenceable side of that line. Quantitative themes ARE legitimate where a tool genuinely returns a number — `predict_return_risk` returns `risk_pct`, so risk figures stay quantitative.
 
 **Honesty tests:**
 Two queries (`returns_008` Panasonic — "trending over time", `improve_010` Fire TV HD — "BSR drop causes") test whether the agent honestly admits limitations of the data instead of fabricating temporal trends or BSR causality.
 
 ---
 
-## How to run the eval (Stage 4 will implement)
+## How to run the eval
 
 ```bash
-# Full run over every gold query, produces eval/reports/YYYY-MM-DD.md
+# Full run over every gold query, produces eval/reports/YYYY-MM-DD-{tag}.md
 python -m eval.run_eval --gold eval/gold_set.jsonl
 
 # Baselines
 python -m eval.run_eval --baseline=no_tool
 python -m eval.run_eval --baseline=single_tool
 
-# CI smoke eval (5 queries, runs on PRs via GitHub Actions)
-python -m eval.run_eval --gold eval/gold_set.jsonl --limit 5
+# CI smoke eval (runs on PRs via GitHub Actions). The 5 rows are a
+# stratified pick, not the first 5; the job exits 2 if any row errors or degrades
+python -m eval.run_eval --limit 5 --no-judge --output-tag pr-smoke
 ```
 
 ### After landing a prompt/schema change — measure the lift
@@ -135,8 +143,8 @@ python -m eval.compare_reports
 
 # 3. Explicit before/after when comparing across non-adjacent runs
 python -m eval.compare_reports \
-  eval/reports/2026-05-18-full-judged.jsonl \
-  eval/reports/2026-05-25-full.jsonl
+  eval/reports/2026-09-23-launch-full-k1.jsonl \
+  eval/reports/2026-09-25-launch-full-k2.jsonl
 
 # 4. Markdown output for pasting into PR descriptions
 python -m eval.compare_reports --markdown
@@ -152,32 +160,24 @@ show up here, not in the wild.
 
 ## Results
 
-First full-agent eval, 2026-05-16 (30 gold queries, Claude Haiku 3 judge):
+**Current headline: the repeated-runs launch series (2026-09-23 → 10-01, code frozen at `b1eb690d`, `--no-judge`).** The 13 `launch` rows of `gold_set.jsonl` were run as the `--gold` file; each run's keep/discard rule was written before it ran.
 
-| Metric                        | Full agent |
-|-------------------------------|------------|
-| Decision accuracy             | 56.7%      |
-| Trajectory F1 (avg)           | 0.850      |
-| Trajectory precision (avg)    | 0.920      |
-| Trajectory recall (avg)       | 0.824      |
-| First-tool match rate         | 66.7%      |
-| Judge: decision correctness   | 0.431      |
-| Judge: evidence relevance     | 0.444      |
-| Judge: anti-hallucination     | 0.737      |
-| Judge: completeness           | 0.759      |
-| Latency p50 / p95 (s)         | 18.2 / 34.5 |
-| Error rate                    | 10.0% (Groq daily TPD cap hit on 3/30) |
+| | Kept runs | Launch decision accuracy | 95% Wilson interval |
+|---|---|---|---|
+| Full agent | 2 (`2026-09-23-launch-full-k1`, `2026-09-25-launch-full-k2`) | **5/13** right in both (7/13, 6/13 per run) | 17.7–64.5% |
+| `no_tool` | 3 (`2026-09-27-`, `2026-09-28-`, `2026-10-01-launch-notool-k*`) | 6/13 in every run, all `needs_more_data` | 23.2–70.9% |
+| Constant floor | — | 6/13 (always `needs_more_data`) | 23.2–70.9% |
+
+Paired: agent-only right 1, `no_tool`-only right 2, exact McNemar p = 1.0. Full-agent runs: trajectory F1 0.830 / 0.816, first-tool match 38.5%, latency p50 47.5 / 42.1 s, 0 errored and 0 degraded rows. Two runs of identical code agreed on 9 of 13 rows.
 
 **Reading the numbers honestly:**
 
-- **Trajectory is the agent's strongest dimension.** F1 of 0.85 with 0.92 precision means the Planner reliably picks the right tools; recall of 0.82 means it occasionally skips one.
-- ~~**Decision accuracy of 56.7% reflects over-confidence on launch queries.**~~ **Disproven 2026-09-17 — the direction is inverted.** Re-measured on a judged 30-query run: 8 hedges (`go` gold answered `needs_more_data`) against only 3 over-commits, and **zero** launch queries wrongly answered `go`. The agent under-commits. A prompt fix for the original over-confidence landed months ago (`b5b2e3ee`) and overshot; this note survived because nobody re-derived it. The root cause is now known to be a contradiction in `prompts.py` — always populate `evidence_gaps`, and non-empty `evidence_gaps` forces `needs_more_data` — which makes `go` unreachable for launch queries.
-- **Anti-hallucination 0.74** confirms the cited evidence usually supports the claims.
-- **The 10% error rate** was all Groq daily-TPD-limit hits at the end of the run, not agent bugs.
+- **No measurable lift on launch decisions.** The intervals overlap almost completely, so this doesn't show the agent is worse; the benchmark can't tell it apart from always hedging.
+- **The agent under-commits.** `go` is *nearly* unreachable on launch questions because of a contradiction in `prompts.py`: `evidence_gaps` must always be populated, and a non-empty `evidence_gaps` forces `needs_more_data`. Launch rows answered `go` only 1–3 times per run. This corrects an older note here that called the failure over-confidence; that was disproven on 2026-09-17, when a judged run showed 8 hedges against 3 over-commits.
+- **Trajectory is not the strong point it was once called.** Recall is high (the expected tools are usually called), but the first tool matches the gold order on only 38.5% of rows.
+- **The earlier 69.2% headline** (`2026-09-20-goldv2-judged.md`) is not comparable: 3 of its 13 launch rows were the synthesizer's few-shot examples, quoted with their gold answers (removed in `2ffa1f05`), and that run recorded no commit.
 
-Latest report: [reports/2026-05-16-full.md](reports/2026-05-16-full.md)
-
-Baselines (`no_tool`, `single_tool`) deferred: the full-agent eval exhausted the Groq daily budget. (That 500k figure was the old org-wide scheme; the limit is now **200k tokens/day per model**, on a rolling window rather than a midnight reset — one 30-query run comes close to exhausting it, so budget one full run per day.)
+Earlier snapshots, kept for history: the first full-agent run [reports/2026-05-16-full.md](reports/2026-05-16-full.md) (30 rows, 56.7%, before the launch-only scoring and the leakage fix), and the first baseline runs `2026-09-21-no-tool-judged.md` and `2026-09-22-single-tool-judged.md`. Budget note: the Groq free tier is **200k tokens/day per model** on a rolling window, and one full 39-query run comes close to it, so budget one full run per day.
 
 ---
 

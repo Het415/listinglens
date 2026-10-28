@@ -36,3 +36,7 @@ frontend/tsconfig.tsbuildinfo
 # Personal launch artifacts — kept locally but not in the public repo
 docs/LOOM_SCRIPT.md
 docs/LINKEDIN_POST.md
+# Private working notes and local tool config; kept on disk, never published.
+HANDOFF.md
+visual_retrieval_build_plan.md
+.claude/launch.json
