@@ -38,7 +38,7 @@ indexes are the contract, so the model revision has to be part of it.
 from __future__ import annotations
 
 import os
-from functools import lru_cache
+import threading
 
 import numpy as np
 from langchain_core.embeddings import Embeddings
@@ -111,12 +111,26 @@ class MiniLMOnnxEmbeddings(Embeddings):
         return self._encode([text.replace("\n", " ")])[0].tolist()
 
 
-@lru_cache(maxsize=1)
+_EMBEDDINGS: MiniLMOnnxEmbeddings | None = None
+_EMBEDDINGS_LOCK = threading.Lock()
+
+
 def get_embeddings() -> MiniLMOnnxEmbeddings:
-    """Process-wide singleton.
+    """Process-wide singleton, built once even when first callers race.
 
     The ORT session and tokenizer are the expensive part; every ASIN's
-    vectorstore shares one instance. Keeping this an `lru_cache` preserves the
-    behaviour the previous torch-backed `_get_embeddings` had.
+    vectorstore shares one instance. This used to be an `lru_cache`, which
+    does not serialise a cold miss: concurrent first callers each built their
+    own ~90 MiB session, and every FAISS store loaded meanwhile kept its copy
+    for the life of the process. Cold start is exactly when the browser
+    warmup, the crons and the first query arrive together. Measured: 3
+    concurrent cold calls, 3 instances, a 433 MiB peak against 241 MiB for
+    one, on a 512 MiB instance (audit E-07). Double-checked locking keeps
+    the warm path lock-free.
     """
-    return MiniLMOnnxEmbeddings()
+    global _EMBEDDINGS
+    if _EMBEDDINGS is None:
+        with _EMBEDDINGS_LOCK:
+            if _EMBEDDINGS is None:
+                _EMBEDDINGS = MiniLMOnnxEmbeddings()
+    return _EMBEDDINGS

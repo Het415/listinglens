@@ -72,7 +72,7 @@ services:
       - key: PYTHONUNBUFFERED
         value: "1"
       # ── Abuse limits (backend/http_limits.py) ───────────────────────────
-      # NOTE: the live service is not linked to this file (HANDOFF.md), so
+      # NOTE: the live service is not managed by this blueprint, so
       # these must also be set on the service itself.
       #
       # The client IP is read from X-Forwarded-For. On Render the code takes the
