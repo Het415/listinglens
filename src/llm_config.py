@@ -41,6 +41,7 @@ against the 8000 TPM cap. Tool selection and summarization don't need deep
 reasoning; the user-facing recommendation does, so those stages get "medium".
 """
 import os
+import re
 import time
 
 from dotenv import load_dotenv
@@ -234,15 +235,70 @@ def _failover_reason(err: Exception) -> str | None:
 # A malformed tool call is stochastic — the identical request often succeeds on
 # a second attempt — so one cheap same-model retry is the highest-value
 # recovery available, and it is strictly better than failing over, because no
-# model in the chain is reliably better at this schema. Decommissioning and
-# rate limits are not stochastic: retrying the same model there only adds
-# latency, so they advance at once.
+# model in the chain is reliably better at this schema. Decommissioning
+# advances at once, and so does a rate limit, except the one case below.
 #
 # One retry, not three: every attempt spends the per-model token budget
 # (200k tokens/day, 8k/min on the free tier), and burning it here makes the
 # NEXT query likelier to 429. That cascade is real — it is what turned a
 # 15-query verification run into four rate-limit failures on 2026-09-17.
 _SAME_MODEL_RETRIES = {"emitting malformed tool calls": 1}
+
+
+# A per-minute rate limit is the one 429 worth waiting out on the SAME model.
+#
+# The groq SDK already sleeps Groq's `retry-after` header and retries (once for
+# the executor, RAG and synthesizer clients, twice for the planner). But that
+# header is whole seconds, and the retry can land a moment early. Measured on
+# 2026-10-05 over 3 back-to-back agent questions with HTTP logging: 9 429s, 7
+# SDK retries, and both executor failovers were gpt-oss-20b 429ing, the SDK
+# sleeping exactly 5 s, and the retry 429ing again at once.
+#
+# Failing over is the worst answer to that. The executor's next model,
+# gpt-oss-safeguard-20b, allows 2,000 tokens per minute on the free tier (the
+# others allow 8,000), so most executor turns are "request too large" there, and
+# it garbles zero-argument tool calls when they fit. So when a per-minute 429
+# survives the SDK's own wait, this sleeps the precise wait Groq's message gives
+# ("Please try again in 2.7225s") plus a margin, and tries the same model once
+# more. A per-day limit, "request too large" (the request will never fit that
+# model) and any wait over the cap still advance at once.
+RATE_LIMIT_WAIT_CAP_S = 10.0
+_RATE_LIMIT_MARGIN_S = 0.5
+_TRY_AGAIN = re.compile(r"try again in (?:(\d+)m)?(\d+(?:\.\d+)?)(ms|s)\b")
+
+
+def short_rate_limit_wait(err: Exception) -> float | None:
+    """Seconds Groq says a per-minute limit clears in, if that's worth waiting for.
+
+    None for anything else: a per-day limit (its wait is minutes or hours), a
+    "request too large" (no wait would make it fit), or a wait over the cap.
+    """
+    text = str(err)
+    if "per minute" not in text.lower():
+        return None
+    m = _TRY_AGAIN.search(text)
+    if not m:
+        return None
+    minutes, value, unit = m.groups()
+    seconds = float(value) / 1000 if unit == "ms" else float(value)
+    seconds += 60 * int(minutes or 0)
+    return seconds if seconds <= RATE_LIMIT_WAIT_CAP_S else None
+
+
+def _provider_message(err: Exception) -> str:
+    """Groq's own error message, short, for the failover log line.
+
+    The org id is dropped: these lines go to server logs, and raw provider text
+    reaching users is how it leaked before (audit E-18).
+    """
+    body = getattr(err, "body", None)
+    detail = body.get("error", body) if isinstance(body, dict) else None
+    msg = detail.get("message") if isinstance(detail, dict) else None
+    if not msg:
+        m = re.search(r"'message': '([^']*)'", str(err))
+        msg = m.group(1) if m else str(err)
+    msg = re.sub(r"in organization `[^`]*` |service tier `[^`]*` ", "", msg)
+    return msg[:200]
 
 
 # Wall-clock bounds for the failover T-04 added (timeouts, dropped connections,
@@ -317,8 +373,9 @@ def request_timeout(long_output: bool = False):
     return httpx.Timeout(read, connect=_CONNECT_TIMEOUT_S)
 
 
-# Indirection so tests can drive `resilient_call` with a fake clock.
+# Indirection so tests can drive `resilient_call` with a fake clock and sleep.
 _now = time.monotonic
+_sleep = time.sleep
 
 
 def is_provider_capacity_error(err: Exception) -> bool:
@@ -359,8 +416,10 @@ def resilient_call(stage: str, fn):
     `scripts/doctor.py` gets run.
 
     Worst case is bounded by `len(chain)` attempts plus one extra per model for
-    a malformed tool call — 6 calls for a 3-model chain. That ceiling is only
-    reached on a path that would otherwise have failed outright.
+    a malformed tool call or a short per-minute rate limit — 6 calls for a
+    3-model chain, plus at most `RATE_LIMIT_WAIT_CAP_S` + a margin of waiting
+    per model. That ceiling is only reached on a path that would otherwise have
+    failed outright.
 
     Timeouts are the slow case: each attempt first waits out the read timeout
     once per SDK try (x 2 for the executor, RAG and the long-output clients,
@@ -372,6 +431,7 @@ def resilient_call(stage: str, fn):
     last: Exception | None = None
     i = 0
     retries_used = 0
+    waited = False
     started = _now()
     while i < len(chain):
         model = chain[i]
@@ -389,6 +449,15 @@ def resilient_call(stage: str, fn):
                     f"retrying the same model (attempt {retries_used + 1})."
                 )
                 continue
+            wait = short_rate_limit_wait(e) if reason == "rate-limited" else None
+            if wait is not None and not waited:
+                waited = True
+                print(
+                    f"[llm_config] {stage}: {model} is rate-limited for {wait:.1f}s more; "
+                    f"waiting it out instead of failing over ({_provider_message(e)})."
+                )
+                _sleep(wait + _RATE_LIMIT_MARGIN_S)
+                continue
             if i == len(chain) - 1:
                 raise
             nxt = chain[i + 1]
@@ -403,10 +472,11 @@ def resilient_call(stage: str, fn):
                     raise
             print(
                 f"[llm_config] {stage}: {model} is {reason}; "
-                f"falling back to {nxt}. Run `python -m scripts.doctor`."
+                f"falling back to {nxt} ({_provider_message(e)}). Run `python -m scripts.doctor`."
             )
             i += 1
             retries_used = 0
+            waited = False
     if last:
         raise last
     raise RuntimeError(f"no models configured for stage {stage!r}")
