@@ -8,11 +8,14 @@ Run: python -m backend.mcp_server.server
 """
 from typing import Any
 
-from mcp.server.fastmcp import FastMCP
+# mcp 2.x renamed FastMCP to MCPServer; the decorator and run() API are the
+# same. Under the old unbounded `mcp>=1.0` pin a fresh install got 2.x and
+# this import failed, so the server could not start (audit E-16).
+from mcp.server.mcpserver import MCPServer
 
 from .tools import competitor, image_audit, price, return_risk, review_qa, trends
 
-mcp = FastMCP("listinglens-copilot")
+mcp = MCPServer("listinglens-copilot")
 
 
 @mcp.tool(name=review_qa.TOOL_NAME, description=review_qa.TOOL_DESCRIPTION)
